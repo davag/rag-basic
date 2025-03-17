@@ -26,6 +26,21 @@ import { createLlmInstance, calculateCost } from '../utils/apiServices';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
 
+// Function to normalize criterion name to title case
+const normalizeCriterionName = (criterion) => {
+  // Split by colon to handle format like "Accuracy: Description"
+  const parts = criterion.split(':');
+  const name = parts[0].trim();
+  // Convert to title case (first letter uppercase, rest lowercase)
+  const normalized = name.charAt(0).toUpperCase() + name.slice(1).toLowerCase();
+  
+  // If there was a description after the colon, add it back
+  if (parts.length > 1) {
+    return `${normalized}: ${parts.slice(1).join(':').trim()}`;
+  }
+  return normalized;
+};
+
 const ResponseValidation = ({ 
   responses, 
   metrics, 
@@ -133,7 +148,7 @@ Then, calculate an overall score (1-100) that represents the overall quality of 
 Format your response as a JSON object with the following structure:
 {
   "criteria": {
-    "criterion1": {
+    "Criterion1": {
       "score": number,
       "explanation": "string"
     },
@@ -144,6 +159,9 @@ Format your response as a JSON object with the following structure:
     "explanation": "string"
   }
 }
+
+IMPORTANT: Use consistent Title Case for all criteria names (first letter capitalized, rest lowercase).
+For example, use "Accuracy" not "accuracy" or "ACCURACY".
 `;
         
         // Call the LLM for evaluation
@@ -555,13 +573,19 @@ Format your response as a JSON object with the following structure:
                       {Object.keys(validationResults).length > 0 && 
                         Object.values(validationResults).some(result => result.criteria) &&
                         (() => {
-                          const allCriteria = new Set();
+                          // Use a Map to store criteria with normalized keys
+                          const criteriaMap = new Map();
+                          
                           Object.values(validationResults).forEach(result => {
                             if (result.criteria) {
-                              Object.keys(result.criteria).forEach(criterion => allCriteria.add(criterion));
+                              Object.keys(result.criteria).forEach(criterion => {
+                                const normalizedKey = normalizeCriterionName(criterion);
+                                criteriaMap.set(normalizedKey, true);
+                              });
                             }
                           });
-                          return Array.from(allCriteria).map(criterion => (
+                          
+                          return Array.from(criteriaMap.keys()).map(criterion => (
                             <th key={criterion} style={{ textAlign: 'center', padding: '8px', borderBottom: '1px solid #ddd' }}>{criterion}</th>
                           ));
                         })()
@@ -583,13 +607,34 @@ Format your response as a JSON object with the following structure:
                       const cheapestCost = Math.min(...Object.values(modelCosts).filter(cost => cost > 0), Infinity);
                       
                       // Get all unique criteria
-                      const allCriteria = new Set();
+                      // Use a Map to store criteria with normalized keys
+                      const criteriaMap = new Map();
+                      
                       Object.values(validationResults).forEach(result => {
                         if (result.criteria) {
-                          Object.keys(result.criteria).forEach(criterion => allCriteria.add(criterion));
+                          Object.keys(result.criteria).forEach(criterion => {
+                            const normalizedKey = normalizeCriterionName(criterion);
+                            criteriaMap.set(normalizedKey, criterion); // Store original key as value
+                          });
                         }
                       });
-                      const criteriaArray = Array.from(allCriteria);
+                      
+                      const criteriaArray = Array.from(criteriaMap.keys());
+                      
+                      // Helper function to find criterion value regardless of case
+                      const findCriterionValue = (criteria, normalizedKey) => {
+                        if (!criteria) return null;
+                        
+                        // First try direct lookup with normalized key
+                        if (criteria[normalizedKey]) return criteria[normalizedKey];
+                        
+                        // If not found, search case-insensitively
+                        const criterionKey = Object.keys(criteria).find(key => 
+                          normalizeCriterionName(key) === normalizedKey
+                        );
+                        
+                        return criterionKey ? criteria[criterionKey] : null;
+                      };
                       
                       return Object.keys(validationResults).map(model => {
                         const result = validationResults[model];
@@ -629,18 +674,21 @@ Format your response as a JSON object with the following structure:
                             }}>
                               {result.overall ? `${result.overall.score}/100` : 'N/A'}
                             </td>
-                            {criteriaArray.map(criterion => (
-                              <td key={criterion} style={{ 
-                                textAlign: 'center', 
-                                padding: '8px', 
-                                borderBottom: '1px solid #ddd',
-                                color: result.criteria && result.criteria[criterion] ? 
-                                  getScoreColor(result.criteria[criterion].score) : 'inherit'
-                              }}>
-                                {result.criteria && result.criteria[criterion] ? 
-                                  `${result.criteria[criterion].score}/100` : 'N/A'}
-                              </td>
-                            ))}
+                            {criteriaArray.map(normalizedCriterion => {
+                              const criterionValue = findCriterionValue(result.criteria, normalizedCriterion);
+                              return (
+                                <td key={normalizedCriterion} style={{ 
+                                  textAlign: 'center', 
+                                  padding: '8px', 
+                                  borderBottom: '1px solid #ddd',
+                                  color: criterionValue ? 
+                                    getScoreColor(criterionValue.score) : 'inherit'
+                                }}>
+                                  {criterionValue ? 
+                                    `${criterionValue.score}/100` : 'N/A'}
+                                </td>
+                              );
+                            })}
                             <td style={{ textAlign: 'right', padding: '8px', borderBottom: '1px solid #ddd' }}>
                               {formatCost(cost)}
                             </td>
@@ -721,7 +769,7 @@ Format your response as a JSON object with the following structure:
                             {Object.entries(result.criteria).map(([criterion, details]) => (
                               <Box key={criterion}>
                                 <Typography variant="body2" fontWeight="bold">
-                                  {criterion}
+                                  {normalizeCriterionName(criterion)}
                                 </Typography>
                                 <Typography variant="body2" paragraph>
                                   {details.explanation}
