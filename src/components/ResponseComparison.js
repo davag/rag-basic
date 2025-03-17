@@ -501,8 +501,19 @@ const ResponseComparison = ({ responses, metrics, currentQuery, systemPrompts, o
             </AccordionSummary>
             <AccordionDetails>
               <Typography variant="body2" color="textSecondary" paragraph>
-                These source documents were used as context for all model responses.
+                These source documents were retrieved from the vector store based on their relevance to your query. 
+                The complete text shown below was provided as context to all models to generate their responses. 
+                Understanding this context is crucial for evaluating the quality of the responses and for creating 
+                effective datasets for RAG applications.
               </Typography>
+              
+              <Alert severity="info" sx={{ mb: 3 }}>
+                <Typography variant="body2">
+                  <strong>How RAG works:</strong> The system finds the most semantically similar documents to your query, 
+                  combines them into a context window, and instructs the LLM to answer based only on this provided information. 
+                  The quality of responses depends heavily on whether the relevant information is contained in these documents.
+                </Typography>
+              </Alert>
               
               {Object.entries(getSourcesByNamespace(sources)).map(([namespace, namespaceSources]) => (
                 <Box key={namespace} mb={3}>
@@ -522,9 +533,27 @@ const ResponseComparison = ({ responses, metrics, currentQuery, systemPrompts, o
                       <Typography variant="subtitle2" gutterBottom>
                         Source: {source.source}
                       </Typography>
-                      <Typography variant="body2">
-                        {source.content}
-                      </Typography>
+                      <Divider sx={{ mb: 2 }} />
+                      <Box 
+                        sx={{ 
+                          maxHeight: '300px', 
+                          overflowY: 'auto', 
+                          p: 1, 
+                          backgroundColor: '#fff',
+                          border: '1px solid #eee',
+                          borderRadius: 1
+                        }}
+                      >
+                        <Typography 
+                          variant="body2" 
+                          sx={{ 
+                            whiteSpace: 'pre-wrap',
+                            fontFamily: 'monospace'
+                          }}
+                        >
+                          {source.content}
+                        </Typography>
+                      </Box>
                     </Paper>
                   ))}
                 </Box>

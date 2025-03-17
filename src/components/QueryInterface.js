@@ -359,7 +359,7 @@ Given the context information and not prior knowledge, answer the question: ${qu
         responses[model] = {
           answer: typeof answer === 'object' ? answer.text : answer,
           sources: docs.map(doc => ({
-            content: doc.pageContent.substring(0, 200) + '...',
+            content: doc.pageContent,
             source: doc.metadata.source,
             namespace: doc.metadata.namespace || 'default'
           }))
