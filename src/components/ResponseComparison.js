@@ -38,6 +38,7 @@ import AttachMoneyIcon from '@mui/icons-material/AttachMoney';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
 import { calculateCost } from '../utils/apiServices';
+import TokenUsageAnalyzer from './TokenUsageAnalyzer';
 
 const ResponseComparison = ({ responses, metrics, currentQuery, systemPrompts, onBackToQuery, onImportResults }) => {
   const [expandedSources, setExpandedSources] = useState(false);
@@ -507,6 +508,72 @@ const ResponseComparison = ({ responses, metrics, currentQuery, systemPrompts, o
         </TableContainer>
       </Box>
 
+      {/* Token Usage Analyzer */}
+      <Box mb={4}>
+        <TokenUsageAnalyzer 
+          metrics={metrics} 
+          responses={responses} 
+          systemPrompts={systemPrompts} 
+          currentQuery={currentQuery}
+        />
+      </Box>
+
+      <Typography variant="h6" gutterBottom>
+        Model Responses
+      </Typography>
+      <Grid container spacing={3}>
+        {Object.keys(responses).map((model) => (
+          <Grid item xs={12} md={6} key={model}>
+            <Card 
+              className="response-card" 
+              variant="outlined"
+              sx={{ 
+                height: '100%',
+                borderLeft: `4px solid ${modelColors[model] || '#888'}`
+              }}
+            >
+              <CardHeader
+                title={model}
+                subheader={getModelVendor(model)}
+                sx={{ pb: 1 }}
+              />
+              <Divider />
+              <CardContent sx={{ pt: 2, pb: 1 }}>
+                <Typography 
+                  variant="body2" 
+                  className="response-content"
+                  sx={{ 
+                    whiteSpace: 'pre-wrap',
+                    mb: 2,
+                    minHeight: '200px'
+                  }}
+                >
+                  {typeof responses[model].answer === 'object' && responses[model].answer.text 
+                    ? responses[model].answer.text 
+                    : responses[model].answer}
+                </Typography>
+              </CardContent>
+              <CardActions sx={{ justifyContent: 'space-between', px: 2, pt: 0 }}>
+                <Box>
+                  <Chip 
+                    icon={<AccessTimeIcon />} 
+                    label={formatResponseTime(metrics[model].responseTime)} 
+                    size="small"
+                    className="metrics-chip"
+                  />
+                  <Chip 
+                    icon={<TokenIcon />} 
+                    label={`${metrics[model].tokenUsage.estimated ? '~' : ''}${metrics[model].tokenUsage.total} tokens`} 
+                    size="small"
+                    className="metrics-chip"
+                  />
+                </Box>
+              </CardActions>
+            </Card>
+          </Grid>
+        ))}
+      </Grid>
+
       {/* Source Documents Section - Shared across all models */}
       {sources.length > 0 && (
         <Box mb={4}>
@@ -583,62 +650,6 @@ const ResponseComparison = ({ responses, metrics, currentQuery, systemPrompts, o
           </Accordion>
         </Box>
       )}
-
-      <Typography variant="h6" gutterBottom>
-        Model Responses
-      </Typography>
-      <Grid container spacing={3}>
-        {Object.keys(responses).map((model) => (
-          <Grid item xs={12} md={6} key={model}>
-            <Card 
-              className="response-card" 
-              variant="outlined"
-              sx={{ 
-                height: '100%',
-                borderLeft: `4px solid ${modelColors[model] || '#888'}`
-              }}
-            >
-              <CardHeader
-                title={model}
-                subheader={getModelVendor(model)}
-                sx={{ pb: 1 }}
-              />
-              <Divider />
-              <CardContent sx={{ pt: 2, pb: 1 }}>
-                <Typography 
-                  variant="body2" 
-                  className="response-content"
-                  sx={{ 
-                    whiteSpace: 'pre-wrap',
-                    mb: 2,
-                    minHeight: '200px'
-                  }}
-                >
-                  {typeof responses[model].answer === 'object' && responses[model].answer.text 
-                    ? responses[model].answer.text 
-                    : responses[model].answer}
-                </Typography>
-              </CardContent>
-              <CardActions sx={{ justifyContent: 'space-between', px: 2, pt: 0 }}>
-                <Box>
-                  <Chip 
-                    icon={<AccessTimeIcon />} 
-                    label={formatResponseTime(metrics[model].responseTime)} 
-                    size="small"
-                    className="metrics-chip"
-                  />
-                  <Chip 
-                    icon={<TokenIcon />} 
-                    label={`${metrics[model].tokenUsage.estimated ? '~' : ''}${metrics[model].tokenUsage.total} tokens`} 
-                    size="small"
-                    className="metrics-chip"
-                  />
-                </Box>
-              </CardActions>
-            </Card>
-          </Grid>
-        ))}
-      </Grid>
 
       <Snackbar
         open={snackbarOpen}
