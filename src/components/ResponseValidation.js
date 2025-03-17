@@ -701,6 +701,13 @@ For example, use "Accuracy" not "accuracy" or "ACCURACY".
                 <MenuItem value="gpt-4o-mini">GPT-4o Mini</MenuItem>
                 <MenuItem value="claude-3-5-sonnet-latest">Claude 3.5 Sonnet</MenuItem>
                 <MenuItem value="claude-3-7-sonnet-latest">Claude 3.7 Sonnet</MenuItem>
+                <Divider />
+                <MenuItem disabled>
+                  <Typography variant="subtitle2">Ollama Models</Typography>
+                </MenuItem>
+                <MenuItem value="llama3.2:latest">Llama 3 (8B)</MenuItem>
+                <MenuItem value="gemma3:12b">Gemma 3 (12B)</MenuItem>
+                <MenuItem value="mistral:latest">Mistral (7B)</MenuItem>
               </Select>
               <Typography variant="body2" color="textSecondary">
                 This model will evaluate the responses from all the models in your comparison. For best results, choose a strong model that can provide insightful analysis.

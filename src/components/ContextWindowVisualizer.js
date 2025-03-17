@@ -37,6 +37,7 @@ const MODEL_CONTEXT_SIZES = {
   // Ollama models
   'llama3.2:latest': 8192,
   'mistral:latest': 8192,
+  'gemma3:12b': 12288,  // Gemma 3 12B has 12K context window
   
   // Default for unknown models
   'default': 8192

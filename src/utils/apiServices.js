@@ -334,7 +334,7 @@ export const createLlmInstance = (model, systemPrompt, options = {}) => {
       temperature: options.temperature !== undefined ? options.temperature : 0,
       systemPrompt: systemPrompt
     });
-  } else if ((vendor === 'Ollama') || (!vendor && (model.includes('llama') || model.includes('mistral')))) {
+  } else if ((vendor === 'Ollama') || (!vendor && (model.includes('llama') || model.includes('mistral') || model.includes('gemma')))) {
     // For Ollama models
     return new ChatOllama({
       modelName: model,
@@ -494,6 +494,10 @@ export const calculateCost = (model, tokenCount) => {
     
     // Ollama models (free for local inference)
     'llama3.2:latest': {
+      input: 0,
+      output: 0
+    },
+    'gemma3:12b': {
       input: 0,
       output: 0
     },

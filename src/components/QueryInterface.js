@@ -704,6 +704,7 @@ Format your response with clear headings for each section.
               <Typography variant="subtitle2">Ollama Models</Typography>
             </MenuItem>
             <MenuItem value="llama3.2:latest">Llama 3 (8B)</MenuItem>
+            <MenuItem value="gemma3:12b">Gemma 3 (12B)</MenuItem>
             <MenuItem value="mistral:latest">Mistral (7B)</MenuItem>
           </Select>
         </FormControl>

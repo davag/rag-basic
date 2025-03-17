@@ -85,7 +85,8 @@ const ResponseComparison = ({ responses, metrics, currentQuery, systemPrompts, o
     
     // Ollama models (red)
     'llama3.2:latest': '#ff6b6b',
-    'mistral:latest': '#ff6b6b'
+    'mistral:latest': '#ff6b6b',
+    'gemma3:12b': '#ff6b6b'
   };
 
   const getModelVendor = (model) => {

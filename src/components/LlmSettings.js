@@ -21,7 +21,8 @@ import {
   FormControl,
   InputLabel,
   Select,
-  MenuItem
+  MenuItem,
+  Divider
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import EditIcon from '@mui/icons-material/Edit';
@@ -91,6 +92,13 @@ const LlmSettings = ({ showAppSettingsOnly = false }) => {
       active: true,
       description: 'Open source Llama 3 (8B) model for local inference via Ollama.'
     },
+    'gemma3:12b': {
+      vendor: 'Ollama',
+      input: 0,
+      output: 0,
+      active: true,
+      description: 'Open source Gemma 3 (12B) model for local inference via Ollama.'
+    },
     'mistral:latest': {
       vendor: 'Ollama',
       input: 0,
@@ -103,6 +111,7 @@ const LlmSettings = ({ showAppSettingsOnly = false }) => {
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [addDialogOpen, setAddDialogOpen] = useState(false);
+  const [resetDialogOpen, setResetDialogOpen] = useState(false);
   const [currentModel, setCurrentModel] = useState(null);
   const [testingModel, setTestingModel] = useState(null);
   const [testResults, setTestResults] = useState({});
@@ -339,6 +348,13 @@ const LlmSettings = ({ showAppSettingsOnly = false }) => {
         active: true,
         description: 'Meta\'s Llama 3 model (8B) for local inference.'
       },
+      'gemma3:12b': {
+        vendor: 'Ollama',
+        input: 0,
+        output: 0,
+        active: true,
+        description: 'Open source Gemma 3 (12B) model for local inference via Ollama.'
+      },
       'mistral:latest': {
         vendor: 'Ollama',
         input: 0,
@@ -350,6 +366,7 @@ const LlmSettings = ({ showAppSettingsOnly = false }) => {
     
     // Reset all settings to defaults
     setModels(defaultModels);
+    localStorage.removeItem('llmModels');
     localStorage.setItem('llmModels', JSON.stringify(defaultModels));
     
     setOllamaEndpoint('http://localhost:11434');
@@ -536,6 +553,39 @@ const LlmSettings = ({ showAppSettingsOnly = false }) => {
     return (inputCost + outputCost).toFixed(4);
   };
 
+  // Handle reset button click
+  const handleResetClick = () => {
+    setResetDialogOpen(true);
+  };
+
+  // Handle confirm reset
+  const handleConfirmReset = () => {
+    handleResetToDefaults();
+    setResetDialogOpen(false);
+  };
+
+  // Add Gemma model specifically
+  const addGemmaModel = () => {
+    setModels(prev => {
+      // Create a copy of the current models
+      const updatedModels = { ...prev };
+      
+      // Add or update the Gemma 3 model
+      updatedModels['gemma3:12b'] = {
+        vendor: 'Ollama',
+        input: 0,
+        output: 0,
+        active: true,
+        description: 'Open source Gemma 3 (12B) model for local inference via Ollama.'
+      };
+      
+      // Save to localStorage
+      localStorage.setItem('llmModels', JSON.stringify(updatedModels));
+      
+      return updatedModels;
+    });
+  };
+
   return (
     <Box>
       <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
@@ -572,7 +622,7 @@ const LlmSettings = ({ showAppSettingsOnly = false }) => {
             startIcon={<SettingsBackupRestoreIcon />}
             variant="outlined" 
             color="warning"
-            onClick={handleResetToDefaults}
+            onClick={handleResetClick}
             sx={{ mr: 1 }}
           >
             Reset
@@ -622,6 +672,16 @@ const LlmSettings = ({ showAppSettingsOnly = false }) => {
               placeholder="http://localhost:11434"
               helperText="The URL of your Ollama API endpoint for local models"
             />
+            <Box sx={{ mt: 2, display: 'flex', justifyContent: 'flex-end' }}>
+              <Button 
+                variant="outlined" 
+                color="primary"
+                onClick={addGemmaModel}
+                sx={{ mr: 1 }}
+              >
+                Ensure Gemma 3 12B Added
+              </Button>
+            </Box>
           </Paper>
 
           {/* Prompt Advisor Configuration */}
@@ -645,6 +705,13 @@ const LlmSettings = ({ showAppSettingsOnly = false }) => {
                   <MenuItem value="gpt-4o-mini">GPT-4o Mini</MenuItem>
                   <MenuItem value="claude-3-5-sonnet-latest">Claude 3.5 Sonnet</MenuItem>
                   <MenuItem value="claude-3-7-sonnet-latest">Claude 3.7 Sonnet</MenuItem>
+                  <Divider />
+                  <MenuItem disabled>
+                    <Typography variant="subtitle2">Ollama Models</Typography>
+                  </MenuItem>
+                  <MenuItem value="llama3.2:latest">Llama 3 (8B)</MenuItem>
+                  <MenuItem value="gemma3:12b">Gemma 3 (12B)</MenuItem>
+                  <MenuItem value="mistral:latest">Mistral (7B)</MenuItem>
                 </Select>
               </FormControl>
             </Box>
@@ -671,6 +738,13 @@ const LlmSettings = ({ showAppSettingsOnly = false }) => {
                   <MenuItem value="gpt-4o-mini">GPT-4o Mini</MenuItem>
                   <MenuItem value="claude-3-5-sonnet-latest">Claude 3.5 Sonnet</MenuItem>
                   <MenuItem value="claude-3-7-sonnet-latest">Claude 3.7 Sonnet</MenuItem>
+                  <Divider />
+                  <MenuItem disabled>
+                    <Typography variant="subtitle2">Ollama Models</Typography>
+                  </MenuItem>
+                  <MenuItem value="llama3.2:latest">Llama 3 (8B)</MenuItem>
+                  <MenuItem value="gemma3:12b">Gemma 3 (12B)</MenuItem>
+                  <MenuItem value="mistral:latest">Mistral (7B)</MenuItem>
                 </Select>
               </FormControl>
             </Box>
@@ -1063,6 +1137,22 @@ const LlmSettings = ({ showAppSettingsOnly = false }) => {
           <Button onClick={() => setAddDialogOpen(false)}>Cancel</Button>
           <Button onClick={handleSaveNewModel} variant="contained" color="primary">
             Add
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Reset Confirmation Dialog */}
+      <Dialog open={resetDialogOpen} onClose={() => setResetDialogOpen(false)}>
+        <DialogTitle>Reset to Defaults</DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            Are you sure you want to reset all settings to their default values? This action cannot be undone.
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setResetDialogOpen(false)}>Cancel</Button>
+          <Button onClick={handleConfirmReset} variant="contained" color="error">
+            Reset
           </Button>
         </DialogActions>
       </Dialog>
