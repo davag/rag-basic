@@ -18,49 +18,44 @@ import {
   Divider,
   IconButton,
   Tooltip,
-  Link
+  Link,
+  Switch,
+  FormControlLabel
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
-import { createLlmInstance, createQaChain, executeQuery } from '../utils/apiServices';
+import { createLlmInstance } from '../utils/apiServices';
 
-const DEFAULT_SYSTEM_PROMPTS = {
-  openai: `You are a helpful assistant that answers questions based on the provided context. 
+const DEFAULT_SYSTEM_PROMPT = `You are a helpful assistant that answers questions based on the provided context. 
 If the answer is not in the context, say that you don't know. 
-Do not make up information that is not in the context.`,
-  
-  anthropic: `You are a helpful assistant that answers questions based on the provided context. 
-If the answer is not in the context, say that you don't know. 
-Do not make up information that is not in the context.`,
-
-  ollama: `You are a helpful assistant that answers questions based on the provided context. 
-If the answer is not in the context, say that you don't know. 
-Do not make up information that is not in the context.`
-};
+Do not make up information that is not in the context.`;
 
 const QueryInterface = ({ vectorStore, namespaces, onQuerySubmitted, isProcessing, setIsProcessing }) => {
   const [query, setQuery] = useState('');
   const [selectedModels, setSelectedModels] = useState(['gpt-4o-mini', 'claude-3-5-sonnet-latest']);
-  const [systemPrompts, setSystemPrompts] = useState({
+  const [globalSystemPrompt, setGlobalSystemPrompt] = useState(DEFAULT_SYSTEM_PROMPT);
+  const [useCustomPrompts, setUseCustomPrompts] = useState(false);
+  const [customSystemPrompts, setCustomSystemPrompts] = useState({
     // OpenAI models
-    'gpt-4o': DEFAULT_SYSTEM_PROMPTS.openai,
-    'gpt-4o-mini': DEFAULT_SYSTEM_PROMPTS.openai,
-    'o1-mini': DEFAULT_SYSTEM_PROMPTS.openai,
-    'o1-preview': DEFAULT_SYSTEM_PROMPTS.openai,
+    'gpt-4o': DEFAULT_SYSTEM_PROMPT,
+    'gpt-4o-mini': DEFAULT_SYSTEM_PROMPT,
+    'o1-mini': DEFAULT_SYSTEM_PROMPT,
+    'o1-preview': DEFAULT_SYSTEM_PROMPT,
     
     // Anthropic models
-    'claude-3-7-sonnet-latest': DEFAULT_SYSTEM_PROMPTS.anthropic,
-    'claude-3-5-sonnet-latest': DEFAULT_SYSTEM_PROMPTS.anthropic,
+    'claude-3-7-sonnet-latest': DEFAULT_SYSTEM_PROMPT,
+    'claude-3-5-sonnet-latest': DEFAULT_SYSTEM_PROMPT,
     
     // Ollama models
-    'llama3.2:latest': DEFAULT_SYSTEM_PROMPTS.ollama,
-    'mistral:latest': DEFAULT_SYSTEM_PROMPTS.ollama
+    'llama3.2:latest': DEFAULT_SYSTEM_PROMPT,
+    'mistral:latest': DEFAULT_SYSTEM_PROMPT
   });
   const [error, setError] = useState(null);
   const [expandedPrompt, setExpandedPrompt] = useState(null);
   const [selectedNamespaces, setSelectedNamespaces] = useState(['default']);
   const [ollamaEndpoint, setOllamaEndpoint] = useState('http://localhost:11434');
   const [helpExpanded, setHelpExpanded] = useState(false);
+  const [globalPromptExpanded, setGlobalPromptExpanded] = useState(false);
 
   const handleQueryChange = (event) => {
     setQuery(event.target.value);
@@ -70,15 +65,27 @@ const QueryInterface = ({ vectorStore, namespaces, onQuerySubmitted, isProcessin
     setSelectedModels(event.target.value);
   };
 
-  const handleSystemPromptChange = (model, value) => {
-    setSystemPrompts(prev => ({
+  const handleGlobalSystemPromptChange = (event) => {
+    setGlobalSystemPrompt(event.target.value);
+  };
+
+  const handleCustomSystemPromptChange = (model, value) => {
+    setCustomSystemPrompts(prev => ({
       ...prev,
       [model]: value
     }));
   };
 
+  const handleUseCustomPromptsChange = (event) => {
+    setUseCustomPrompts(event.target.checked);
+  };
+
   const handlePromptAccordionChange = (model) => (event, isExpanded) => {
     setExpandedPrompt(isExpanded ? model : null);
+  };
+
+  const handleGlobalPromptAccordionChange = (event, isExpanded) => {
+    setGlobalPromptExpanded(isExpanded);
   };
 
   const handleNamespaceChange = (event) => {
@@ -87,6 +94,10 @@ const QueryInterface = ({ vectorStore, namespaces, onQuerySubmitted, isProcessin
 
   const handleOllamaEndpointChange = (event) => {
     setOllamaEndpoint(event.target.value);
+  };
+
+  const getSystemPromptForModel = (model) => {
+    return useCustomPrompts ? customSystemPrompts[model] : globalSystemPrompt;
   };
 
   const submitQuery = async () => {
@@ -138,8 +149,11 @@ Given the context information and not prior knowledge, answer the question: ${qu
       
       // Process each model with the same retrieved documents
       for (const model of selectedModels) {
+        // Get the appropriate system prompt for this model
+        const systemPrompt = getSystemPromptForModel(model);
+        
         // Create LLM instance with appropriate configuration
-        const llm = createLlmInstance(model, systemPrompts[model], {
+        const llm = createLlmInstance(model, systemPrompt, {
           ollamaEndpoint: ollamaEndpoint
         });
         
@@ -342,18 +356,29 @@ Given the context information and not prior knowledge, answer the question: ${qu
           System Prompts
         </Typography>
         <Typography variant="body2" color="textSecondary" sx={{ mb: 2 }}>
-          Customize the system prompts for each model to test different RAG strategies.
+          The system prompt guides how the AI responds to your questions.
         </Typography>
-
-        {selectedModels.map((model) => (
+        
+        <FormControlLabel
+          control={
+            <Switch
+              checked={useCustomPrompts}
+              onChange={handleUseCustomPromptsChange}
+              disabled={isProcessing}
+            />
+          }
+          label="Use custom prompts for each model"
+          sx={{ mb: 2 }}
+        />
+        
+        {!useCustomPrompts && (
           <Accordion 
-            key={model}
-            expanded={expandedPrompt === model}
-            onChange={handlePromptAccordionChange(model)}
-            sx={{ mb: 1 }}
+            expanded={globalPromptExpanded}
+            onChange={handleGlobalPromptAccordionChange}
+            sx={{ mb: 3 }}
           >
             <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-              <Typography>{model}</Typography>
+              <Typography>Global System Prompt (used for all models)</Typography>
             </AccordionSummary>
             <AccordionDetails>
               <TextField
@@ -361,13 +386,45 @@ Given the context information and not prior knowledge, answer the question: ${qu
                 multiline
                 rows={6}
                 variant="outlined"
-                value={systemPrompts[model]}
-                onChange={(e) => handleSystemPromptChange(model, e.target.value)}
+                value={globalSystemPrompt}
+                onChange={handleGlobalSystemPromptChange}
                 disabled={isProcessing}
               />
             </AccordionDetails>
           </Accordion>
-        ))}
+        )}
+        
+        {useCustomPrompts && (
+          <>
+            <Typography variant="body2" color="textSecondary" sx={{ mb: 2 }}>
+              Customize the system prompts for each selected model.
+            </Typography>
+            
+            {selectedModels.map((model) => (
+              <Accordion 
+                key={model}
+                expanded={expandedPrompt === model}
+                onChange={handlePromptAccordionChange(model)}
+                sx={{ mb: 1 }}
+              >
+                <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+                  <Typography>{model}</Typography>
+                </AccordionSummary>
+                <AccordionDetails>
+                  <TextField
+                    fullWidth
+                    multiline
+                    rows={6}
+                    variant="outlined"
+                    value={customSystemPrompts[model]}
+                    onChange={(e) => handleCustomSystemPromptChange(model, e.target.value)}
+                    disabled={isProcessing}
+                  />
+                </AccordionDetails>
+              </Accordion>
+            ))}
+          </>
+        )}
       </Paper>
 
       <Box mt={3} display="flex" justifyContent="center">
