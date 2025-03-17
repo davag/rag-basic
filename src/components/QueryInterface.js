@@ -227,9 +227,8 @@ const QueryInterface = ({ vectorStore, namespaces, onQuerySubmitted, isProcessin
             <MenuItem disabled>
               <Typography variant="subtitle2">Ollama Models</Typography>
             </MenuItem>
-            <MenuItem value="llama3:8b">Llama 3 (8B)</MenuItem>
-            <MenuItem value="llama3:70b">Llama 3 (70B)</MenuItem>
-            <MenuItem value="mistral:7b">Mistral (7B)</MenuItem>
+            <MenuItem value="llama3.2:latest">Llama 3 (8B)</MenuItem>
+            <MenuItem value="mistral:latest">Mistral (7B)</MenuItem>
           </Select>
         </FormControl>
 
