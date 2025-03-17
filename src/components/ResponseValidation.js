@@ -53,22 +53,24 @@ const ResponseValidation = ({
   const [error, setError] = useState(null);
   const [currentValidatingModel, setCurrentValidatingModel] = useState(null);
 
-  // Reset validation state when component is mounted or re-mounted
+  // Reset validation state only when component is first mounted, not on re-renders
   useEffect(() => {
-    // Reset validation-related state
-    setCurrentValidatingModel(null);
-    setError(null);
-    
-    // If we're not processing, make sure isProcessing is false
-    if (!isProcessing) {
-      setIsProcessing(false);
+    // Only reset if there are no validation results yet
+    if (Object.keys(validationResults).length === 0) {
+      setCurrentValidatingModel(null);
+      setError(null);
+      
+      // If we're not processing, make sure isProcessing is false
+      if (!isProcessing) {
+        setIsProcessing(false);
+      }
     }
     
     // This will run when the component is unmounted
     return () => {
       // Clean up any ongoing processes if needed
     };
-  }, []); // Empty dependency array means this runs once on mount
+  }, [isProcessing, setIsProcessing, validationResults]); // Include the missing dependencies
 
   const handleValidatorModelChange = (event) => {
     setValidatorModel(event.target.value);
@@ -543,6 +545,131 @@ Format your response as a JSON object with the following structure:
           <Typography variant="h6" gutterBottom>
             Validation Results
           </Typography>
+          
+          {/* Summary Table */}
+          <Paper elevation={1} sx={{ mb: 3, overflow: 'auto' }}>
+            <Box sx={{ p: 2 }}>
+              <Typography variant="subtitle1" gutterBottom>
+                Summary Comparison
+              </Typography>
+              
+              <Box sx={{ minWidth: 650, overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr>
+                      <th style={{ textAlign: 'left', padding: '8px', borderBottom: '1px solid #ddd' }}>Model</th>
+                      <th style={{ textAlign: 'center', padding: '8px', borderBottom: '1px solid #ddd' }}>Overall Score</th>
+                      {/* Get all unique criteria across all models */}
+                      {Object.keys(validationResults).length > 0 && 
+                        Object.values(validationResults).some(result => result.criteria) &&
+                        (() => {
+                          const allCriteria = new Set();
+                          Object.values(validationResults).forEach(result => {
+                            if (result.criteria) {
+                              Object.keys(result.criteria).forEach(criterion => allCriteria.add(criterion));
+                            }
+                          });
+                          return Array.from(allCriteria).map(criterion => (
+                            <th key={criterion} style={{ textAlign: 'center', padding: '8px', borderBottom: '1px solid #ddd' }}>{criterion}</th>
+                          ));
+                        })()
+                      }
+                      <th style={{ textAlign: 'right', padding: '8px', borderBottom: '1px solid #ddd' }}>Cost</th>
+                      <th style={{ textAlign: 'right', padding: '8px', borderBottom: '1px solid #ddd' }}>Cost Ratio</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(() => {
+                      // Calculate the cheapest model cost for comparison
+                      const modelCosts = {};
+                      Object.keys(validationResults).forEach(model => {
+                        if (metrics[model]) {
+                          modelCosts[model] = calculateCost(model, metrics[model].tokenUsage.total);
+                        }
+                      });
+                      
+                      const cheapestCost = Math.min(...Object.values(modelCosts).filter(cost => cost > 0), Infinity);
+                      
+                      // Get all unique criteria
+                      const allCriteria = new Set();
+                      Object.values(validationResults).forEach(result => {
+                        if (result.criteria) {
+                          Object.keys(result.criteria).forEach(criterion => allCriteria.add(criterion));
+                        }
+                      });
+                      const criteriaArray = Array.from(allCriteria);
+                      
+                      return Object.keys(validationResults).map(model => {
+                        const result = validationResults[model];
+                        const cost = modelCosts[model] || 0;
+                        
+                        // Calculate cost ratio as percentage difference from cheapest
+                        let costRatioDisplay = '';
+                        if (cheapestCost > 0) {
+                          if (cost === cheapestCost) {
+                            // Leave empty for the cheapest model
+                            costRatioDisplay = '';
+                          } else {
+                            // Calculate percentage increase over the cheapest
+                            const percentIncrease = ((cost / cheapestCost) - 1) * 100;
+                            costRatioDisplay = `+${percentIncrease.toFixed(0)}%`;
+                          }
+                        } else {
+                          costRatioDisplay = 'N/A';
+                        }
+                        
+                        // Get color based on score
+                        const getScoreColor = (score) => {
+                          if (score >= 80) return '#4caf50';
+                          if (score >= 60) return '#ff9800';
+                          return '#f44336';
+                        };
+                        
+                        return (
+                          <tr key={model}>
+                            <td style={{ padding: '8px', borderBottom: '1px solid #ddd' }}>{model}</td>
+                            <td style={{ 
+                              textAlign: 'center', 
+                              padding: '8px', 
+                              borderBottom: '1px solid #ddd',
+                              color: result.overall ? getScoreColor(result.overall.score) : 'inherit',
+                              fontWeight: 'bold'
+                            }}>
+                              {result.overall ? `${result.overall.score}/100` : 'N/A'}
+                            </td>
+                            {criteriaArray.map(criterion => (
+                              <td key={criterion} style={{ 
+                                textAlign: 'center', 
+                                padding: '8px', 
+                                borderBottom: '1px solid #ddd',
+                                color: result.criteria && result.criteria[criterion] ? 
+                                  getScoreColor(result.criteria[criterion].score) : 'inherit'
+                              }}>
+                                {result.criteria && result.criteria[criterion] ? 
+                                  `${result.criteria[criterion].score}/100` : 'N/A'}
+                              </td>
+                            ))}
+                            <td style={{ textAlign: 'right', padding: '8px', borderBottom: '1px solid #ddd' }}>
+                              {formatCost(cost)}
+                            </td>
+                            <td style={{ 
+                              textAlign: 'right', 
+                              padding: '8px', 
+                              borderBottom: '1px solid #ddd',
+                              color: cost === cheapestCost ? '#4caf50' : '#f44336',
+                              fontWeight: cost === cheapestCost ? 'bold' : 'normal'
+                            }}>
+                              {costRatioDisplay}
+                            </td>
+                          </tr>
+                        );
+                      });
+                    })()}
+                  </tbody>
+                </table>
+              </Box>
+            </Box>
+          </Paper>
           
           <Grid container spacing={3}>
             {Object.keys(validationResults).map((model) => {

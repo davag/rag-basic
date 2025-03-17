@@ -72,10 +72,8 @@ function App() {
       setIsProcessing(false);
     }
     
-    // If switching to the validation tab, reset validation results
-    if (newValue === 4) {
-      setValidationResults({});
-    }
+    // We no longer reset validation results when switching to the validation tab
+    // This allows us to preserve the state when navigating back and forth
     
     setTabValue(newValue);
   };
