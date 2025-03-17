@@ -20,7 +20,7 @@ app.use(express.static(path.join(__dirname, 'build')));
 app.post('/api/proxy/anthropic', async (req, res) => {
   try {
     // Use API key from request body or fall back to environment variable
-    const apiKey = req.body.anthropicApiKey || process.env.ANTHROPIC_API_KEY;
+    const apiKey = req.body.anthropicApiKey || process.env.REACT_APP_ANTHROPIC_API_KEY;
     
     if (!apiKey) {
       return res.status(400).json({ error: 'Anthropic API key is required' });
@@ -53,7 +53,7 @@ app.post('/api/proxy/anthropic', async (req, res) => {
 app.post('/api/proxy/openai/:endpoint(*)', async (req, res) => {
   try {
     // Use API key from request body or fall back to environment variable
-    const apiKey = req.body.openaiApiKey || process.env.OPENAI_API_KEY;
+    const apiKey = req.body.openaiApiKey || process.env.REACT_APP_OPENAI_API_KEY;
     const endpoint = req.params.endpoint;
     
     console.log(`OpenAI proxy request to endpoint: ${endpoint}`);
@@ -135,9 +135,9 @@ app.get('*', (req, res) => {
 
 // Log environment variables status (without showing the actual keys)
 console.log('Environment variables status:');
-console.log('OPENAI_API_KEY:', process.env.OPENAI_API_KEY ? 'Set' : 'Not set');
-console.log('ANTHROPIC_API_KEY:', process.env.ANTHROPIC_API_KEY ? 'Set' : 'Not set');
-console.log('OLLAMA_API_URL:', process.env.OLLAMA_API_URL || 'Not set (using default)');
+console.log('OPENAI_API_KEY:', process.env.REACT_APP_OPENAI_API_KEY ? 'Set' : 'Not set');
+console.log('ANTHROPIC_API_KEY:', process.env.REACT_APP_ANTHROPIC_API_KEY ? 'Set' : 'Not set');
+console.log('OLLAMA_API_URL:', process.env.REACT_APP_OLLAMA_API_URL || 'Not set (using default)');
 
 app.listen(PORT, () => {
   console.log(`Server listening on port ${PORT}`);

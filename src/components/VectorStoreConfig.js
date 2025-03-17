@@ -3,7 +3,6 @@ import {
   Typography, 
   Box, 
   Slider, 
-  TextField, 
   Button, 
   FormControl,
   InputLabel,
@@ -13,8 +12,7 @@ import {
   Paper,
   CircularProgress,
   Alert,
-  Chip,
-  Divider
+  Chip
 } from '@mui/material';
 import { RecursiveCharacterTextSplitter } from 'langchain/text_splitter';
 import { OpenAIEmbeddings } from 'langchain/embeddings/openai';

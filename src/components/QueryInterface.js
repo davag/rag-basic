@@ -8,7 +8,6 @@ import {
   InputLabel,
   Select,
   MenuItem,
-  Grid,
   Paper,
   Chip,
   CircularProgress,
@@ -16,10 +15,7 @@ import {
   Accordion,
   AccordionSummary,
   AccordionDetails,
-  Divider,
-  FormControlLabel,
-  Checkbox,
-  FormGroup
+  Divider
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import { createLlmInstance, createQaChain, executeQuery } from '../utils/apiServices';

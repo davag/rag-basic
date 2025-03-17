@@ -120,7 +120,7 @@ class CustomChatOpenAI {
     this._llmType = () => 'openai';
     this._identifying_params = { model_name: this.modelName };
     
-    // Log API key status (without showing the actual key)
+    // Use window.console instead of console directly
     window.console.log(`CustomChatOpenAI initialized with model: ${this.modelName}`);
     window.console.log(`API key provided in constructor: ${this.apiKey ? 'Yes' : 'No'}`);
     window.console.log(`Environment API key available: ${process.env.REACT_APP_OPENAI_API_KEY ? 'Yes' : 'No'}`);
@@ -146,12 +146,12 @@ class CustomChatOpenAI {
         throw new Error('OpenAI API key is required. Please set REACT_APP_OPENAI_API_KEY in your environment variables.');
       }
       
-      // Log request details (without showing the full API key)
-      window.console.log('Sending request to OpenAI API:');
-      window.console.log(`- Endpoint: ${this.proxyUrl}/chat/completions`);
-      window.console.log(`- Model: ${this.modelName}`);
-      window.console.log(`- API key: ${apiKey ? apiKey.substring(0, 10) + '...' : 'None'}`);
-      window.console.log(`- Message count: ${allMessages.length}`);
+      // Use window.console for logging
+      window.console.log('Sending OpenAI request:', {
+        endpoint: `${this.proxyUrl}/chat/completions`,
+        model: this.modelName,
+        messageCount: allMessages.length
+      });
       
       // Use proxy endpoint to avoid CORS
       const requestData = {
@@ -159,19 +159,21 @@ class CustomChatOpenAI {
         messages: allMessages,
         temperature: this.temperature,
         max_tokens: 1024,
-        // Pass the API key in the request body to be used by the proxy
         openaiApiKey: apiKey
       };
       
-      window.console.log('Request payload:', JSON.stringify({
-        ...requestData,
-        openaiApiKey: 'REDACTED' // Don't log the actual API key
-      }));
+      const response = await axios.post(
+        `${this.proxyUrl}/chat/completions`,
+        requestData,
+        {
+          headers: {
+            'Content-Type': 'application/json'
+          }
+        }
+      );
       
-      const response = await axios.post(`${this.proxyUrl}/chat/completions`, requestData);
-      
-      // Log response status
-      window.console.log(`OpenAI API response status: ${response.status}`);
+      // Use window.console for logging
+      window.console.log('OpenAI response status:', response.status);
       
       if (response.data.error) {
         window.console.error('OpenAI API returned an error:', response.data.error);
