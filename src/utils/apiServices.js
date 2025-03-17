@@ -61,24 +61,37 @@ class CustomChatAnthropic {
 
   async call(messages) {
     try {
-      // Format messages for Anthropic API
-      const formattedMessages = messages.map(msg => ({
-        role: msg.role || 'user',
-        content: msg.content
-      }));
+      // Format messages for Anthropic API - exclude any system messages
+      const formattedMessages = messages
+        .filter(msg => msg.role !== 'system')
+        .map(msg => ({
+          role: msg.role || 'user',
+          content: msg.content
+        }));
       
       // Use proxy endpoint to avoid CORS
-      const response = await axios.post(this.proxyUrl, {
+      const requestBody = {
         model: this.modelName,
-        messages: [
-          { role: 'system', content: this.systemPrompt },
-          ...formattedMessages
-        ],
+        messages: formattedMessages,
         temperature: this.temperature,
         max_tokens: 1024,
         // Pass the API key in the request body to be used by the proxy
         anthropicApiKey: this.apiKey || process.env.REACT_APP_ANTHROPIC_API_KEY
+      };
+      
+      // Add system message as a top-level parameter if provided
+      if (this.systemPrompt) {
+        requestBody.system = this.systemPrompt;
+      }
+      
+      window.console.log('Sending request to Anthropic API:', {
+        endpoint: this.proxyUrl,
+        model: this.modelName,
+        messageCount: formattedMessages.length,
+        hasSystemPrompt: !!this.systemPrompt
       });
+      
+      const response = await axios.post(this.proxyUrl, requestBody);
       
       // Handle different response formats
       if (response.data && response.data.content) {
@@ -91,6 +104,10 @@ class CustomChatAnthropic {
       }
     } catch (error) {
       window.console.error('Error calling Anthropic API:', error);
+      if (error.response) {
+        window.console.error('Response data:', error.response.data);
+        window.console.error('Response status:', error.response.status);
+      }
       throw new Error(`Anthropic API error: ${error.message || 'Unknown error'}`);
     }
   }

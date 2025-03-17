@@ -11,7 +11,7 @@ module.exports = function(app) {
     if (req.method === 'OPTIONS') {
       res.header('Access-Control-Allow-Origin', '*');
       res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-      res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-api-key, anthropic-version');
+      res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-api-key, anthropic-version, anthropic-dangerous-direct-browser-access');
       return res.sendStatus(200);
     }
     next();
@@ -108,25 +108,71 @@ module.exports = function(app) {
             return;
           }
 
+          // Add the required headers for Anthropic
           proxyReq.setHeader('x-api-key', apiKey);
           proxyReq.setHeader('anthropic-version', '2023-06-01');
           proxyReq.setHeader('Content-Type', 'application/json');
-
+          // Add the required CORS header for direct browser access
+          proxyReq.setHeader('anthropic-dangerous-direct-browser-access', 'true');
+          
+          // Remove the API key from the body
           const modifiedBody = { ...req.body };
           delete modifiedBody.anthropicApiKey;
+          
+          // Log the request structure (without sensitive data)
+          global.console.log('Anthropic request structure:', {
+            model: modifiedBody.model,
+            hasMessages: !!modifiedBody.messages,
+            messageCount: modifiedBody.messages ? modifiedBody.messages.length : 0,
+            hasSystem: !!modifiedBody.system,
+            temperature: modifiedBody.temperature,
+            max_tokens: modifiedBody.max_tokens
+          });
 
           const bodyData = JSON.stringify(modifiedBody);
           proxyReq.setHeader('Content-Length', Buffer.byteLength(bodyData));
           proxyReq.write(bodyData);
+
+          // Log request headers
+          global.console.log('Anthropic request headers:', {
+            'anthropic-version': proxyReq.getHeader('anthropic-version'),
+            'Content-Type': proxyReq.getHeader('Content-Type'),
+            'Content-Length': proxyReq.getHeader('Content-Length'),
+            'has-api-key': !!proxyReq.getHeader('x-api-key'),
+            'has-cors-header': !!proxyReq.getHeader('anthropic-dangerous-direct-browser-access')
+          });
         }
       },
       onProxyRes: function(proxyRes) {
+        // Log response status
+        global.console.log('Anthropic response status:', proxyRes.statusCode);
+        
+        // Add CORS headers
         proxyRes.headers['Access-Control-Allow-Origin'] = '*';
         proxyRes.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS';
-        proxyRes.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, x-api-key, anthropic-version';
+        proxyRes.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, x-api-key, anthropic-version, anthropic-dangerous-direct-browser-access';
+        
+        // Log response body for debugging
+        let responseBody = '';
+        proxyRes.on('data', chunk => {
+          responseBody += chunk;
+        });
+        
+        proxyRes.on('end', () => {
+          try {
+            const parsedBody = JSON.parse(responseBody);
+            if (parsedBody.error) {
+              global.console.error('Anthropic API error:', parsedBody.error);
+            } else {
+              global.console.log('Anthropic API response received successfully');
+            }
+          } catch (e) {
+            global.console.error('Error parsing Anthropic response:', e);
+          }
+        });
       },
       onError: function(err, req, res) {
-        global.console.error('Proxy Error:', err);
+        global.console.error('Anthropic Proxy Error:', err);
         res.status(500).json({ error: 'Proxy error', message: err.message });
       },
       proxyTimeout: 30000,
