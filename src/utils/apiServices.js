@@ -4,7 +4,7 @@ import axios from 'axios';
 class ChatOllama {
   constructor(options) {
     this.modelName = options.modelName || 'llama3';
-    this.temperature = options.temperature || 0;
+    this.temperature = options.temperature !== undefined ? options.temperature : 0;
     this.systemPrompt = options.systemPrompt || '';
     this.endpoint = options.endpoint || 'http://localhost:11434';
     
@@ -12,6 +12,9 @@ class ChatOllama {
     this._modelType = () => 'ollama';
     this._llmType = () => 'ollama';
     this._identifying_params = { model_name: this.modelName };
+    
+    window.console.log(`ChatOllama initialized with model: ${this.modelName}`);
+    window.console.log(`Temperature setting: ${this.temperature}`);
   }
 
   async call(messages) {
@@ -46,7 +49,7 @@ class ChatOllama {
 class CustomChatAnthropic {
   constructor(options) {
     this.modelName = options.modelName || 'claude-3-5-sonnet-latest';
-    this.temperature = options.temperature || 0;
+    this.temperature = options.temperature !== undefined ? options.temperature : 0;
     this.systemPrompt = options.systemPrompt || '';
     this.apiKey = options.anthropicApiKey;
     
@@ -57,75 +60,82 @@ class CustomChatAnthropic {
     this._modelType = () => 'anthropic';
     this._llmType = () => 'anthropic';
     this._identifying_params = { model_name: this.modelName };
+    
+    window.console.log(`CustomChatAnthropic initialized with model: ${this.modelName}`);
+    window.console.log(`API key provided in constructor: ${this.apiKey ? 'Yes' : 'No'}`);
+    window.console.log(`Environment API key available: ${process.env.REACT_APP_ANTHROPIC_API_KEY ? 'Yes' : 'No'}`);
+    window.console.log(`Temperature setting: ${this.temperature}`);
   }
 
   async call(messages) {
     try {
-      // Format messages for Anthropic API - exclude any system messages
-      const formattedMessages = messages
-        .filter(msg => msg.role !== 'system')
-        .map(msg => ({
-          role: msg.role || 'user',
-          content: msg.content
-        }));
+      // Format messages for Anthropic API
+      const formattedMessages = messages.map(msg => ({
+        role: msg.role === 'user' ? 'user' : 'assistant',
+        content: msg.content
+      }));
       
-      // Use proxy endpoint to avoid CORS
-      const requestBody = {
-        model: this.modelName,
-        messages: formattedMessages,
-        temperature: this.temperature,
-        max_tokens: 1024,
-        // Pass the API key in the request body to be used by the proxy
-        anthropicApiKey: this.apiKey || process.env.REACT_APP_ANTHROPIC_API_KEY
-      };
+      // Make sure we have an API key
+      const apiKey = this.apiKey || process.env.REACT_APP_ANTHROPIC_API_KEY;
       
-      // Add system message as a top-level parameter if provided
-      if (this.systemPrompt) {
-        requestBody.system = this.systemPrompt;
+      if (!apiKey) {
+        throw new Error('Anthropic API key is required. Please set REACT_APP_ANTHROPIC_API_KEY in your environment variables.');
       }
       
-      window.console.log('Sending request to Anthropic API:', {
-        endpoint: this.proxyUrl,
+      // Use window.console for logging
+      window.console.log('Sending Anthropic request:', {
+        endpoint: `${this.proxyUrl}`,
         model: this.modelName,
         messageCount: formattedMessages.length,
-        hasSystemPrompt: !!this.systemPrompt
+        hasSystemPrompt: !!this.systemPrompt,
+        temperature: this.temperature
       });
       
-      const response = await axios.post(this.proxyUrl, requestBody);
+      // Use proxy endpoint to avoid CORS
+      // Note: The API endpoint should just be the base proxy URL, not with "/messages" appended
+      // The proxy server will handle the full path construction
+      const response = await axios.post(
+        this.proxyUrl,
+        {
+          model: this.modelName,
+          messages: formattedMessages,
+          system: this.systemPrompt,
+          max_tokens: 1024,
+          temperature: this.temperature,
+          anthropicApiKey: apiKey
+        },
+        {
+          headers: {
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+      
+      // Use window.console for logging
+      window.console.log('Anthropic response status:', response.status);
+      
+      if (response.data.error) {
+        window.console.error('Anthropic API returned an error:', response.data.error);
+        throw new Error(`Anthropic API error: ${response.data.error.message}`);
+      }
       
       // Handle different response formats
-      if (response.data && response.data.content) {
-        // Handle array of content blocks (Claude API v2)
-        if (Array.isArray(response.data.content)) {
-          // Extract text from content blocks
-          const textBlocks = response.data.content
-            .filter(block => block.type === 'text')
-            .map(block => block.text);
-          return textBlocks.join('\n');
-        }
-        return response.data.content;
-      } else if (response.data && response.data.message && response.data.message.content) {
-        // Handle array of content blocks in message
-        if (Array.isArray(response.data.message.content)) {
-          const textBlocks = response.data.message.content
-            .filter(block => block.type === 'text')
-            .map(block => block.text);
-          return textBlocks.join('\n');
-        }
-        return response.data.message.content;
+      if (response.data.content && Array.isArray(response.data.content)) {
+        // New Anthropic API format
+        return response.data.content[0].text;
+      } else if (response.data.completion) {
+        // Legacy format
+        return response.data.completion;
       } else {
-        window.console.warn('Unexpected Anthropic API response format:', response.data);
-        // Try to extract any text content from the response
-        if (typeof response.data === 'object') {
-          window.console.log('Response data keys:', Object.keys(response.data));
-        }
-        return response.data.toString();
+        window.console.error('Unexpected response format from Anthropic API:', response.data);
+        throw new Error('Unexpected response format from Anthropic API');
       }
     } catch (error) {
       window.console.error('Error calling Anthropic API:', error);
       if (error.response) {
         window.console.error('Response data:', error.response.data);
         window.console.error('Response status:', error.response.status);
+        window.console.error('Response headers:', error.response.headers);
       }
       throw new Error(`Anthropic API error: ${error.message || 'Unknown error'}`);
     }
@@ -144,7 +154,7 @@ class CustomChatAnthropic {
 class CustomChatOpenAI {
   constructor(options) {
     this.modelName = options.modelName || 'gpt-4o-mini';
-    this.temperature = options.temperature || 0;
+    this.temperature = options.temperature;
     this.systemPrompt = options.systemPrompt || '';
     this.apiKey = options.openAIApiKey;
     
@@ -160,6 +170,11 @@ class CustomChatOpenAI {
     window.console.log(`CustomChatOpenAI initialized with model: ${this.modelName}`);
     window.console.log(`API key provided in constructor: ${this.apiKey ? 'Yes' : 'No'}`);
     window.console.log(`Environment API key available: ${process.env.REACT_APP_OPENAI_API_KEY ? 'Yes' : 'No'}`);
+    if (this.modelName.startsWith('o1')) {
+      window.console.log('Note: o1 models do not support temperature settings');
+    } else {
+      window.console.log(`Temperature setting: ${this.temperature}`);
+    }
   }
 
   async call(messages) {
@@ -176,7 +191,7 @@ class CustomChatOpenAI {
         // For o1 models, convert system message to a user message with special formatting
         if (this.systemPrompt) {
           allMessages = [
-            { role: 'user', content: `<system>\n${this.systemPrompt}\n</system>\n\n${formattedMessages[0]?.content || ''}` },
+            { role: 'user', content: `<s>\n${this.systemPrompt}\n</s>\n\n${formattedMessages[0]?.content || ''}` },
             ...formattedMessages.slice(1)
           ];
         } else {
@@ -202,7 +217,8 @@ class CustomChatOpenAI {
         model: this.modelName,
         messageCount: allMessages.length,
         hasSystemPrompt: !!this.systemPrompt,
-        isO1Model: this.modelName.startsWith('o1')
+        isO1Model: this.modelName.startsWith('o1'),
+        temperature: this.temperature
       });
       
       // Use proxy endpoint to avoid CORS
@@ -221,7 +237,9 @@ class CustomChatOpenAI {
       } else {
         // For other models, use standard parameters
         requestData.max_tokens = 1024;
-        requestData.temperature = this.temperature;
+        if (this.temperature !== undefined) {
+          requestData.temperature = this.temperature;
+        }
       }
       
       const response = await axios.post(
@@ -284,7 +302,7 @@ export const createLlmInstance = (model, systemPrompt, options = {}) => {
     return new CustomChatOpenAI({
       openAIApiKey: openAIApiKey,
       modelName: model,
-      temperature: 0,
+      temperature: model.startsWith('o1') ? undefined : (options.temperature !== undefined ? options.temperature : 0),
       systemPrompt: systemPrompt
     });
   } else if (model.startsWith('claude')) {
@@ -299,14 +317,14 @@ export const createLlmInstance = (model, systemPrompt, options = {}) => {
     return new CustomChatAnthropic({
       anthropicApiKey: anthropicApiKey,
       modelName: model,
-      temperature: 0,
+      temperature: options.temperature !== undefined ? options.temperature : 0,
       systemPrompt: systemPrompt
     });
   } else if (model.includes('llama') || model.includes('mistral')) {
     // For Ollama models
     return new ChatOllama({
       modelName: model,
-      temperature: 0,
+      temperature: options.temperature !== undefined ? options.temperature : 0,
       systemPrompt: systemPrompt,
       endpoint: options.ollamaEndpoint || process.env.REACT_APP_OLLAMA_API_URL || 'http://localhost:11434'
     });

@@ -20,7 +20,8 @@ import {
   Tooltip,
   Link,
   Switch,
-  FormControlLabel
+  FormControlLabel,
+  Slider
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
@@ -50,12 +51,31 @@ const QueryInterface = ({ vectorStore, namespaces, onQuerySubmitted, isProcessin
     'llama3.2:latest': DEFAULT_SYSTEM_PROMPT,
     'mistral:latest': DEFAULT_SYSTEM_PROMPT
   });
+  const [globalTemperature, setGlobalTemperature] = useState(0);
+  const [useCustomTemperatures, setUseCustomTemperatures] = useState(false);
+  const [customTemperatures, setCustomTemperatures] = useState({
+    // OpenAI models
+    'gpt-4o': 0,
+    'gpt-4o-mini': 0,
+    'o1-mini': 0,
+    'o1-preview': 0,
+    
+    // Anthropic models
+    'claude-3-7-sonnet-latest': 0,
+    'claude-3-5-sonnet-latest': 0,
+    
+    // Ollama models
+    'llama3.2:latest': 0,
+    'mistral:latest': 0
+  });
   const [error, setError] = useState(null);
   const [expandedPrompt, setExpandedPrompt] = useState(null);
+  const [expandedTemperature, setExpandedTemperature] = useState(null);
   const [selectedNamespaces, setSelectedNamespaces] = useState(['default']);
   const [ollamaEndpoint, setOllamaEndpoint] = useState('http://localhost:11434');
   const [helpExpanded, setHelpExpanded] = useState(false);
   const [globalPromptExpanded, setGlobalPromptExpanded] = useState(false);
+  const [globalTemperatureExpanded, setGlobalTemperatureExpanded] = useState(false);
 
   const handleQueryChange = (event) => {
     setQuery(event.target.value);
@@ -96,8 +116,39 @@ const QueryInterface = ({ vectorStore, namespaces, onQuerySubmitted, isProcessin
     setOllamaEndpoint(event.target.value);
   };
 
+  const handleGlobalTemperatureChange = (event, newValue) => {
+    setGlobalTemperature(newValue);
+  };
+
+  const handleCustomTemperatureChange = (model, value) => {
+    setCustomTemperatures(prev => ({
+      ...prev,
+      [model]: value
+    }));
+  };
+
+  const handleUseCustomTemperaturesChange = (event) => {
+    setUseCustomTemperatures(event.target.checked);
+  };
+
+  const handleTemperatureAccordionChange = (model) => (event, isExpanded) => {
+    setExpandedTemperature(isExpanded ? model : null);
+  };
+
+  const handleGlobalTemperatureAccordionChange = (event, isExpanded) => {
+    setGlobalTemperatureExpanded(isExpanded);
+  };
+
   const getSystemPromptForModel = (model) => {
     return useCustomPrompts ? customSystemPrompts[model] : globalSystemPrompt;
+  };
+
+  const getTemperatureForModel = (model) => {
+    // o1 models don't support temperature settings
+    if (model.startsWith('o1')) {
+      return undefined;
+    }
+    return useCustomTemperatures ? customTemperatures[model] : globalTemperature;
   };
 
   const submitQuery = async () => {
@@ -112,6 +163,7 @@ const QueryInterface = ({ vectorStore, namespaces, onQuerySubmitted, isProcessin
     const responses = {};
     const metrics = {};
     const systemPromptsUsed = {};
+    const temperaturesUsed = {};
     
     try {
       // Filter vector store by selected namespaces if available
@@ -154,9 +206,14 @@ Given the context information and not prior knowledge, answer the question: ${qu
         const systemPrompt = getSystemPromptForModel(model);
         systemPromptsUsed[model] = systemPrompt;
         
+        // Get the appropriate temperature for this model
+        const temperature = getTemperatureForModel(model);
+        temperaturesUsed[model] = temperature;
+        
         // Create LLM instance with appropriate configuration
         const llm = createLlmInstance(model, systemPrompt, {
-          ollamaEndpoint: ollamaEndpoint
+          ollamaEndpoint: ollamaEndpoint,
+          temperature: temperature
         });
         
         const startTime = Date.now();
@@ -422,6 +479,112 @@ Given the context information and not prior knowledge, answer the question: ${qu
                     onChange={(e) => handleCustomSystemPromptChange(model, e.target.value)}
                     disabled={isProcessing}
                   />
+                </AccordionDetails>
+              </Accordion>
+            ))}
+          </>
+        )}
+
+        {/* Temperature Controls */}
+        <Typography variant="h6" gutterBottom sx={{ mt: 4 }}>
+          Temperature Settings
+        </Typography>
+        <Typography variant="body2" color="textSecondary" sx={{ mb: 2 }}>
+          Temperature controls how creative or deterministic the model responses are. 
+          Higher values (0.7-1.0) make output more random and creative, while lower values (0-0.3) make output more focused and deterministic.
+        </Typography>
+        
+        <FormControlLabel
+          control={
+            <Switch
+              checked={useCustomTemperatures}
+              onChange={handleUseCustomTemperaturesChange}
+              disabled={isProcessing}
+            />
+          }
+          label="Use custom temperature for each model"
+          sx={{ mb: 2 }}
+        />
+        
+        {!useCustomTemperatures && (
+          <Accordion 
+            expanded={globalTemperatureExpanded}
+            onChange={handleGlobalTemperatureAccordionChange}
+            sx={{ mb: 3 }}
+          >
+            <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+              <Typography>Global Temperature (used for all models)</Typography>
+            </AccordionSummary>
+            <AccordionDetails>
+              <Box sx={{ px: 2 }}>
+                <Typography id="global-temperature-slider" gutterBottom>
+                  Temperature: {globalTemperature}
+                </Typography>
+                <Slider
+                  aria-labelledby="global-temperature-slider"
+                  value={globalTemperature}
+                  onChange={handleGlobalTemperatureChange}
+                  step={0.1}
+                  marks
+                  min={0}
+                  max={1}
+                  valueLabelDisplay="auto"
+                  disabled={isProcessing}
+                />
+                <Box display="flex" justifyContent="space-between" mt={1}>
+                  <Typography variant="caption" color="textSecondary">Deterministic (0)</Typography>
+                  <Typography variant="caption" color="textSecondary">Creative (1)</Typography>
+                </Box>
+              </Box>
+            </AccordionDetails>
+          </Accordion>
+        )}
+        
+        {useCustomTemperatures && (
+          <>
+            <Typography variant="body2" color="textSecondary" sx={{ mb: 2 }}>
+              Customize the temperature for each selected model.
+            </Typography>
+            
+            {selectedModels.map((model) => (
+              <Accordion 
+                key={`temp-${model}`}
+                expanded={expandedTemperature === model}
+                onChange={handleTemperatureAccordionChange(model)}
+                sx={{ mb: 1 }}
+                disabled={model.startsWith('o1')}
+              >
+                <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+                  <Typography>
+                    {model} {model.startsWith('o1') && '(Temperature not supported)'}
+                  </Typography>
+                </AccordionSummary>
+                <AccordionDetails>
+                  <Box sx={{ px: 2 }}>
+                    <Typography id={`${model}-temperature-slider`} gutterBottom>
+                      Temperature: {customTemperatures[model]}
+                    </Typography>
+                    <Slider
+                      aria-labelledby={`${model}-temperature-slider`}
+                      value={customTemperatures[model]}
+                      onChange={(e, newValue) => handleCustomTemperatureChange(model, newValue)}
+                      step={0.1}
+                      marks
+                      min={0}
+                      max={1}
+                      valueLabelDisplay="auto"
+                      disabled={isProcessing || model.startsWith('o1')}
+                    />
+                    <Box display="flex" justifyContent="space-between" mt={1}>
+                      <Typography variant="caption" color="textSecondary">Deterministic (0)</Typography>
+                      <Typography variant="caption" color="textSecondary">Creative (1)</Typography>
+                    </Box>
+                    {model.startsWith('o1') && (
+                      <Typography variant="caption" color="error" sx={{ mt: 1, display: 'block' }}>
+                        Note: o1 models do not support temperature adjustments.
+                      </Typography>
+                    )}
+                  </Box>
                 </AccordionDetails>
               </Accordion>
             ))}
