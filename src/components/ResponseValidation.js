@@ -17,11 +17,16 @@ import {
   TextField,
   Accordion,
   AccordionSummary,
-  AccordionDetails
+  AccordionDetails,
+  Select,
+  MenuItem
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import DownloadIcon from '@mui/icons-material/Download';
 import AssessmentIcon from '@mui/icons-material/Assessment';
+import MoneyOffIcon from '@mui/icons-material/MoneyOff';
+import EmojiEventsIcon from '@mui/icons-material/EmojiEvents';
+import BalanceIcon from '@mui/icons-material/Balance';
 import { createLlmInstance, calculateCost } from '../utils/apiServices';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
@@ -62,7 +67,6 @@ const ResponseValidation = ({
     'Exception handling: Only if the output is code then check exceptions paths'
   );
   const [expandedCriteria, setExpandedCriteria] = useState(false);
-  const [error, setError] = useState(null);
   const [currentValidatingModel, setCurrentValidatingModel] = useState(null);
 
   // Load validator model from localStorage on component mount
@@ -84,7 +88,6 @@ const ResponseValidation = ({
     // Only reset if there are no validation results yet
     if (Object.keys(validationResults).length === 0) {
       setCurrentValidatingModel(null);
-      setError(null);
       
       // If we're not processing, make sure isProcessing is false
       if (!isProcessing) {
@@ -98,17 +101,8 @@ const ResponseValidation = ({
     };
   }, [isProcessing, setIsProcessing, validationResults]); // Include the missing dependencies
 
-  const handleCustomCriteriaChange = (event) => {
-    setCustomCriteria(event.target.value);
-  };
-
-  const handleCriteriaToggle = () => {
-    setExpandedCriteria(!expandedCriteria);
-  };
-
   const validateResponses = async () => {
     setIsProcessing(true);
-    setError(null);
     
     const results = {};
     
@@ -199,7 +193,6 @@ For example, use "Accuracy" not "accuracy" or "ACCURACY".
       
     } catch (err) {
       window.console.error('Error validating responses:', err);
-      setError('Error validating responses: ' + err.message);
     } finally {
       setIsProcessing(false);
       setCurrentValidatingModel(null);
@@ -442,6 +435,223 @@ For example, use "Accuracy" not "accuracy" or "ACCURACY".
     );
   };
 
+  // Calculate cost-effectiveness score
+  const calculateEffectivenessScore = (validationResults, metrics) => {
+    if (!validationResults || Object.keys(validationResults).length === 0) return {};
+
+    // Calculate costs for each model
+    const modelCosts = {};
+    const modelScores = {};
+    
+    Object.keys(validationResults).forEach(model => {
+      if (!metrics[model]) return;
+      
+      // Get the cost
+      const cost = calculateCost(model, metrics[model].tokenUsage.total);
+      modelCosts[model] = cost;
+      
+      // Get the overall score
+      const result = validationResults[model];
+      if (result?.overall?.score) {
+        modelScores[model] = result.overall.score;
+      }
+    });
+    
+    // Find best raw score and lowest cost
+    const bestScore = Math.max(...Object.values(modelScores), 0);
+    const lowestCost = Math.min(...Object.values(modelCosts).filter(cost => cost > 0), Infinity);
+    
+    // Calculate a cost-effectiveness score for each model
+    // Formula: (model_score / best_score) / (model_cost / lowest_cost)
+    // Higher is better, normalized to 100
+    const rawEffectivenessScores = {};
+    
+    Object.keys(modelScores).forEach(model => {
+      if (modelCosts[model] === 0) {
+        // Free models get a special indicator
+        rawEffectivenessScores[model] = Infinity;
+      } else {
+        const scoreRatio = modelScores[model] / bestScore;
+        const costRatio = modelCosts[model] / lowestCost;
+        rawEffectivenessScores[model] = (scoreRatio / costRatio) * 100;
+      }
+    });
+    
+    // Find the most cost-effective model
+    let mostEffectiveModel = null;
+    let highestEffectiveness = -1;
+    
+    Object.entries(rawEffectivenessScores).forEach(([model, score]) => {
+      if (score === Infinity) {
+        // Free models with good scores are automatically most effective
+        if (modelScores[model] >= 70 && (mostEffectiveModel === null || rawEffectivenessScores[mostEffectiveModel] !== Infinity)) {
+          mostEffectiveModel = model;
+          highestEffectiveness = score;
+        }
+      } else if (score > highestEffectiveness) {
+        mostEffectiveModel = model;
+        highestEffectiveness = score;
+      }
+    });
+    
+    // Determine the highest scoring model
+    const sortedModels = Object.entries(modelScores)
+      .sort((a, b) => b[1] - a[1]);
+    
+    // Get the highest score
+    const highestScore = sortedModels[0]?.[1] || 0;
+    
+    // Filter models with the highest score
+    const topScoringModels = sortedModels
+      .filter((entry) => entry[1] === highestScore);
+    
+    const highestScoringModel = topScoringModels[0]?.[0];
+    
+    // Determine the cheapest model with a good score (at least 70)
+    const goodModels = Object.entries(modelScores)
+      .filter(([_, score]) => score >= 70)
+      .map(([model]) => model);
+    
+    const cheapestGoodModel = goodModels.length > 0 ? 
+      goodModels.reduce((cheapest, model) => 
+        (modelCosts[model] < modelCosts[cheapest]) ? model : cheapest, 
+        goodModels[0]
+      ) : null;
+    
+    return {
+      modelCosts,
+      modelScores,
+      effectivenessScores: rawEffectivenessScores,
+      mostEffectiveModel,
+      highestScoringModel,
+      cheapestGoodModel
+    };
+  };
+
+  const formatEffectivenessScore = (score) => {
+    if (score === Infinity) return "∞ (Free)";
+    return score.toFixed(1);
+  };
+
+  const renderEffectivenessSummary = (effectivenessData) => {
+    if (!effectivenessData || !effectivenessData.mostEffectiveModel) return null;
+    
+    return (
+      <Paper elevation={2} sx={{ p: 3, mb: 4, bgcolor: '#f9f9fa', border: '1px solid #e0e0e0' }}>
+        <Typography variant="h6" gutterBottom sx={{ display: 'flex', alignItems: 'center' }}>
+          <BalanceIcon sx={{ mr: 1, color: 'primary.main' }} />
+          Cost-Effectiveness Analysis
+        </Typography>
+        
+        <Grid container spacing={2} sx={{ mt: 1 }}>
+          <Grid item xs={12} md={4}>
+            <Card variant="outlined" sx={{ height: '100%', bgcolor: effectivenessData.mostEffectiveModel ? '#f0f7ff' : 'inherit', border: '1px solid #bbdefb' }}>
+              <CardContent>
+                <Typography variant="subtitle1" sx={{ display: 'flex', alignItems: 'center', color: 'primary.main', mb: 1 }}>
+                  <BalanceIcon sx={{ mr: 1, fontSize: '1.2rem' }} />
+                  Best Value for Money
+                </Typography>
+                
+                {effectivenessData.mostEffectiveModel ? (
+                  <>
+                    <Typography variant="h6">{effectivenessData.mostEffectiveModel}</Typography>
+                    <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                      Score: {effectivenessData.modelScores[effectivenessData.mostEffectiveModel]}/100
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      Cost: {effectivenessData.modelCosts[effectivenessData.mostEffectiveModel] === 0 ? 
+                        'Free' : 
+                        `$${effectivenessData.modelCosts[effectivenessData.mostEffectiveModel].toFixed(6)}`}
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                      Effectiveness: {formatEffectivenessScore(effectivenessData.effectivenessScores[effectivenessData.mostEffectiveModel])}
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary" sx={{ mt: 1, fontStyle: 'italic' }}>
+                      Best balance of quality and cost
+                    </Typography>
+                  </>
+                ) : (
+                  <Typography variant="body2" color="text.secondary">
+                    Insufficient data to determine
+                  </Typography>
+                )}
+              </CardContent>
+            </Card>
+          </Grid>
+          
+          <Grid item xs={12} md={4}>
+            <Card variant="outlined" sx={{ height: '100%', bgcolor: effectivenessData.highestScoringModel ? '#f1f8e9' : 'inherit', border: '1px solid #c5e1a5' }}>
+              <CardContent>
+                <Typography variant="subtitle1" sx={{ display: 'flex', alignItems: 'center', color: 'success.main', mb: 1 }}>
+                  <EmojiEventsIcon sx={{ mr: 1, fontSize: '1.2rem' }} />
+                  Highest Quality
+                </Typography>
+                
+                {effectivenessData.highestScoringModel ? (
+                  <>
+                    <Typography variant="h6">{effectivenessData.highestScoringModel}</Typography>
+                    <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                      Score: {effectivenessData.modelScores[effectivenessData.highestScoringModel]}/100
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      Cost: {effectivenessData.modelCosts[effectivenessData.highestScoringModel] === 0 ? 
+                        'Free' : 
+                        `$${effectivenessData.modelCosts[effectivenessData.highestScoringModel].toFixed(6)}`}
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary" sx={{ mt: 1, fontStyle: 'italic' }}>
+                      Best raw quality score regardless of cost
+                    </Typography>
+                  </>
+                ) : (
+                  <Typography variant="body2" color="text.secondary">
+                    Insufficient data to determine
+                  </Typography>
+                )}
+              </CardContent>
+            </Card>
+          </Grid>
+          
+          <Grid item xs={12} md={4}>
+            <Card variant="outlined" sx={{ height: '100%', bgcolor: effectivenessData.cheapestGoodModel ? '#fff8e1' : 'inherit', border: '1px solid #ffe082' }}>
+              <CardContent>
+                <Typography variant="subtitle1" sx={{ display: 'flex', alignItems: 'center', color: '#ff8f00', mb: 1 }}>
+                  <MoneyOffIcon sx={{ mr: 1, fontSize: '1.2rem' }} />
+                  Budget Choice
+                </Typography>
+                
+                {effectivenessData.cheapestGoodModel ? (
+                  <>
+                    <Typography variant="h6">{effectivenessData.cheapestGoodModel}</Typography>
+                    <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                      Score: {effectivenessData.modelScores[effectivenessData.cheapestGoodModel]}/100
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      Cost: {effectivenessData.modelCosts[effectivenessData.cheapestGoodModel] === 0 ? 
+                        'Free' : 
+                        `$${effectivenessData.modelCosts[effectivenessData.cheapestGoodModel].toFixed(6)}`}
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary" sx={{ mt: 1, fontStyle: 'italic' }}>
+                      Lowest cost with a score of at least 70
+                    </Typography>
+                  </>
+                ) : (
+                  <Typography variant="body2" color="text.secondary">
+                    No models with sufficient quality
+                  </Typography>
+                )}
+              </CardContent>
+            </Card>
+          </Grid>
+        </Grid>
+      </Paper>
+    );
+  };
+
+  // Calculate effectiveness when validation results or metrics change
+  const effectivenessData = Object.keys(validationResults).length > 0 ? 
+    calculateEffectivenessScore(validationResults, metrics) : 
+    null;
+
   return (
     <Box>
       <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
@@ -459,119 +669,99 @@ For example, use "Accuracy" not "accuracy" or "ACCURACY".
         </Button>
       </Box>
 
-      <Typography variant="body2" color="textSecondary" paragraph>
-        This tool evaluates the quality of each model's response using another LLM as a judge. 
-        The validator will score each response on a scale of 1-100 based on the criteria you specify.
-      </Typography>
-
-      <Paper elevation={1} sx={{ p: 3, mb: 3 }}>
-        <Typography variant="h6" gutterBottom>
-          Validation Settings
-        </Typography>
-        
-        <Typography variant="body2" color="textSecondary" paragraph>
-          The validation will be performed using the model selected in the LLM Settings panel.
-          You can customize the evaluation criteria below.
-        </Typography>
-        
-        <Accordion 
-          expanded={expandedCriteria}
-          onChange={handleCriteriaToggle}
-          sx={{ mb: 3 }}
-        >
-          <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-            <Typography>Evaluation Criteria</Typography>
-          </AccordionSummary>
-          <AccordionDetails>
-            <TextField
-              fullWidth
-              multiline
-              rows={8}
-              variant="outlined"
-              value={customCriteria}
-              onChange={handleCustomCriteriaChange}
-              disabled={isProcessing}
-              placeholder="Enter the criteria for evaluating responses..."
-              helperText="Specify the criteria that the validator should use to evaluate the responses."
-            />
-          </AccordionDetails>
-        </Accordion>
-        
-        <Box display="flex" justifyContent="center" flexDirection="column" alignItems="center">
-          <Button
-            variant="contained"
-            color="primary"
-            startIcon={<AssessmentIcon />}
-            onClick={validateResponses}
-            disabled={isProcessing || Object.keys(responses).length === 0}
-          >
-            {isProcessing ? 'Validating...' : 'Validate Responses'}
-          </Button>
-          
-          {isProcessing && (
-            <Box sx={{ width: '100%', maxWidth: 500, mt: 3 }}>
-              <Typography variant="body2" align="center" gutterBottom>
-                Validating responses using {localStorage.getItem('responseValidatorModel') || validatorModel}
-              </Typography>
-              <LinearProgress sx={{ mb: 2 }} />
-              
-              <Box sx={{ mt: 2 }}>
-                {Object.keys(responses).map(model => (
-                  <Box key={model} sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
-                    <Box 
-                      sx={{ 
-                        width: 20, 
-                        height: 20, 
-                        borderRadius: '50%', 
-                        mr: 1,
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        bgcolor: currentValidatingModel === model ? 'primary.main' : 
-                                 validationResults[model] ? 'success.light' : 'grey.300'
-                      }}
-                    >
-                      {currentValidatingModel === model && <CircularProgress size={16} color="inherit" />}
-                    </Box>
-                    <Typography 
-                      variant="body2" 
-                      color={currentValidatingModel === model ? 'primary' : 
-                             validationResults[model] ? 'success.main' : 'textSecondary'}
-                      sx={{ fontWeight: currentValidatingModel === model ? 'bold' : 'normal' }}
-                    >
-                      {model}
-                      {currentValidatingModel === model && ' (validating...)'}
-                      {validationResults[model] && ' (completed)'}
-                    </Typography>
-                  </Box>
-                ))}
-              </Box>
-            </Box>
-          )}
-        </Box>
-      </Paper>
-
-      {error && (
-        <Alert severity="error" sx={{ mb: 3 }}>
-          {error}
-        </Alert>
-      )}
-
-      {Object.keys(validationResults).length > 0 && (
-        <Box mb={4}>
-          <Typography variant="h6" gutterBottom>
-            Validation Results
+      {isProcessing ? (
+        <Box textAlign="center" py={4}>
+          <CircularProgress />
+          <Typography variant="h6" sx={{ mt: 2 }}>
+            Validating Responses... {currentValidatingModel && `(Processing ${currentValidatingModel})`}
           </Typography>
-          
-          {/* Summary Table */}
-          <Paper elevation={1} sx={{ mb: 3, overflow: 'auto' }}>
-            <Box sx={{ p: 2 }}>
-              <Typography variant="subtitle1" gutterBottom>
-                Summary Comparison
+        </Box>
+      ) : !Object.keys(validationResults).length ? (
+        <Box>
+          <Paper elevation={1} sx={{ p: 3, mb: 3 }}>
+            <Typography variant="h6" gutterBottom>
+              Validation Options
+            </Typography>
+            <Typography variant="body2" color="textSecondary" paragraph>
+              Validate the responses from different models to assess their quality and accuracy. This helps identify which models perform best with your specific data and queries.
+            </Typography>
+            
+            <Typography variant="subtitle2" gutterBottom>
+              Validation Model
+            </Typography>
+            <Box sx={{ mb: 2 }}>
+              <Select
+                fullWidth
+                value={validatorModel}
+                onChange={(e) => setValidatorModel(e.target.value)}
+                variant="outlined"
+                sx={{ mb: 2 }}
+              >
+                <MenuItem value="gpt-4o">GPT-4o</MenuItem>
+                <MenuItem value="gpt-4o-mini">GPT-4o Mini</MenuItem>
+                <MenuItem value="claude-3-5-sonnet-latest">Claude 3.5 Sonnet</MenuItem>
+                <MenuItem value="claude-3-7-sonnet-latest">Claude 3.7 Sonnet</MenuItem>
+              </Select>
+              <Typography variant="body2" color="textSecondary">
+                This model will evaluate the responses from all the models in your comparison. For best results, choose a strong model that can provide insightful analysis.
+              </Typography>
+            </Box>
+            
+            <Accordion 
+              expanded={expandedCriteria}
+              onChange={() => setExpandedCriteria(!expandedCriteria)}
+              sx={{ mb: 2 }}
+            >
+              <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+                <Typography>Evaluation Criteria</Typography>
+              </AccordionSummary>
+              <AccordionDetails>
+                <Typography variant="body2" color="textSecondary" sx={{ mb: 2 }}>
+                  Specify the criteria for evaluating responses. Define one criterion per line, optionally with descriptions after a colon.
+                </Typography>
+                <TextField
+                  label="Evaluation Criteria"
+                  fullWidth
+                  multiline
+                  rows={8}
+                  value={customCriteria}
+                  onChange={(e) => setCustomCriteria(e.target.value)}
+                  placeholder="Enter evaluation criteria, one per line..."
+                  variant="outlined"
+                />
+              </AccordionDetails>
+            </Accordion>
+            
+            <Button
+              variant="contained"
+              color="primary"
+              startIcon={<AssessmentIcon />}
+              onClick={validateResponses}
+              disabled={!Object.keys(responses).length || isProcessing}
+              fullWidth
+            >
+              Validate Responses
+            </Button>
+          </Paper>
+        </Box>
+      ) : (
+        <>
+          {/* Show Cost-Effectiveness Analysis first */}
+          {renderEffectivenessSummary(effectivenessData)}
+
+          {/* Then show the Validation Results table */}
+          <Box mb={4}>
+            <Paper elevation={1} sx={{ p: 3 }}>
+              <Typography variant="h6" gutterBottom>
+                Validation Results
               </Typography>
               
-              <Box sx={{ minWidth: 650, overflowX: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <Typography variant="body2" color="textSecondary" paragraph>
+                These scores assess how well each model response aligns with the evaluation criteria. Higher scores indicate better quality responses.
+              </Typography>
+              
+              <Box sx={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '20px' }}>
                   <thead>
                     <tr>
                       <th style={{ textAlign: 'left', padding: '8px', borderBottom: '1px solid #ddd' }}>Model</th>
@@ -643,6 +833,13 @@ For example, use "Accuracy" not "accuracy" or "ACCURACY".
                         return criterionKey ? criteria[criterionKey] : null;
                       };
                       
+                      // Get color based on score
+                      const getScoreColor = (score) => {
+                        if (score >= 80) return '#4caf50';
+                        if (score >= 60) return '#ff9800';
+                        return '#f44336';
+                      };
+                      
                       return Object.keys(validationResults).map(model => {
                         const result = validationResults[model];
                         const cost = modelCosts[model] || 0;
@@ -661,13 +858,6 @@ For example, use "Accuracy" not "accuracy" or "ACCURACY".
                         } else {
                           costRatioDisplay = 'N/A';
                         }
-                        
-                        // Get color based on score
-                        const getScoreColor = (score) => {
-                          if (score >= 80) return '#4caf50';
-                          if (score >= 60) return '#ff9800';
-                          return '#f44336';
-                        };
                         
                         return (
                           <tr key={model}>
@@ -715,9 +905,10 @@ For example, use "Accuracy" not "accuracy" or "ACCURACY".
                   </tbody>
                 </table>
               </Box>
-            </Box>
-          </Paper>
-          
+            </Paper>
+          </Box>
+
+          {/* Finally show the detailed model cards */}
           <Grid container spacing={3}>
             {Object.keys(validationResults).map((model) => {
               const result = validationResults[model];
@@ -793,7 +984,7 @@ For example, use "Accuracy" not "accuracy" or "ACCURACY".
               );
             })}
           </Grid>
-        </Box>
+        </>
       )}
     </Box>
   );
