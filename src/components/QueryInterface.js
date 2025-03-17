@@ -611,9 +611,9 @@ Format your response with clear headings for each section.
 
       <Paper elevation={1} sx={{ p: 3, mb: 3 }}>
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
-          <Typography variant="h6" gutterBottom>
-            Enter Your Question
-          </Typography>
+        <Typography variant="h6" gutterBottom>
+          Enter Your Question
+        </Typography>
           <Tooltip title={expandedQuery ? "Collapse query field" : "Expand query field"}>
             <IconButton 
               size="small" 
@@ -714,7 +714,7 @@ Format your response with clear headings for each section.
         <Typography variant="body2" color="textSecondary" sx={{ mb: 2 }}>
           The system prompt guides how the AI responds to your questions.
         </Typography>
-        
+
         <FormControlLabel
           control={
             <Switch
@@ -788,16 +788,16 @@ Format your response with clear headings for each section.
             </Typography>
             
             {selectedModels.map((model) => (
-              <Accordion 
-                key={model}
-                expanded={expandedPrompt === model}
-                onChange={handlePromptAccordionChange(model)}
-                sx={{ mb: 1 }}
-              >
-                <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-                  <Typography>{model}</Typography>
-                </AccordionSummary>
-                <AccordionDetails>
+          <Accordion 
+            key={model}
+            expanded={expandedPrompt === model}
+            onChange={handlePromptAccordionChange(model)}
+            sx={{ mb: 1 }}
+          >
+            <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+              <Typography>{model}</Typography>
+            </AccordionSummary>
+            <AccordionDetails>
                   <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 1 }}>
                     <Tooltip title={expandedCustomPrompts[model] ? "Collapse prompt field" : "Expand prompt field"}>
                       <IconButton 
@@ -808,12 +808,12 @@ Format your response with clear headings for each section.
                       </IconButton>
                     </Tooltip>
                   </Box>
-                  <TextField
-                    fullWidth
-                    multiline
+              <TextField
+                fullWidth
+                multiline
                     minRows={expandedCustomPrompts[model] ? 15 : 8}
                     maxRows={expandedCustomPrompts[model] ? 30 : 20}
-                    variant="outlined"
+                variant="outlined"
                     value={customSystemPrompts[model]}
                     onChange={(e) => handleCustomSystemPromptChange(model, e.target.value)}
                     disabled={isProcessing}
@@ -919,8 +919,8 @@ Format your response with clear headings for each section.
                   min={0}
                   max={1}
                   valueLabelDisplay="auto"
-                  disabled={isProcessing}
-                />
+                disabled={isProcessing}
+              />
                 <Box display="flex" justifyContent="space-between" mt={1}>
                   <Typography variant="caption" color="textSecondary">Deterministic (0)</Typography>
                   <Typography variant="caption" color="textSecondary">Creative (1)</Typography>
@@ -975,9 +975,9 @@ Format your response with clear headings for each section.
                       </Typography>
                     )}
                   </Box>
-                </AccordionDetails>
-              </Accordion>
-            ))}
+            </AccordionDetails>
+          </Accordion>
+        ))}
           </>
         )}
       </Paper>

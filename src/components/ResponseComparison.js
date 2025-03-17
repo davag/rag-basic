@@ -39,6 +39,7 @@ import jsPDF from 'jspdf';
 import 'jspdf-autotable';
 import { calculateCost } from '../utils/apiServices';
 import TokenUsageAnalyzer from './TokenUsageAnalyzer';
+import ErrorPatternRecognition from './ErrorPatternRecognition';
 
 const ResponseComparison = ({ responses, metrics, currentQuery, systemPrompts, onBackToQuery, onImportResults }) => {
   const [expandedSources, setExpandedSources] = useState(false);
@@ -515,6 +516,15 @@ const ResponseComparison = ({ responses, metrics, currentQuery, systemPrompts, o
           responses={responses} 
           systemPrompts={systemPrompts} 
           currentQuery={currentQuery}
+        />
+      </Box>
+
+      {/* Error Pattern Recognition */}
+      <Box mb={4}>
+        <ErrorPatternRecognition 
+          responses={responses}
+          currentQuery={currentQuery}
+          systemPrompts={systemPrompts}
         />
       </Box>
 
