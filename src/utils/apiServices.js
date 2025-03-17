@@ -289,8 +289,22 @@ class CustomChatOpenAI {
  * @returns {ChatOllama|CustomChatAnthropic|CustomChatOpenAI} - The LLM instance
  */
 export const createLlmInstance = (model, systemPrompt, options = {}) => {
-  // Always use our custom implementations to avoid CORS issues in the browser
-  if (model.startsWith('gpt') || model.startsWith('o1')) {
+  // Try to get custom model settings from localStorage
+  let customModels = {};
+  try {
+    const savedModels = localStorage.getItem('llmModels');
+    if (savedModels) {
+      customModels = JSON.parse(savedModels);
+    }
+  } catch (err) {
+    window.console.error('Error loading custom models from localStorage:', err);
+  }
+
+  // Get the vendor from custom models if available
+  const vendor = customModels[model]?.vendor;
+
+  // Route to the appropriate implementation based on vendor or model prefix
+  if ((vendor === 'OpenAI') || (!vendor && (model.startsWith('gpt') || model.startsWith('o1')))) {
     // Get the API key from environment variables
     const openAIApiKey = process.env.REACT_APP_OPENAI_API_KEY;
     
@@ -305,7 +319,7 @@ export const createLlmInstance = (model, systemPrompt, options = {}) => {
       temperature: model.startsWith('o1') ? undefined : (options.temperature !== undefined ? options.temperature : 0),
       systemPrompt: systemPrompt
     });
-  } else if (model.startsWith('claude')) {
+  } else if ((vendor === 'Anthropic') || (!vendor && model.startsWith('claude'))) {
     // Get the API key from environment variables
     const anthropicApiKey = process.env.REACT_APP_ANTHROPIC_API_KEY;
     
@@ -320,7 +334,7 @@ export const createLlmInstance = (model, systemPrompt, options = {}) => {
       temperature: options.temperature !== undefined ? options.temperature : 0,
       systemPrompt: systemPrompt
     });
-  } else if (model.includes('llama') || model.includes('mistral')) {
+  } else if ((vendor === 'Ollama') || (!vendor && (model.includes('llama') || model.includes('mistral')))) {
     // For Ollama models
     return new ChatOllama({
       modelName: model,
@@ -419,7 +433,36 @@ export const executeQuery = async (chain, query) => {
  * @returns {number} - The estimated cost in USD
  */
 export const calculateCost = (model, tokenCount) => {
-  // Pricing per 1M tokens (in USD)
+  // Try to get custom model pricing from localStorage first
+  let customModels = {};
+  try {
+    const savedModels = localStorage.getItem('llmModels');
+    if (savedModels) {
+      customModels = JSON.parse(savedModels);
+    }
+  } catch (err) {
+    window.console.error('Error loading custom models from localStorage:', err);
+  }
+
+  // If the model exists in custom models and is active, use its pricing
+  if (customModels[model] && customModels[model].active) {
+    const modelPricing = {
+      input: customModels[model].input,
+      output: customModels[model].output
+    };
+    
+    // Assume a 50/50 split between input and output tokens for simplicity
+    const inputTokens = Math.round(tokenCount / 2);
+    const outputTokens = tokenCount - inputTokens;
+    
+    // Calculate cost (price per 1M tokens * token count / 1M)
+    const inputCost = (modelPricing.input * inputTokens) / 1000000;
+    const outputCost = (modelPricing.output * outputTokens) / 1000000;
+    
+    return inputCost + outputCost;
+  }
+
+  // Default pricing per 1M tokens (in USD) - fallback if not found in localStorage
   const pricing = {
     // OpenAI models
     'gpt-4o': {

@@ -1,13 +1,16 @@
 import React, { useState } from 'react';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
-import { Container, Box, Paper, Tabs, Tab, Typography, Alert, Snackbar } from '@mui/material';
+import { Container, Box, Paper, Tabs, Tab, Typography, Alert, Snackbar, IconButton, Dialog, DialogContent, AppBar, Toolbar } from '@mui/material';
+import SettingsIcon from '@mui/icons-material/Settings';
+import CloseIcon from '@mui/icons-material/Close';
 
 import DocumentUpload from './components/DocumentUpload';
 import VectorStoreConfig from './components/VectorStoreConfig';
 import QueryInterface from './components/QueryInterface';
 import ResponseComparison from './components/ResponseComparison';
 import ResponseValidation from './components/ResponseValidation';
+import LlmSettings from './components/LlmSettings';
 
 const theme = createTheme({
   palette: {
@@ -51,6 +54,7 @@ function App() {
   const [snackbarMessage, setSnackbarMessage] = useState('');
   const [snackbarSeverity, setSnackbarSeverity] = useState('success');
   const [validationResults, setValidationResults] = useState({});
+  const [settingsDialogOpen, setSettingsDialogOpen] = useState(false);
   
   // Store query interface state to preserve it when navigating back
   const [lastQueryState, setLastQueryState] = useState({
@@ -167,9 +171,18 @@ function App() {
       <CssBaseline />
       <Container maxWidth="lg">
         <Box sx={{ my: 4 }}>
-          <Typography variant="h4" component="h1" gutterBottom align="center">
-            RAG Playground
-          </Typography>
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+            <Typography variant="h4" component="h1" gutterBottom>
+              RAG Playground
+            </Typography>
+            <IconButton 
+              color="primary" 
+              onClick={() => setSettingsDialogOpen(true)}
+              title="LLM Settings"
+            >
+              <SettingsIcon />
+            </IconButton>
+          </Box>
           
           {/* Display API key status */}
           {apiKeysConfigured ? (
@@ -238,7 +251,7 @@ function App() {
             </TabPanel>
 
             <TabPanel value={tabValue} index={4}>
-              <ResponseValidation
+              <ResponseValidation 
                 responses={llmResponses}
                 metrics={metrics}
                 currentQuery={currentQuery}
@@ -252,6 +265,33 @@ function App() {
             </TabPanel>
           </Paper>
         </Box>
+        
+        {/* Settings Dialog */}
+        <Dialog 
+          open={settingsDialogOpen} 
+          onClose={() => setSettingsDialogOpen(false)}
+          fullWidth
+          maxWidth="lg"
+        >
+          <AppBar position="static" color="default" elevation={0}>
+            <Toolbar>
+              <Typography variant="h6" style={{ flexGrow: 1 }}>
+                LLM Settings
+              </Typography>
+              <IconButton
+                edge="end"
+                color="inherit"
+                onClick={() => setSettingsDialogOpen(false)}
+                aria-label="close"
+              >
+                <CloseIcon />
+              </IconButton>
+            </Toolbar>
+          </AppBar>
+          <DialogContent dividers>
+            <LlmSettings />
+          </DialogContent>
+        </Dialog>
         
         <Snackbar
           open={snackbarOpen}
