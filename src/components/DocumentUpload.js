@@ -25,7 +25,6 @@ import {
   PictureAsPdf as PdfIcon,
   InsertDriveFile as FileIcon,
   Code as CodeIcon,
-  CloudUpload as CloudUploadIcon,
   HelpOutline as HelpOutlineIcon,
   ExpandMore as ExpandMoreIcon
 } from '@mui/icons-material';

@@ -44,6 +44,8 @@ function App() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [llmResponses, setLlmResponses] = useState({});
   const [metrics, setMetrics] = useState({});
+  const [currentQuery, setCurrentQuery] = useState('');
+  const [systemPrompts, setSystemPrompts] = useState({});
 
   const handleTabChange = (event, newValue) => {
     setTabValue(newValue);
@@ -61,9 +63,11 @@ function App() {
     setTabValue(2); // Move to query interface after vector store is created
   };
 
-  const handleQuerySubmitted = (responses, queryMetrics) => {
+  const handleQuerySubmitted = (responses, queryMetrics, query, prompts) => {
     setLlmResponses(responses);
     setMetrics(queryMetrics);
+    setCurrentQuery(query);
+    setSystemPrompts(prompts);
     setTabValue(3); // Move to response comparison after query is submitted
   };
 
@@ -138,6 +142,8 @@ function App() {
               <ResponseComparison 
                 responses={llmResponses}
                 metrics={metrics}
+                currentQuery={currentQuery}
+                systemPrompts={systemPrompts}
               />
             </TabPanel>
           </Paper>

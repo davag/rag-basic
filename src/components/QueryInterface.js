@@ -111,6 +111,7 @@ const QueryInterface = ({ vectorStore, namespaces, onQuerySubmitted, isProcessin
     
     const responses = {};
     const metrics = {};
+    const systemPromptsUsed = {};
     
     try {
       // Filter vector store by selected namespaces if available
@@ -151,6 +152,7 @@ Given the context information and not prior knowledge, answer the question: ${qu
       for (const model of selectedModels) {
         // Get the appropriate system prompt for this model
         const systemPrompt = getSystemPromptForModel(model);
+        systemPromptsUsed[model] = systemPrompt;
         
         // Create LLM instance with appropriate configuration
         const llm = createLlmInstance(model, systemPrompt, {
@@ -183,7 +185,7 @@ Given the context information and not prior knowledge, answer the question: ${qu
         };
       }
       
-      onQuerySubmitted(responses, metrics);
+      onQuerySubmitted(responses, metrics, query, systemPromptsUsed);
     } catch (err) {
       window.console.error('Error executing query:', err);
       setError('Error executing query: ' + err.message);

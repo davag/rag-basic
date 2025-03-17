@@ -18,15 +18,19 @@ import {
   TableCell,
   TableContainer,
   TableHead,
-  TableRow
+  TableRow,
+  Button
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import AccessTimeIcon from '@mui/icons-material/AccessTime';
 import TokenIcon from '@mui/icons-material/Token';
 import DescriptionIcon from '@mui/icons-material/Description';
 import FolderIcon from '@mui/icons-material/Folder';
+import DownloadIcon from '@mui/icons-material/Download';
+import jsPDF from 'jspdf';
+import 'jspdf-autotable';
 
-const ResponseComparison = ({ responses, metrics }) => {
+const ResponseComparison = ({ responses, metrics, currentQuery, systemPrompts }) => {
   const [expandedSources, setExpandedSources] = useState({});
 
   const handleSourcesToggle = (model) => {
@@ -60,7 +64,7 @@ const ResponseComparison = ({ responses, metrics }) => {
   };
 
   const getModelVendor = (model) => {
-    if (model.startsWith('gpt')) {
+    if (model.startsWith('gpt') || model.startsWith('o1')) {
       return 'OpenAI';
     } else if (model.startsWith('claude')) {
       return 'Anthropic';
@@ -83,11 +87,182 @@ const ResponseComparison = ({ responses, metrics }) => {
     return byNamespace;
   };
 
+  const generatePDF = () => {
+    // Create a new jsPDF instance
+    const doc = new jsPDF();
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const margin = 15;
+    const contentWidth = pageWidth - (margin * 2);
+    
+    // Title
+    doc.setFontSize(18);
+    doc.text('RAG Query Report', margin, 20);
+    
+    // Query
+    doc.setFontSize(14);
+    doc.text('Query', margin, 30);
+    doc.setFontSize(12);
+    const queryLines = doc.splitTextToSize(currentQuery || 'No query provided', contentWidth);
+    doc.text(queryLines, margin, 40);
+    
+    let yPos = 40 + (queryLines.length * 7);
+    
+    // System Prompts
+    if (systemPrompts) {
+      yPos += 10;
+      doc.setFontSize(14);
+      doc.text('System Prompts', margin, yPos);
+      yPos += 10;
+      doc.setFontSize(12);
+      
+      Object.entries(systemPrompts).forEach(([model, prompt]) => {
+        if (Object.keys(responses).includes(model)) {
+          doc.setFontSize(12);
+          doc.text(`${model} (${getModelVendor(model)})`, margin, yPos);
+          yPos += 7;
+          
+          const promptLines = doc.splitTextToSize(prompt, contentWidth);
+          doc.setFontSize(10);
+          doc.text(promptLines, margin, yPos);
+          yPos += (promptLines.length * 5) + 10;
+          
+          // Add a new page if we're getting close to the bottom
+          if (yPos > 270) {
+            doc.addPage();
+            yPos = 20;
+          }
+        }
+      });
+    }
+    
+    // Performance Metrics
+    doc.addPage();
+    yPos = 20;
+    doc.setFontSize(14);
+    doc.text('Performance Metrics', margin, yPos);
+    yPos += 10;
+    
+    // Create a simple table manually instead of using autoTable
+    const metricsData = Object.keys(metrics).map(model => [
+      `${model} (${getModelVendor(model)})`,
+      formatResponseTime(metrics[model].responseTime),
+      `${metrics[model].tokenUsage.estimated ? '~' : ''}${metrics[model].tokenUsage.total} tokens`
+    ]);
+    
+    // Table headers
+    doc.setFontSize(11);
+    doc.text('Model', margin, yPos);
+    doc.text('Response Time', margin + 80, yPos);
+    doc.text('Token Usage', margin + 150, yPos);
+    yPos += 7;
+    
+    // Draw a line under headers
+    doc.setDrawColor(200, 200, 200);
+    doc.line(margin, yPos, pageWidth - margin, yPos);
+    yPos += 5;
+    
+    // Table rows
+    doc.setFontSize(10);
+    metricsData.forEach((row, index) => {
+      doc.text(row[0], margin, yPos);
+      doc.text(row[1], margin + 80, yPos);
+      doc.text(row[2], margin + 150, yPos);
+      yPos += 7;
+      
+      // Draw a light line between rows
+      if (index < metricsData.length - 1) {
+        doc.setDrawColor(230, 230, 230);
+        doc.line(margin, yPos, pageWidth - margin, yPos);
+        yPos += 3;
+      }
+    });
+    
+    yPos += 15;
+    
+    // Model Responses
+    doc.setFontSize(14);
+    doc.text('Model Responses', margin, yPos);
+    yPos += 10;
+    
+    Object.keys(responses).forEach((model, index) => {
+      // Add a new page for each model response
+      if (index > 0 || yPos > 240) {
+        doc.addPage();
+        yPos = 20;
+      }
+      
+      doc.setFontSize(12);
+      doc.text(`${model} (${getModelVendor(model)})`, margin, yPos);
+      yPos += 7;
+      
+      const answer = typeof responses[model].answer === 'object' && responses[model].answer.text 
+        ? responses[model].answer.text 
+        : responses[model].answer;
+      
+      const answerLines = doc.splitTextToSize(answer, contentWidth);
+      doc.setFontSize(10);
+      doc.text(answerLines, margin, yPos);
+      yPos += (answerLines.length * 5) + 15;
+      
+      // Sources
+      if (responses[model].sources && responses[model].sources.length > 0) {
+        doc.setFontSize(12);
+        doc.text(`Sources (${responses[model].sources.length})`, margin, yPos);
+        yPos += 10;
+        
+        const sourcesByNamespace = getSourcesByNamespace(responses[model].sources);
+        
+        Object.entries(sourcesByNamespace).forEach(([namespace, sources]) => {
+          // Add a new page if we're getting close to the bottom
+          if (yPos > 250) {
+            doc.addPage();
+            yPos = 20;
+          }
+          
+          doc.setFontSize(11);
+          doc.text(`Namespace: ${namespace} (${sources.length} sources)`, margin, yPos);
+          yPos += 7;
+          
+          sources.forEach((source, idx) => {
+            // Add a new page if we're getting close to the bottom
+            if (yPos > 250) {
+              doc.addPage();
+              yPos = 20;
+            }
+            
+            doc.setFontSize(10);
+            doc.text(`Source: ${source.source}`, margin, yPos);
+            yPos += 5;
+            
+            const contentLines = doc.splitTextToSize(source.content, contentWidth);
+            doc.setFontSize(9);
+            doc.text(contentLines, margin, yPos);
+            yPos += (contentLines.length * 5) + 10;
+          });
+        });
+      }
+    });
+    
+    // Save the PDF
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    doc.save(`rag-report-${timestamp}.pdf`);
+  };
+
   return (
     <Box>
-      <Typography variant="h5" gutterBottom>
-        Response Comparison
-      </Typography>
+      <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
+        <Typography variant="h5">
+          Response Comparison
+        </Typography>
+        <Button 
+          variant="contained" 
+          color="primary" 
+          startIcon={<DownloadIcon />}
+          onClick={generatePDF}
+        >
+          Download Report
+        </Button>
+      </Box>
 
       <Box mb={4}>
         <Typography variant="h6" gutterBottom>
