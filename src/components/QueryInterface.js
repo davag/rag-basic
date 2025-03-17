@@ -31,6 +31,8 @@ import SaveIcon from '@mui/icons-material/Save';
 import UploadIcon from '@mui/icons-material/Upload';
 import LightbulbIcon from '@mui/icons-material/Lightbulb';
 import CloseIcon from '@mui/icons-material/Close';
+import FullscreenIcon from '@mui/icons-material/Fullscreen';
+import FullscreenExitIcon from '@mui/icons-material/FullscreenExit';
 import { createLlmInstance } from '../utils/apiServices';
 
 const DEFAULT_SYSTEM_PROMPT = `You are a helpful assistant that answers questions based on the provided context. 
@@ -86,6 +88,9 @@ const QueryInterface = ({ vectorStore, namespaces, onQuerySubmitted, isProcessin
   const [responses, setResponses] = useState({});
   const [isGettingPromptIdeas, setIsGettingPromptIdeas] = useState(false);
   const [promptIdeas, setPromptIdeas] = useState(null);
+  const [expandedQuery, setExpandedQuery] = useState(false);
+  const [expandedGlobalPrompt, setExpandedGlobalPrompt] = useState(false);
+  const [expandedCustomPrompts, setExpandedCustomPrompts] = useState({});
 
   // Reference to the file input element
   const fileInputRef = useRef(null);
@@ -500,6 +505,13 @@ Format your response with clear headings for each section.
     getSystemPromptIdeas(customSystemPrompts[model], model);
   };
 
+  const handlePromptExpansionToggle = (model) => {
+    setExpandedCustomPrompts(prev => ({
+      ...prev,
+      [model]: !prev[model]
+    }));
+  };
+
   return (
     <Box>
       <Box display="flex" alignItems="center" justifyContent="space-between" mb={1}>
@@ -589,19 +601,35 @@ Format your response with clear headings for each section.
       </Accordion>
 
       <Paper elevation={1} sx={{ p: 3, mb: 3 }}>
-        <Typography variant="h6" gutterBottom>
-          Enter Your Question
-        </Typography>
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
+          <Typography variant="h6" gutterBottom>
+            Enter Your Question
+          </Typography>
+          <Tooltip title={expandedQuery ? "Collapse query field" : "Expand query field"}>
+            <IconButton 
+              size="small" 
+              onClick={() => setExpandedQuery(!expandedQuery)}
+            >
+              {expandedQuery ? <FullscreenExitIcon /> : <FullscreenIcon />}
+            </IconButton>
+          </Tooltip>
+        </Box>
         <TextField
           fullWidth
           multiline
-          rows={4}
+          minRows={expandedQuery ? 15 : 6}
+          maxRows={expandedQuery ? 30 : 20}
           variant="outlined"
           placeholder="Enter your question here..."
           value={query}
           onChange={handleQueryChange}
           disabled={isProcessing}
-          sx={{ mb: 3 }}
+          sx={{ 
+            mb: 2,
+            '& .MuiOutlinedInput-root': {
+              fontSize: '0.95rem'
+            }
+          }}
         />
 
         <Typography variant="h6" gutterBottom>
@@ -700,14 +728,30 @@ Format your response with clear headings for each section.
               <Typography>Global System Prompt (used for all models)</Typography>
             </AccordionSummary>
             <AccordionDetails>
+              <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 1 }}>
+                <Tooltip title={expandedGlobalPrompt ? "Collapse prompt field" : "Expand prompt field"}>
+                  <IconButton 
+                    size="small" 
+                    onClick={() => setExpandedGlobalPrompt(!expandedGlobalPrompt)}
+                  >
+                    {expandedGlobalPrompt ? <FullscreenExitIcon /> : <FullscreenIcon />}
+                  </IconButton>
+                </Tooltip>
+              </Box>
               <TextField
                 fullWidth
                 multiline
-                rows={6}
+                minRows={expandedGlobalPrompt ? 15 : 8}
+                maxRows={expandedGlobalPrompt ? 30 : 20}
                 variant="outlined"
                 value={globalSystemPrompt}
                 onChange={handleGlobalSystemPromptChange}
                 disabled={isProcessing}
+                sx={{ 
+                  '& .MuiOutlinedInput-root': {
+                    fontSize: '0.95rem'
+                  }
+                }}
               />
               <Box sx={{ mt: 2, display: 'flex', justifyContent: 'flex-end' }}>
                 <Button
@@ -745,14 +789,30 @@ Format your response with clear headings for each section.
                   <Typography>{model}</Typography>
                 </AccordionSummary>
                 <AccordionDetails>
+                  <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 1 }}>
+                    <Tooltip title={expandedCustomPrompts[model] ? "Collapse prompt field" : "Expand prompt field"}>
+                      <IconButton 
+                        size="small" 
+                        onClick={() => handlePromptExpansionToggle(model)}
+                      >
+                        {expandedCustomPrompts[model] ? <FullscreenExitIcon /> : <FullscreenIcon />}
+                      </IconButton>
+                    </Tooltip>
+                  </Box>
                   <TextField
                     fullWidth
                     multiline
-                    rows={6}
+                    minRows={expandedCustomPrompts[model] ? 15 : 8}
+                    maxRows={expandedCustomPrompts[model] ? 30 : 20}
                     variant="outlined"
                     value={customSystemPrompts[model]}
                     onChange={(e) => handleCustomSystemPromptChange(model, e.target.value)}
                     disabled={isProcessing}
+                    sx={{ 
+                      '& .MuiOutlinedInput-root': {
+                        fontSize: '0.95rem'
+                      }
+                    }}
                   />
                   <Box sx={{ mt: 2, display: 'flex', justifyContent: 'flex-end' }}>
                     <Button
@@ -777,7 +837,7 @@ Format your response with clear headings for each section.
 
         {/* Display prompt improvement ideas */}
         {promptIdeas && (
-          <Paper elevation={1} sx={{ p: 2, mb: 3, mt: 2, bgcolor: '#f8f9fa' }}>
+          <Paper elevation={1} sx={{ p: 3, mb: 3, mt: 2, bgcolor: '#f8f9fa' }}>
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
               <Typography variant="h6" gutterBottom>
                 <LightbulbIcon sx={{ mr: 1, verticalAlign: 'middle', color: '#FFC107' }} />
@@ -790,7 +850,17 @@ Format your response with clear headings for each section.
               </Box>
             </Box>
             <Divider sx={{ mb: 2 }} />
-            <Typography variant="body2" sx={{ whiteSpace: 'pre-line' }}>
+            <Typography 
+              variant="body1" 
+              sx={{ 
+                whiteSpace: 'pre-line',
+                fontSize: '0.95rem',
+                lineHeight: 1.7,
+                maxHeight: '400px',
+                overflowY: 'auto',
+                p: 1
+              }}
+            >
               {promptIdeas}
             </Typography>
           </Paper>

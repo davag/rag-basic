@@ -1,9 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
-import { Container, Box, Paper, Tabs, Tab, Typography, Alert, Snackbar, IconButton, Dialog, DialogContent, AppBar, Toolbar } from '@mui/material';
+import { Container, Box, Paper, Tabs, Tab, Typography, Alert, Snackbar, IconButton, Dialog, DialogContent, AppBar, Toolbar, Button } from '@mui/material';
 import SettingsIcon from '@mui/icons-material/Settings';
 import CloseIcon from '@mui/icons-material/Close';
+import CheckIcon from '@mui/icons-material/Check';
+import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
 
 import DocumentUpload from './components/DocumentUpload';
 import VectorStoreConfig from './components/VectorStoreConfig';
@@ -35,7 +37,11 @@ function TabPanel(props) {
       aria-labelledby={`simple-tab-${index}`}
       {...other}
     >
-      {value === index && <Box p={3}>{children}</Box>}
+      {value === index && (
+        <Box p={3}>
+          {children}
+        </Box>
+      )}
     </div>
   );
 }
@@ -55,6 +61,8 @@ function App() {
   const [snackbarSeverity, setSnackbarSeverity] = useState('success');
   const [validationResults, setValidationResults] = useState({});
   const [settingsDialogOpen, setSettingsDialogOpen] = useState(false);
+  const [showWelcome, setShowWelcome] = useState(true);
+  const [showApiKeyNotice, setShowApiKeyNotice] = useState(true);
   
   // Store query interface state to preserve it when navigating back
   const [lastQueryState, setLastQueryState] = useState({
@@ -165,6 +173,32 @@ function App() {
   const anthropicApiKey = process.env.REACT_APP_ANTHROPIC_API_KEY;
   const apiKeysConfigured = openAIApiKey && anthropicApiKey;
 
+  // Check if user has seen welcome and api key messages before
+  useEffect(() => {
+    const hasSeenWelcome = localStorage.getItem('hasSeenWelcome') === 'true';
+    const hasSeenApiKeyNotice = localStorage.getItem('hasSeenApiKeyNotice') === 'true';
+    
+    if (hasSeenWelcome) {
+      setShowWelcome(false);
+    }
+    
+    if (hasSeenApiKeyNotice) {
+      setShowApiKeyNotice(false);
+    }
+  }, []);
+
+  // Function to dismiss welcome message
+  const dismissWelcome = () => {
+    setShowWelcome(false);
+    localStorage.setItem('hasSeenWelcome', 'true');
+  };
+
+  // Function to dismiss API key notice
+  const dismissApiKeyNotice = () => {
+    setShowApiKeyNotice(false);
+    localStorage.setItem('hasSeenApiKeyNotice', 'true');
+  };
+
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
@@ -174,40 +208,228 @@ function App() {
             <Typography variant="h4" component="h1" gutterBottom>
               RAG Playground
             </Typography>
-            <IconButton 
-              color="primary" 
-              onClick={() => setSettingsDialogOpen(true)}
-              title="LLM Settings"
-            >
-              <SettingsIcon />
-            </IconButton>
+            <Box>
+              <IconButton 
+                color="info" 
+                onClick={() => {
+                  setShowWelcome(true);
+                  localStorage.removeItem('hasSeenWelcome');
+                }}
+                title="Show Help"
+                sx={{ mr: 1 }}
+              >
+                <HelpOutlineIcon />
+              </IconButton>
+              <IconButton 
+                color="primary" 
+                onClick={() => setSettingsDialogOpen(true)}
+                title="LLM Settings"
+              >
+                <SettingsIcon />
+              </IconButton>
+            </Box>
           </Box>
           
           {/* Display API key status */}
-          {apiKeysConfigured ? (
-            <Alert severity="success" sx={{ mb: 3 }}>
-              API keys are configured from environment variables.
-            </Alert>
-          ) : (
-            <Alert severity="error" sx={{ mb: 3 }}>
-              API keys are not configured. Please set REACT_APP_OPENAI_API_KEY and REACT_APP_ANTHROPIC_API_KEY in your .env file.
+          {showApiKeyNotice && (
+            <Alert 
+              severity={apiKeysConfigured ? "success" : "error"} 
+              sx={{ mb: 3 }}
+              onClose={dismissApiKeyNotice}
+            >
+              {apiKeysConfigured 
+                ? "API keys are configured from environment variables." 
+                : "API keys are not configured. Please set REACT_APP_OPENAI_API_KEY and REACT_APP_ANTHROPIC_API_KEY in your .env file."}
             </Alert>
           )}
           
+          {/* Introduction to the wizard flow */}
+          {showWelcome && (
+            <Paper elevation={1} sx={{ p: 2, mb: 3, bgcolor: 'info.light', color: 'info.contrastText', position: 'relative' }}>
+              <IconButton 
+                size="small" 
+                onClick={dismissWelcome} 
+                sx={{ position: 'absolute', top: 4, right: 4, color: 'info.contrastText' }}
+              >
+                <CloseIcon fontSize="small" />
+              </IconButton>
+              <Typography variant="h6" gutterBottom>
+                Welcome to the RAG Playground Wizard
+              </Typography>
+              <Typography variant="body1">
+                This application guides you through the complete RAG workflow in 5 sequential steps:
+              </Typography>
+              <Box component="ol" sx={{ mt: 1, pl: 2 }}>
+                <Box component="li"><strong>Upload Documents</strong> - Add your knowledge base documents</Box>
+                <Box component="li"><strong>Configure Vector Store</strong> - Set up the vector database for retrieval</Box>
+                <Box component="li"><strong>Query</strong> - Ask questions to different LLM models</Box>
+                <Box component="li"><strong>Compare Responses</strong> - View and analyze model outputs side by side</Box>
+                <Box component="li"><strong>Validate Responses</strong> - Evaluate response quality with metrics</Box>
+              </Box>
+              <Typography variant="body2" sx={{ mt: 1, fontStyle: 'italic' }}>
+                Follow the numbered steps and use the Next/Back buttons to navigate through the workflow.
+              </Typography>
+            </Paper>
+          )}
+          
           <Paper elevation={3}>
-            <Tabs
-              value={tabValue}
-              onChange={handleTabChange}
-              indicatorColor="primary"
-              textColor="primary"
-              centered
-            >
-              <Tab label="Upload Documents" />
-              <Tab label="Configure Vector Store" disabled={documents.length === 0} />
-              <Tab label="Query" disabled={!vectorStore} />
-              <Tab label="Compare Responses" disabled={Object.keys(llmResponses).length === 0} />
-              <Tab label="Validate Responses" disabled={Object.keys(llmResponses).length === 0} />
-            </Tabs>
+            <Box sx={{ position: 'relative' }}>
+              {/* Step connection lines */}
+              <Box sx={{ 
+                position: 'absolute', 
+                top: 36, 
+                left: '10%', 
+                width: '80%', 
+                height: 4, 
+                bgcolor: 'grey.300',
+                zIndex: 0
+              }} />
+              
+              {/* Progress line */}
+              <Box sx={{ 
+                position: 'absolute', 
+                top: 36, 
+                left: '10%', 
+                width: tabValue === 0 ? '0%' : 
+                       tabValue === 1 ? '20%' : 
+                       tabValue === 2 ? '40%' : 
+                       tabValue === 3 ? '60%' : '80%', 
+                height: 4, 
+                bgcolor: 'primary.main',
+                zIndex: 1,
+                transition: 'width 0.5s ease-in-out'
+              }} />
+              
+              <Tabs
+                value={tabValue}
+                onChange={handleTabChange}
+                indicatorColor="transparent"
+                textColor="primary"
+                centered
+                variant="fullWidth"
+                sx={{
+                  '& .MuiTab-root': {
+                    fontSize: '0.9rem',
+                    minHeight: 72,
+                    p: 1,
+                    pt: 3,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    '&:last-child': {
+                      borderRight: 'none'
+                    },
+                    zIndex: 2,
+                    position: 'relative'
+                  }
+                }}
+              >
+                <Tab 
+                  icon={
+                    <Box sx={{ 
+                      width: 36, 
+                      height: 36, 
+                      bgcolor: tabValue >= 0 ? 'primary.main' : 'grey.300', 
+                      color: 'white',
+                      borderRadius: '50%',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      fontWeight: 'bold',
+                      mb: 1,
+                      boxShadow: tabValue >= 0 ? 2 : 0
+                    }}>
+                      {tabValue > 0 ? <CheckIcon fontSize="small" /> : 1}
+                    </Box>
+                  } 
+                  label="Upload Documents" 
+                />
+                <Tab 
+                  icon={
+                    <Box sx={{ 
+                      width: 36, 
+                      height: 36, 
+                      bgcolor: tabValue >= 1 ? 'primary.main' : 'grey.300', 
+                      color: 'white',
+                      borderRadius: '50%',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      fontWeight: 'bold',
+                      mb: 1,
+                      boxShadow: tabValue >= 1 ? 2 : 0
+                    }}>
+                      {tabValue > 1 ? <CheckIcon fontSize="small" /> : 2}
+                    </Box>
+                  } 
+                  label="Configure Vector Store"
+                  disabled={documents.length === 0}
+                />
+                <Tab 
+                  icon={
+                    <Box sx={{ 
+                      width: 36, 
+                      height: 36, 
+                      bgcolor: tabValue >= 2 ? 'primary.main' : 'grey.300', 
+                      color: 'white',
+                      borderRadius: '50%',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      fontWeight: 'bold',
+                      mb: 1,
+                      boxShadow: tabValue >= 2 ? 2 : 0
+                    }}>
+                      {tabValue > 2 ? <CheckIcon fontSize="small" /> : 3}
+                    </Box>
+                  } 
+                  label="Query Models"
+                  disabled={!vectorStore}
+                />
+                <Tab 
+                  icon={
+                    <Box sx={{ 
+                      width: 36, 
+                      height: 36, 
+                      bgcolor: tabValue >= 3 ? 'primary.main' : 'grey.300', 
+                      color: 'white',
+                      borderRadius: '50%',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      fontWeight: 'bold',
+                      mb: 1,
+                      boxShadow: tabValue >= 3 ? 2 : 0
+                    }}>
+                      {tabValue > 3 ? <CheckIcon fontSize="small" /> : 4}
+                    </Box>
+                  } 
+                  label="Compare Responses"
+                  disabled={Object.keys(llmResponses).length === 0}
+                />
+                <Tab 
+                  icon={
+                    <Box sx={{ 
+                      width: 36, 
+                      height: 36, 
+                      bgcolor: tabValue >= 4 ? 'primary.main' : 'grey.300', 
+                      color: 'white',
+                      borderRadius: '50%',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      fontWeight: 'bold',
+                      mb: 1,
+                      boxShadow: tabValue >= 4 ? 2 : 0
+                    }}>
+                      5
+                    </Box>
+                  } 
+                  label="Validate Responses"
+                  disabled={Object.keys(llmResponses).length === 0}
+                />
+              </Tabs>
+            </Box>
 
             <TabPanel value={tabValue} index={0}>
               <DocumentUpload 
@@ -215,6 +437,16 @@ function App() {
                 isProcessing={isProcessing}
                 setIsProcessing={setIsProcessing}
               />
+              <Box sx={{ display: 'flex', justifyContent: 'flex-end', mt: 2 }}>
+                <Button
+                  variant="contained"
+                  color="primary"
+                  disabled={documents.length === 0}
+                  onClick={() => setTabValue(1)}
+                >
+                  Next: Configure Vector Store
+                </Button>
+              </Box>
             </TabPanel>
 
             <TabPanel value={tabValue} index={1}>
@@ -225,6 +457,22 @@ function App() {
                 isProcessing={isProcessing}
                 setIsProcessing={setIsProcessing}
               />
+              <Box sx={{ display: 'flex', justifyContent: 'space-between', mt: 2 }}>
+                <Button
+                  variant="outlined"
+                  onClick={() => setTabValue(0)}
+                >
+                  Back: Upload Documents
+                </Button>
+                <Button
+                  variant="contained"
+                  color="primary"
+                  disabled={!vectorStore}
+                  onClick={() => setTabValue(2)}
+                >
+                  Next: Query
+                </Button>
+              </Box>
             </TabPanel>
 
             <TabPanel value={tabValue} index={2}>
@@ -236,6 +484,14 @@ function App() {
                 setIsProcessing={setIsProcessing}
                 initialState={lastQueryState}
               />
+              <Box sx={{ display: 'flex', justifyContent: 'space-between', mt: 2 }}>
+                <Button
+                  variant="outlined"
+                  onClick={() => setTabValue(1)}
+                >
+                  Back: Configure Vector Store
+                </Button>
+              </Box>
             </TabPanel>
 
             <TabPanel value={tabValue} index={3}>
@@ -247,6 +503,22 @@ function App() {
                 onBackToQuery={handleBackToQuery}
                 onImportResults={handleImportResults}
               />
+              <Box sx={{ display: 'flex', justifyContent: 'space-between', mt: 2 }}>
+                <Button
+                  variant="outlined"
+                  onClick={handleBackToQuery}
+                >
+                  Back: Query
+                </Button>
+                <Button
+                  variant="contained"
+                  color="primary"
+                  onClick={() => setTabValue(4)}
+                  disabled={Object.keys(llmResponses).length === 0}
+                >
+                  Next: Validate Responses
+                </Button>
+              </Box>
             </TabPanel>
 
             <TabPanel value={tabValue} index={4}>
@@ -261,6 +533,22 @@ function App() {
                 isProcessing={isProcessing}
                 setIsProcessing={setIsProcessing}
               />
+              <Box sx={{ display: 'flex', justifyContent: 'space-between', mt: 2 }}>
+                <Button
+                  variant="outlined"
+                  onClick={() => setTabValue(3)}
+                >
+                  Back: Compare Responses
+                </Button>
+                <Button
+                  variant="outlined"
+                  color="success"
+                  onClick={() => setTabValue(0)}
+                  sx={{ ml: 'auto' }}
+                >
+                  Start New RAG Session
+                </Button>
+              </Box>
             </TabPanel>
           </Paper>
         </Box>
