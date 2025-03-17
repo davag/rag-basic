@@ -66,8 +66,7 @@ function App() {
     customSystemPrompts: {},
     globalTemperature: 0,
     useCustomTemperatures: false,
-    customTemperatures: {},
-    ollamaEndpoint: 'http://localhost:11434'
+    customTemperatures: {}
   });
 
   const handleTabChange = (event, newValue) => {

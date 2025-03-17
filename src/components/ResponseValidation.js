@@ -4,10 +4,6 @@ import {
   Box, 
   Paper, 
   Button, 
-  FormControl,
-  InputLabel,
-  Select,
-  MenuItem,
   CircularProgress,
   Alert,
   Grid,
@@ -53,6 +49,14 @@ const ResponseValidation = ({
   const [error, setError] = useState(null);
   const [currentValidatingModel, setCurrentValidatingModel] = useState(null);
 
+  // Load validator model from localStorage on component mount
+  useEffect(() => {
+    const savedValidatorModel = localStorage.getItem('responseValidatorModel');
+    if (savedValidatorModel) {
+      setValidatorModel(savedValidatorModel);
+    }
+  }, []);
+
   // Reset validation state only when component is first mounted, not on re-renders
   useEffect(() => {
     // Only reset if there are no validation results yet
@@ -72,10 +76,6 @@ const ResponseValidation = ({
     };
   }, [isProcessing, setIsProcessing, validationResults]); // Include the missing dependencies
 
-  const handleValidatorModelChange = (event) => {
-    setValidatorModel(event.target.value);
-  };
-
   const handleCustomCriteriaChange = (event) => {
     setCustomCriteria(event.target.value);
   };
@@ -91,8 +91,11 @@ const ResponseValidation = ({
     const results = {};
     
     try {
+      // Get validator model from localStorage (or use current state as fallback)
+      const validatorModelToUse = localStorage.getItem('responseValidatorModel') || validatorModel;
+      
       // Create LLM instance for validation
-      const llm = createLlmInstance(validatorModel, '', {
+      const llm = createLlmInstance(validatorModelToUse, '', {
         temperature: 0 // Use deterministic output for evaluation
       });
       
@@ -441,21 +444,10 @@ Format your response as a JSON object with the following structure:
           Validation Settings
         </Typography>
         
-        <FormControl fullWidth sx={{ mb: 3 }}>
-          <InputLabel id="validator-model-label">Validator Model</InputLabel>
-          <Select
-            labelId="validator-model-label"
-            id="validator-model"
-            value={validatorModel}
-            onChange={handleValidatorModelChange}
-            disabled={isProcessing}
-          >
-            <MenuItem value="gpt-4o">GPT-4o</MenuItem>
-            <MenuItem value="gpt-4o-mini">GPT-4o-mini</MenuItem>
-            <MenuItem value="claude-3-5-sonnet-latest">Claude 3.5 Sonnet</MenuItem>
-            <MenuItem value="claude-3-7-sonnet-latest">Claude 3.7 Sonnet</MenuItem>
-          </Select>
-        </FormControl>
+        <Typography variant="body2" color="textSecondary" paragraph>
+          The validation will be performed using the model selected in the LLM Settings panel.
+          You can customize the evaluation criteria below.
+        </Typography>
         
         <Accordion 
           expanded={expandedCriteria}
@@ -494,7 +486,7 @@ Format your response as a JSON object with the following structure:
           {isProcessing && (
             <Box sx={{ width: '100%', maxWidth: 500, mt: 3 }}>
               <Typography variant="body2" align="center" gutterBottom>
-                Validating responses using {validatorModel}
+                Validating responses using {localStorage.getItem('responseValidatorModel') || validatorModel}
               </Typography>
               <LinearProgress sx={{ mb: 2 }} />
               

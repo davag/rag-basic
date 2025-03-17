@@ -29,6 +29,8 @@ import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
 import SaveIcon from '@mui/icons-material/Save';
 import UploadIcon from '@mui/icons-material/Upload';
+import LightbulbIcon from '@mui/icons-material/Lightbulb';
+import CloseIcon from '@mui/icons-material/Close';
 import { createLlmInstance } from '../utils/apiServices';
 
 const DEFAULT_SYSTEM_PROMPT = `You are a helpful assistant that answers questions based on the provided context. 
@@ -76,13 +78,14 @@ const QueryInterface = ({ vectorStore, namespaces, onQuerySubmitted, isProcessin
   const [expandedPrompt, setExpandedPrompt] = useState(null);
   const [expandedTemperature, setExpandedTemperature] = useState(null);
   const [selectedNamespaces, setSelectedNamespaces] = useState(['default']);
-  const [ollamaEndpoint, setOllamaEndpoint] = useState('http://localhost:11434');
   const [helpExpanded, setHelpExpanded] = useState(false);
   const [globalPromptExpanded, setGlobalPromptExpanded] = useState(false);
   const [globalTemperatureExpanded, setGlobalTemperatureExpanded] = useState(false);
   const [currentProcessingModel, setCurrentProcessingModel] = useState(null);
   const [processingStep, setProcessingStep] = useState('');
   const [responses, setResponses] = useState({});
+  const [isGettingPromptIdeas, setIsGettingPromptIdeas] = useState(false);
+  const [promptIdeas, setPromptIdeas] = useState(null);
 
   // Reference to the file input element
   const fileInputRef = useRef(null);
@@ -103,7 +106,7 @@ const QueryInterface = ({ vectorStore, namespaces, onQuerySubmitted, isProcessin
     return () => {
       // Clean up any ongoing processes if needed
     };
-  }, []); // Empty dependency array means this runs once on mount
+  }, [isProcessing, setIsProcessing]);
 
   // Load initial state if provided
   useEffect(() => {
@@ -127,7 +130,6 @@ const QueryInterface = ({ vectorStore, namespaces, onQuerySubmitted, isProcessin
           ...initialState.customTemperatures
         }));
       }
-      if (initialState.ollamaEndpoint) setOllamaEndpoint(initialState.ollamaEndpoint);
     }
   }, [initialState]);
 
@@ -164,10 +166,6 @@ const QueryInterface = ({ vectorStore, namespaces, onQuerySubmitted, isProcessin
 
   const handleNamespaceChange = (event) => {
     setSelectedNamespaces(event.target.value);
-  };
-
-  const handleOllamaEndpointChange = (event) => {
-    setOllamaEndpoint(event.target.value);
   };
 
   const handleGlobalTemperatureChange = (event, newValue) => {
@@ -230,8 +228,7 @@ const QueryInterface = ({ vectorStore, namespaces, onQuerySubmitted, isProcessin
           Object.entries(customTemperatures)
             .filter(([model]) => selectedModels.includes(model))
         ) : 
-        {},
-      ollamaEndpoint
+        {}
     };
   };
 
@@ -291,7 +288,6 @@ const QueryInterface = ({ vectorStore, namespaces, onQuerySubmitted, isProcessin
             ...config.customTemperatures
           }));
         }
-        if (config.ollamaEndpoint) setOllamaEndpoint(config.ollamaEndpoint);
         
         // Reset file input
         if (fileInputRef.current) {
@@ -372,6 +368,9 @@ Given the context information and not prior knowledge, answer the question: ${qu
         const temperature = getTemperatureForModel(model);
         temperaturesUsed[model] = temperature;
         
+        // Get Ollama endpoint from localStorage instead of component state
+        const ollamaEndpoint = localStorage.getItem('ollamaEndpoint') || 'http://localhost:11434';
+        
         // Create LLM instance with appropriate configuration
         const llm = createLlmInstance(model, systemPrompt, {
           ollamaEndpoint: ollamaEndpoint,
@@ -428,6 +427,77 @@ Given the context information and not prior knowledge, answer the question: ${qu
       setCurrentProcessingModel(null);
       setProcessingStep('');
     }
+  };
+
+  // Get improvement ideas for the system prompt
+  const getSystemPromptIdeas = async (promptToImprove, modelToUse) => {
+    if (isProcessing || isGettingPromptIdeas) return;
+    
+    setIsGettingPromptIdeas(true);
+    setPromptIdeas(null);
+    
+    try {
+      // Get Ollama endpoint from localStorage
+      const ollamaEndpoint = localStorage.getItem('ollamaEndpoint') || 'http://localhost:11434';
+      
+      // Get prompt advisor model from localStorage
+      const advisorModel = localStorage.getItem('promptAdvisorModel') || 'gpt-4o-mini';
+      
+      // Create an instance of the advisor LLM with the endpoint
+      const advisorLlm = createLlmInstance(advisorModel, '', {
+        ollamaEndpoint: ollamaEndpoint,
+        temperature: 0.7 // Use a slightly higher temperature for creative suggestions
+      });
+      
+      // Prepare the prompt for getting improvement ideas
+      const advisorPrompt = `
+You are an expert at prompt engineering. Please analyze the following system prompt and suggest improvements.
+
+CURRENT SYSTEM PROMPT:
+"""
+${promptToImprove}
+"""
+
+This system prompt is intended to be used with a RAG (Retrieval-Augmented Generation) system that retrieves relevant context from documents 
+and then answers user questions based on that context.
+
+${modelToUse ? `The prompt will be used with the ${modelToUse} model.` : 'The prompt will be used with various LLM models.'}
+
+Please provide:
+1. A brief analysis of the strengths and weaknesses of the current prompt
+2. 2-3 specific suggestions for improving the prompt's effectiveness
+3. An improved version of the system prompt that implements your suggestions
+
+Focus on improvements that would:
+- Enhance accuracy in using the retrieved context
+- Reduce hallucinations
+- Improve helpful behavior
+- Create better formatted responses
+
+Format your response with clear headings for each section.
+`;
+      
+      // Get the improvement ideas
+      const response = await advisorLlm.invoke(advisorPrompt);
+      const ideas = typeof response === 'object' ? response.text : response;
+      
+      setPromptIdeas(ideas);
+    } catch (err) {
+      window.console.error('Error getting prompt ideas:', err);
+      setError(`Error getting prompt improvement ideas: ${err.message}`);
+    } finally {
+      setIsGettingPromptIdeas(false);
+    }
+  };
+  
+  // Handle getting ideas for the global prompt
+  const handleGetGlobalPromptIdeas = () => {
+    getSystemPromptIdeas(globalSystemPrompt);
+  };
+  
+  // Handle getting ideas for a model-specific prompt
+  const handleGetModelPromptIdeas = (model) => {
+    getSystemPromptIdeas(customSystemPrompts[model], model);
   };
 
   return (
@@ -601,25 +671,6 @@ Given the context information and not prior knowledge, answer the question: ${qu
           </Select>
         </FormControl>
 
-        {selectedModels.some(model => model.includes('llama') || model.includes('mistral')) && (
-          <Box mb={3}>
-            <Typography variant="subtitle1" gutterBottom>
-              Ollama Configuration
-            </Typography>
-            <TextField
-              fullWidth
-              label="Ollama API Endpoint"
-              variant="outlined"
-              value={ollamaEndpoint}
-              onChange={handleOllamaEndpointChange}
-              placeholder="http://localhost:11434"
-              helperText="The URL of your Ollama API endpoint"
-              disabled={isProcessing}
-              sx={{ mb: 2 }}
-            />
-          </Box>
-        )}
-
         <Typography variant="h6" gutterBottom>
           System Prompts
         </Typography>
@@ -658,6 +709,21 @@ Given the context information and not prior knowledge, answer the question: ${qu
                 onChange={handleGlobalSystemPromptChange}
                 disabled={isProcessing}
               />
+              <Box sx={{ mt: 2, display: 'flex', justifyContent: 'flex-end' }}>
+                <Button
+                  startIcon={<LightbulbIcon />}
+                  onClick={handleGetGlobalPromptIdeas}
+                  disabled={isProcessing || isGettingPromptIdeas || !globalSystemPrompt.trim()}
+                  sx={{ mr: 1 }}
+                >
+                  {isGettingPromptIdeas ? (
+                    <>
+                      <CircularProgress size={16} sx={{ mr: 1 }} />
+                      Getting Ideas...
+                    </>
+                  ) : 'Get Improvement Ideas'}
+                </Button>
+              </Box>
             </AccordionDetails>
           </Accordion>
         )}
@@ -688,10 +754,46 @@ Given the context information and not prior knowledge, answer the question: ${qu
                     onChange={(e) => handleCustomSystemPromptChange(model, e.target.value)}
                     disabled={isProcessing}
                   />
+                  <Box sx={{ mt: 2, display: 'flex', justifyContent: 'flex-end' }}>
+                    <Button
+                      startIcon={<LightbulbIcon />}
+                      onClick={() => handleGetModelPromptIdeas(model)}
+                      disabled={isProcessing || isGettingPromptIdeas || !customSystemPrompts[model].trim()}
+                      sx={{ mr: 1 }}
+                    >
+                      {isGettingPromptIdeas ? (
+                        <>
+                          <CircularProgress size={16} sx={{ mr: 1 }} />
+                          Getting Ideas...
+                        </>
+                      ) : 'Get Improvement Ideas'}
+                    </Button>
+                  </Box>
                 </AccordionDetails>
               </Accordion>
             ))}
           </>
+        )}
+
+        {/* Display prompt improvement ideas */}
+        {promptIdeas && (
+          <Paper elevation={1} sx={{ p: 2, mb: 3, mt: 2, bgcolor: '#f8f9fa' }}>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
+              <Typography variant="h6" gutterBottom>
+                <LightbulbIcon sx={{ mr: 1, verticalAlign: 'middle', color: '#FFC107' }} />
+                Prompt Improvement Ideas
+              </Typography>
+              <Box>
+                <IconButton size="small" onClick={() => setPromptIdeas(null)}>
+                  <CloseIcon fontSize="small" />
+                </IconButton>
+              </Box>
+            </Box>
+            <Divider sx={{ mb: 2 }} />
+            <Typography variant="body2" sx={{ whiteSpace: 'pre-line' }}>
+              {promptIdeas}
+            </Typography>
+          </Paper>
         )}
 
         {/* Temperature Controls */}

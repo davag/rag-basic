@@ -17,7 +17,11 @@ import {
   CardContent,
   CardActions,
   Grid,
-  Chip
+  Chip,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import EditIcon from '@mui/icons-material/Edit';
@@ -104,6 +108,8 @@ const LlmSettings = () => {
   const [testResults, setTestResults] = useState({});
   const [error, setError] = useState(null);
   const [ollamaEndpoint, setOllamaEndpoint] = useState(process.env.REACT_APP_OLLAMA_API_URL || 'http://localhost:11434');
+  const [promptAdvisorModel, setPromptAdvisorModel] = useState('gpt-4o-mini'); // Default advisor model
+  const [responseValidatorModel, setResponseValidatorModel] = useState('gpt-4o-mini'); // Default validator model
 
   const vendorColors = {
     'OpenAI': '#10a37f',    // Green
@@ -304,6 +310,27 @@ const LlmSettings = () => {
     reader.readAsText(file);
   };
 
+  // Save prompt advisor model to localStorage when it changes
+  useEffect(() => {
+    localStorage.setItem('promptAdvisorModel', promptAdvisorModel);
+  }, [promptAdvisorModel]);
+
+  // Load prompt advisor model from localStorage on component mount
+  useEffect(() => {
+    const savedAdvisorModel = localStorage.getItem('promptAdvisorModel');
+    if (savedAdvisorModel) {
+      setPromptAdvisorModel(savedAdvisorModel);
+    }
+  }, []);
+
+  // Load response validator model from localStorage on component mount
+  useEffect(() => {
+    const savedValidatorModel = localStorage.getItem('responseValidatorModel');
+    if (savedValidatorModel) {
+      setResponseValidatorModel(savedValidatorModel);
+    }
+  }, []);
+
   // Load models from localStorage on component mount
   useEffect(() => {
     const savedModels = localStorage.getItem('llmModels');
@@ -315,6 +342,24 @@ const LlmSettings = () => {
       }
     }
   }, []);
+
+  // Save Ollama endpoint to localStorage when it changes
+  useEffect(() => {
+    localStorage.setItem('ollamaEndpoint', ollamaEndpoint);
+  }, [ollamaEndpoint]);
+
+  // Load Ollama endpoint from localStorage on component mount
+  useEffect(() => {
+    const savedEndpoint = localStorage.getItem('ollamaEndpoint');
+    if (savedEndpoint) {
+      setOllamaEndpoint(savedEndpoint);
+    }
+  }, []);
+
+  // Save response validator model to localStorage when it changes
+  useEffect(() => {
+    localStorage.setItem('responseValidatorModel', responseValidatorModel);
+  }, [responseValidatorModel]);
 
   // Calculate cost for 1K tokens
   const calculateCostPer1K = (model) => {
@@ -387,23 +432,76 @@ const LlmSettings = () => {
         </Alert>
       )}
 
-      {models['llama3.2:latest'] && (
-        <Paper elevation={1} sx={{ p: 2, mb: 3 }}>
-          <Typography variant="subtitle1" gutterBottom>
-            Ollama Configuration
-          </Typography>
-          <TextField
-            fullWidth
-            label="Ollama API Endpoint"
-            variant="outlined"
-            value={ollamaEndpoint}
-            onChange={(e) => setOllamaEndpoint(e.target.value)}
-            placeholder="http://localhost:11434"
-            helperText="The URL of your Ollama API endpoint for local models"
-            size="small"
-          />
-        </Paper>
-      )}
+      {/* Ollama Configuration */}
+      <Paper elevation={1} sx={{ p: 3, mb: 3 }}>
+        <Typography variant="h6" gutterBottom>
+          Ollama Configuration
+        </Typography>
+        <Typography variant="body2" color="textSecondary" paragraph>
+          Configure the API endpoint for local Ollama models. This setting is required for using models like Llama and Mistral via Ollama.
+        </Typography>
+        <TextField
+          fullWidth
+          label="Ollama API Endpoint"
+          variant="outlined"
+          value={ollamaEndpoint}
+          onChange={(e) => setOllamaEndpoint(e.target.value)}
+          placeholder="http://localhost:11434"
+          helperText="The URL of your Ollama API endpoint for local models"
+        />
+      </Paper>
+
+      {/* Prompt Advisor Configuration */}
+      <Paper elevation={1} sx={{ p: 3, mb: 3 }}>
+        <Typography variant="h6" gutterBottom>
+          Prompt Advisor Configuration
+        </Typography>
+        <Typography variant="body2" color="textSecondary" paragraph>
+          Select the model to use for generating system prompt improvement ideas. This model will be used when you request suggestions to enhance your prompts.
+        </Typography>
+        <Box sx={{ maxWidth: 400 }}>
+          <FormControl fullWidth variant="outlined">
+            <InputLabel id="prompt-advisor-model-label">Prompt Advisor Model</InputLabel>
+            <Select
+              labelId="prompt-advisor-model-label"
+              value={promptAdvisorModel}
+              onChange={(e) => setPromptAdvisorModel(e.target.value)}
+              label="Prompt Advisor Model"
+            >
+              <MenuItem value="gpt-4o">GPT-4o</MenuItem>
+              <MenuItem value="gpt-4o-mini">GPT-4o Mini</MenuItem>
+              <MenuItem value="claude-3-5-sonnet-latest">Claude 3.5 Sonnet</MenuItem>
+              <MenuItem value="claude-3-7-sonnet-latest">Claude 3.7 Sonnet</MenuItem>
+            </Select>
+          </FormControl>
+        </Box>
+      </Paper>
+
+      {/* Response Validator Configuration */}
+      <Paper elevation={1} sx={{ p: 3, mb: 3 }}>
+        <Typography variant="h6" gutterBottom>
+          Response Validator Configuration
+        </Typography>
+        <Typography variant="body2" color="textSecondary" paragraph>
+          Select the model to use for validating responses in the validation tab. This model will analyze responses for accuracy, hallucinations, and other quality metrics.
+        </Typography>
+        <Box sx={{ maxWidth: 400 }}>
+          <FormControl fullWidth variant="outlined">
+            <InputLabel id="response-validator-model-label">Response Validator Model</InputLabel>
+            <Select
+              labelId="response-validator-model-label"
+              value={responseValidatorModel}
+              onChange={(e) => setResponseValidatorModel(e.target.value)}
+              label="Response Validator Model"
+            >
+              <MenuItem value="gpt-4o">GPT-4o</MenuItem>
+              <MenuItem value="gpt-4o-mini">GPT-4o Mini</MenuItem>
+              <MenuItem value="claude-3-5-sonnet-latest">Claude 3.5 Sonnet</MenuItem>
+              <MenuItem value="claude-3-7-sonnet-latest">Claude 3.7 Sonnet</MenuItem>
+            </Select>
+          </FormControl>
+        </Box>
+      </Paper>
 
       <Grid container spacing={3}>
         {Object.entries(models).map(([modelId, model]) => (
