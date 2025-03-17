@@ -44,12 +44,18 @@ const ResponseComparison = ({ responses, metrics }) => {
   };
 
   const modelColors = {
-    'gpt-3.5-turbo': '#10a37f', // OpenAI green
-    'gpt-4-turbo': '#10a37f',
-    'claude-3-haiku-20240307': '#5436da', // Anthropic purple
-    'claude-3-sonnet-20240229': '#5436da',
-    'claude-3-opus-20240229': '#5436da',
-    'llama3:8b': '#ff6b6b', // Ollama red
+    // OpenAI models (green)
+    'gpt-4o': '#10a37f',
+    'gpt-4o-mini': '#10a37f',
+    'o1-mini': '#10a37f',
+    'o1-preview': '#10a37f',
+    
+    // Anthropic models (purple)
+    'claude-3-5-sonnet-latest': '#5436da',
+    'claude-3-7-sonnet-latest': '#5436da',
+    
+    // Ollama models (red)
+    'llama3:8b': '#ff6b6b',
     'llama3:70b': '#ff6b6b',
     'mistral:7b': '#ff6b6b'
   };
@@ -164,7 +170,9 @@ const ResponseComparison = ({ responses, metrics }) => {
                     minHeight: '200px'
                   }}
                 >
-                  {responses[model].answer}
+                  {typeof responses[model].answer === 'object' && responses[model].answer.text 
+                    ? responses[model].answer.text 
+                    : responses[model].answer}
                 </Typography>
                 
                 <Accordion 

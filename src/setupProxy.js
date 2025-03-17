@@ -152,24 +152,31 @@ module.exports = function(app) {
         proxyRes.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS';
         proxyRes.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, x-api-key, anthropic-version, anthropic-dangerous-direct-browser-access';
         
-        // Log response body for debugging
-        let responseBody = '';
-        proxyRes.on('data', chunk => {
-          responseBody += chunk;
-        });
-        
-        proxyRes.on('end', () => {
-          try {
-            const parsedBody = JSON.parse(responseBody);
-            if (parsedBody.error) {
-              global.console.error('Anthropic API error:', parsedBody.error);
-            } else {
-              global.console.log('Anthropic API response received successfully');
+        // Log response body for debugging - but don't try to parse it here
+        // as it might interfere with the response streaming
+        if (proxyRes.statusCode !== 200) {
+          let responseBody = '';
+          proxyRes.on('data', chunk => {
+            responseBody += chunk;
+          });
+          
+          proxyRes.on('end', () => {
+            try {
+              // Only try to parse as JSON if it looks like JSON
+              if (responseBody.trim().startsWith('{')) {
+                const parsedBody = JSON.parse(responseBody);
+                if (parsedBody.error) {
+                  global.console.error('Anthropic API error:', parsedBody.error);
+                }
+              } else {
+                global.console.log('Anthropic API response is not JSON format');
+              }
+            } catch (e) {
+              global.console.error('Error parsing Anthropic response:', e);
+              global.console.log('Raw response body (first 100 chars):', responseBody.substring(0, 100));
             }
-          } catch (e) {
-            global.console.error('Error parsing Anthropic response:', e);
-          }
-        });
+          });
+        }
       },
       onError: function(err, req, res) {
         global.console.error('Anthropic Proxy Error:', err);

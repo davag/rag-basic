@@ -45,7 +45,7 @@ class ChatOllama {
 // Custom Anthropic integration to avoid CORS issues
 class CustomChatAnthropic {
   constructor(options) {
-    this.modelName = options.modelName || 'claude-3-haiku-20240307';
+    this.modelName = options.modelName || 'claude-3-5-sonnet-latest';
     this.temperature = options.temperature || 0;
     this.systemPrompt = options.systemPrompt || '';
     this.apiKey = options.anthropicApiKey;
@@ -95,11 +95,30 @@ class CustomChatAnthropic {
       
       // Handle different response formats
       if (response.data && response.data.content) {
+        // Handle array of content blocks (Claude API v2)
+        if (Array.isArray(response.data.content)) {
+          // Extract text from content blocks
+          const textBlocks = response.data.content
+            .filter(block => block.type === 'text')
+            .map(block => block.text);
+          return textBlocks.join('\n');
+        }
         return response.data.content;
       } else if (response.data && response.data.message && response.data.message.content) {
+        // Handle array of content blocks in message
+        if (Array.isArray(response.data.message.content)) {
+          const textBlocks = response.data.message.content
+            .filter(block => block.type === 'text')
+            .map(block => block.text);
+          return textBlocks.join('\n');
+        }
         return response.data.message.content;
       } else {
         window.console.warn('Unexpected Anthropic API response format:', response.data);
+        // Try to extract any text content from the response
+        if (typeof response.data === 'object') {
+          window.console.log('Response data keys:', Object.keys(response.data));
+        }
         return response.data.toString();
       }
     } catch (error) {
@@ -124,7 +143,7 @@ class CustomChatAnthropic {
 // Custom OpenAI integration to avoid CORS issues
 class CustomChatOpenAI {
   constructor(options) {
-    this.modelName = options.modelName || 'gpt-3.5-turbo';
+    this.modelName = options.modelName || 'gpt-4o-mini';
     this.temperature = options.temperature || 0;
     this.systemPrompt = options.systemPrompt || '';
     this.apiKey = options.openAIApiKey;
@@ -227,7 +246,7 @@ class CustomChatOpenAI {
  */
 export const createLlmInstance = (model, systemPrompt, options = {}) => {
   // Always use our custom implementations to avoid CORS issues in the browser
-  if (model.startsWith('gpt')) {
+  if (model.startsWith('gpt') || model.startsWith('o1')) {
     // Get the API key from environment variables
     const openAIApiKey = process.env.REACT_APP_OPENAI_API_KEY;
     

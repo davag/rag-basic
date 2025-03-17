@@ -36,13 +36,19 @@ Do not make up information that is not in the context.`
 
 const QueryInterface = ({ vectorStore, namespaces, onQuerySubmitted, isProcessing, setIsProcessing }) => {
   const [query, setQuery] = useState('');
-  const [selectedModels, setSelectedModels] = useState(['gpt-3.5-turbo', 'claude-3-haiku-20240307']);
+  const [selectedModels, setSelectedModels] = useState(['gpt-4o-mini', 'claude-3-5-sonnet-latest']);
   const [systemPrompts, setSystemPrompts] = useState({
-    'gpt-3.5-turbo': DEFAULT_SYSTEM_PROMPTS.openai,
-    'gpt-4-turbo': DEFAULT_SYSTEM_PROMPTS.openai,
-    'claude-3-haiku-20240307': DEFAULT_SYSTEM_PROMPTS.anthropic,
-    'claude-3-sonnet-20240229': DEFAULT_SYSTEM_PROMPTS.anthropic,
-    'claude-3-opus-20240229': DEFAULT_SYSTEM_PROMPTS.anthropic,
+    // OpenAI models
+    'gpt-4o': DEFAULT_SYSTEM_PROMPTS.openai,
+    'gpt-4o-mini': DEFAULT_SYSTEM_PROMPTS.openai,
+    'o1-mini': DEFAULT_SYSTEM_PROMPTS.openai,
+    'o1-preview': DEFAULT_SYSTEM_PROMPTS.openai,
+    
+    // Anthropic models
+    'claude-3-7-sonnet-latest': DEFAULT_SYSTEM_PROMPTS.anthropic,
+    'claude-3-5-sonnet-latest': DEFAULT_SYSTEM_PROMPTS.anthropic,
+    
+    // Ollama models
     'llama3:8b': DEFAULT_SYSTEM_PROMPTS.ollama,
     'llama3:70b': DEFAULT_SYSTEM_PROMPTS.ollama,
     'mistral:7b': DEFAULT_SYSTEM_PROMPTS.ollama
@@ -118,7 +124,7 @@ const QueryInterface = ({ vectorStore, namespaces, onQuerySubmitted, isProcessin
         const { result, metrics: queryMetrics } = await executeQuery(chain, query);
         
         responses[model] = {
-          answer: result.text,
+          answer: typeof result.text === 'object' ? result.text.text : result.text,
           sources: result.sourceDocuments.map(doc => ({
             content: doc.pageContent.substring(0, 200) + '...',
             source: doc.metadata.source,
@@ -208,15 +214,16 @@ const QueryInterface = ({ vectorStore, namespaces, onQuerySubmitted, isProcessin
             <MenuItem disabled>
               <Typography variant="subtitle2">OpenAI Models</Typography>
             </MenuItem>
-            <MenuItem value="gpt-3.5-turbo">GPT-3.5 Turbo</MenuItem>
-            <MenuItem value="gpt-4-turbo">GPT-4 Turbo</MenuItem>
+            <MenuItem value="gpt-4o">GPT-4o</MenuItem>
+            <MenuItem value="gpt-4o-mini">GPT-4o-mini</MenuItem>
+            <MenuItem value="o1-mini">o1-mini</MenuItem>
+            <MenuItem value="o1-preview">o1-preview</MenuItem>
             <Divider />
             <MenuItem disabled>
               <Typography variant="subtitle2">Anthropic Models</Typography>
             </MenuItem>
-            <MenuItem value="claude-3-haiku-20240307">Claude 3 Haiku</MenuItem>
-            <MenuItem value="claude-3-sonnet-20240229">Claude 3 Sonnet</MenuItem>
-            <MenuItem value="claude-3-opus-20240229">Claude 3 Opus</MenuItem>
+            <MenuItem value="claude-3-5-sonnet-latest">Claude 3.5 Sonnet</MenuItem>
+            <MenuItem value="claude-3-7-sonnet-latest">Claude 3.7 Sonnet</MenuItem>
             <Divider />
             <MenuItem disabled>
               <Typography variant="subtitle2">Ollama Models</Typography>
