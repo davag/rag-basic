@@ -110,28 +110,58 @@ const QueryInterface = ({ vectorStore, namespaces, onQuerySubmitted, isProcessin
         // from the selected namespaces
       }
       
+      // Retrieve documents once for all models
+      const retriever = filteredVectorStore.asRetriever(4); // topK = 4
+      const startRetrievalTime = Date.now();
+      const docs = await retriever.getRelevantDocuments(query);
+      const endRetrievalTime = Date.now();
+      const retrievalTime = endRetrievalTime - startRetrievalTime;
+      
+      window.console.log(`Retrieved ${docs.length} documents in ${retrievalTime}ms`);
+      
+      // Format the context from retrieved documents
+      const context = docs.map(doc => doc.pageContent).join('\n\n');
+      
+      // Create the prompt with context
+      const prompt = `
+Context information is below.
+---------------------
+${context}
+---------------------
+Given the context information and not prior knowledge, answer the question: ${query}
+`;
+      
+      // Process each model with the same retrieved documents
       for (const model of selectedModels) {
         // Create LLM instance with appropriate configuration
         const llm = createLlmInstance(model, systemPrompts[model], {
           ollamaEndpoint: ollamaEndpoint
         });
         
-        // Create QA chain
-        const chain = createQaChain(llm, filteredVectorStore, { topK: 4 });
+        const startTime = Date.now();
         
-        // Execute query
-        const { result, metrics: queryMetrics } = await executeQuery(chain, query);
+        // Call the LLM directly with the prompt
+        const answer = await llm.invoke(prompt);
+        
+        const endTime = Date.now();
+        const responseTime = endTime - startTime;
         
         responses[model] = {
-          answer: typeof result.text === 'object' ? result.text.text : result.text,
-          sources: result.sourceDocuments.map(doc => ({
+          answer: typeof answer === 'object' ? answer.text : answer,
+          sources: docs.map(doc => ({
             content: doc.pageContent.substring(0, 200) + '...',
             source: doc.metadata.source,
             namespace: doc.metadata.namespace || 'default'
           }))
         };
         
-        metrics[model] = queryMetrics;
+        metrics[model] = {
+          responseTime: responseTime + retrievalTime, // Include retrieval time in the total
+          tokenUsage: {
+            estimated: true,
+            total: Math.round((typeof answer === 'object' ? answer.text : answer).length / 4) // Very rough estimate
+          }
+        };
       }
       
       onQuerySubmitted(responses, metrics);
