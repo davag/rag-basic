@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
-import { Container, Box, Paper, Tabs, Tab, Typography, Alert } from '@mui/material';
+import { Container, Box, Paper, Tabs, Tab, Typography, Alert, Snackbar } from '@mui/material';
 
 import DocumentUpload from './components/DocumentUpload';
 import VectorStoreConfig from './components/VectorStoreConfig';
@@ -46,6 +46,9 @@ function App() {
   const [metrics, setMetrics] = useState({});
   const [currentQuery, setCurrentQuery] = useState('');
   const [systemPrompts, setSystemPrompts] = useState({});
+  const [snackbarOpen, setSnackbarOpen] = useState(false);
+  const [snackbarMessage, setSnackbarMessage] = useState('');
+  const [snackbarSeverity, setSnackbarSeverity] = useState('success');
   
   // Store query interface state to preserve it when navigating back
   const [lastQueryState, setLastQueryState] = useState({
@@ -95,6 +98,45 @@ function App() {
   
   const handleBackToQuery = () => {
     setTabValue(2); // Navigate back to the query tab
+  };
+  
+  const handleImportResults = (importedResults) => {
+    try {
+      // Validate the imported data
+      if (!importedResults.query || !importedResults.responses || !importedResults.metrics) {
+        throw new Error('Invalid results file format');
+      }
+      
+      // Update application state with imported results
+      setLlmResponses(importedResults.responses);
+      setMetrics(importedResults.metrics);
+      setCurrentQuery(importedResults.query);
+      if (importedResults.systemPrompts) {
+        setSystemPrompts(importedResults.systemPrompts);
+      }
+      
+      // Update query state if it exists in the imported data
+      if (importedResults.queryState) {
+        setLastQueryState(importedResults.queryState);
+      }
+      
+      // Navigate to the results tab
+      setTabValue(3);
+      
+      // Show success message
+      setSnackbarMessage('Results imported successfully');
+      setSnackbarSeverity('success');
+      setSnackbarOpen(true);
+    } catch (error) {
+      window.console.error('Error importing results:', error);
+      setSnackbarMessage('Failed to import results. The file may be invalid or corrupted.');
+      setSnackbarSeverity('error');
+      setSnackbarOpen(true);
+    }
+  };
+  
+  const handleSnackbarClose = () => {
+    setSnackbarOpen(false);
   };
 
   // Check if API keys are set
@@ -172,10 +214,22 @@ function App() {
                 currentQuery={currentQuery}
                 systemPrompts={systemPrompts}
                 onBackToQuery={handleBackToQuery}
+                onImportResults={handleImportResults}
               />
             </TabPanel>
           </Paper>
         </Box>
+        
+        <Snackbar
+          open={snackbarOpen}
+          autoHideDuration={6000}
+          onClose={handleSnackbarClose}
+          anchorOrigin={{ vertical: 'top', horizontal: 'center' }}
+        >
+          <Alert onClose={handleSnackbarClose} severity={snackbarSeverity} sx={{ width: '100%' }}>
+            {snackbarMessage}
+          </Alert>
+        </Snackbar>
       </Container>
     </ThemeProvider>
   );

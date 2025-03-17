@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { 
   Typography, 
   Box, 
@@ -19,7 +19,10 @@ import {
   TableContainer,
   TableHead,
   TableRow,
-  Button
+  Button,
+  Stack,
+  Alert,
+  Snackbar
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import AccessTimeIcon from '@mui/icons-material/AccessTime';
@@ -28,11 +31,19 @@ import DescriptionIcon from '@mui/icons-material/Description';
 import FolderIcon from '@mui/icons-material/Folder';
 import DownloadIcon from '@mui/icons-material/Download';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
+import SaveIcon from '@mui/icons-material/Save';
+import UploadIcon from '@mui/icons-material/Upload';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
 
-const ResponseComparison = ({ responses, metrics, currentQuery, systemPrompts, onBackToQuery }) => {
+const ResponseComparison = ({ responses, metrics, currentQuery, systemPrompts, onBackToQuery, onImportResults }) => {
   const [expandedSources, setExpandedSources] = useState(false);
+  const [snackbarOpen, setSnackbarOpen] = useState(false);
+  const [snackbarMessage, setSnackbarMessage] = useState('');
+  const [snackbarSeverity, setSnackbarSeverity] = useState('success');
+  
+  // Reference to the file input element
+  const fileInputRef = useRef(null);
   
   // Get sources from the first model (they're the same for all models)
   const sources = Object.values(responses)[0]?.sources || [];
@@ -86,6 +97,124 @@ const ResponseComparison = ({ responses, metrics, currentQuery, systemPrompts, o
       byNamespace[namespace].push(source);
     });
     return byNamespace;
+  };
+
+  // Export results to a JSON file
+  const handleExportResults = () => {
+    // Get the current date and time for the filename
+    const timestamp = new Date().toISOString();
+    const dateForFilename = timestamp.slice(0, 10);
+    
+    // Determine if custom prompts were used based on the systemPrompts object
+    const useCustomPrompts = Object.keys(systemPrompts).length > 1;
+    let customSystemPrompts = {};
+    let globalSystemPrompt = '';
+    
+    if (useCustomPrompts) {
+      // If custom prompts were used, include all system prompts
+      customSystemPrompts = systemPrompts;
+    } else {
+      // If a global prompt was used, just include that
+      globalSystemPrompt = Object.values(systemPrompts)[0] || '';
+    }
+    
+    // Create a results object with all the data
+    const results = {
+      query: currentQuery,
+      systemPrompts,
+      responses,
+      metrics,
+      // Include query state information if available from the responses
+      queryState: {
+        query: currentQuery,
+        selectedModels: Object.keys(responses),
+        // Extract namespaces from sources if available
+        selectedNamespaces: Array.from(
+          new Set(
+            Object.values(responses)
+              .flatMap(r => r.sources || [])
+              .map(s => s.namespace || 'default')
+          )
+        ),
+        // Include only relevant system prompts
+        globalSystemPrompt: globalSystemPrompt,
+        useCustomPrompts: useCustomPrompts,
+        customSystemPrompts: customSystemPrompts
+      },
+      timestamp
+    };
+    
+    const resultsJson = JSON.stringify(results, null, 2);
+    const blob = new Blob([resultsJson], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    
+    // Create a temporary link and trigger download
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `rag-results-${dateForFilename}.json`;
+    document.body.appendChild(a);
+    a.click();
+    
+    // Clean up
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    
+    // Show success message
+    setSnackbarMessage('Results exported successfully');
+    setSnackbarSeverity('success');
+    setSnackbarOpen(true);
+  };
+  
+  // Trigger file input click
+  const handleImportClick = () => {
+    if (fileInputRef.current) {
+      fileInputRef.current.click();
+    }
+  };
+  
+  // Handle file selection for import
+  const handleImportResults = (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+    
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const importedResults = JSON.parse(e.target.result);
+        
+        // Validate the imported data
+        if (!importedResults.query || !importedResults.responses || !importedResults.metrics) {
+          throw new Error('Invalid results file format');
+        }
+        
+        // Use the App-level import handler if available
+        if (onImportResults && typeof onImportResults === 'function') {
+          onImportResults(importedResults);
+        } else {
+          // Fallback to local handling
+          setSnackbarMessage('Results imported successfully. Note: In a full implementation, these results would replace the current view.');
+          setSnackbarSeverity('info');
+          setSnackbarOpen(true);
+          window.console.log('Imported results:', importedResults);
+        }
+        
+        // Reset file input
+        if (fileInputRef.current) {
+          fileInputRef.current.value = '';
+        }
+        
+      } catch (error) {
+        window.console.error('Error importing results:', error);
+        setSnackbarMessage('Failed to import results. The file may be invalid or corrupted.');
+        setSnackbarSeverity('error');
+        setSnackbarOpen(true);
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  const handleSnackbarClose = () => {
+    setSnackbarOpen(false);
   };
 
   const generatePDF = () => {
@@ -274,14 +403,37 @@ const ResponseComparison = ({ responses, metrics, currentQuery, systemPrompts, o
             Response Comparison
           </Typography>
         </Box>
-        <Button 
-          variant="contained" 
-          color="primary" 
-          startIcon={<DownloadIcon />}
-          onClick={generatePDF}
-        >
-          Download Report
-        </Button>
+        <Stack direction="row" spacing={1}>
+          <Button 
+            variant="outlined" 
+            startIcon={<SaveIcon />}
+            onClick={handleExportResults}
+          >
+            Export Results
+          </Button>
+          <Button 
+            variant="outlined" 
+            startIcon={<UploadIcon />}
+            onClick={handleImportClick}
+          >
+            Import Results
+          </Button>
+          <Button 
+            variant="contained" 
+            color="primary" 
+            startIcon={<DownloadIcon />}
+            onClick={generatePDF}
+          >
+            Download PDF
+          </Button>
+          <input
+            type="file"
+            ref={fileInputRef}
+            onChange={handleImportResults}
+            accept=".json"
+            style={{ display: 'none' }}
+          />
+        </Stack>
       </Box>
 
       <Box mb={4}>
@@ -437,6 +589,17 @@ const ResponseComparison = ({ responses, metrics, currentQuery, systemPrompts, o
           </Grid>
         ))}
       </Grid>
+
+      <Snackbar
+        open={snackbarOpen}
+        autoHideDuration={6000}
+        onClose={handleSnackbarClose}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
+        <Alert onClose={handleSnackbarClose} severity={snackbarSeverity} sx={{ width: '100%' }}>
+          {snackbarMessage}
+        </Alert>
+      </Snackbar>
     </Box>
   );
 };

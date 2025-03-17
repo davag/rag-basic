@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   Typography, 
   Box, 
@@ -21,10 +21,13 @@ import {
   Link,
   Switch,
   FormControlLabel,
-  Slider
+  Slider,
+  Stack
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
+import SaveIcon from '@mui/icons-material/Save';
+import UploadIcon from '@mui/icons-material/Upload';
 import { createLlmInstance } from '../utils/apiServices';
 
 const DEFAULT_SYSTEM_PROMPT = `You are a helpful assistant that answers questions based on the provided context. 
@@ -76,6 +79,9 @@ const QueryInterface = ({ vectorStore, namespaces, onQuerySubmitted, isProcessin
   const [helpExpanded, setHelpExpanded] = useState(false);
   const [globalPromptExpanded, setGlobalPromptExpanded] = useState(false);
   const [globalTemperatureExpanded, setGlobalTemperatureExpanded] = useState(false);
+
+  // Reference to the file input element
+  const fileInputRef = useRef(null);
 
   // Load initial state if provided
   useEffect(() => {
@@ -183,14 +189,98 @@ const QueryInterface = ({ vectorStore, namespaces, onQuerySubmitted, isProcessin
       query,
       selectedModels,
       selectedNamespaces,
-      globalSystemPrompt,
+      globalSystemPrompt: useCustomPrompts ? '' : globalSystemPrompt,
       useCustomPrompts,
-      customSystemPrompts,
-      globalTemperature,
+      // Only include custom prompts if they're being used
+      customSystemPrompts: useCustomPrompts ? 
+        // Filter to only include prompts for selected models
+        Object.fromEntries(
+          Object.entries(customSystemPrompts)
+            .filter(([model]) => selectedModels.includes(model))
+        ) : 
+        {},
+      globalTemperature: useCustomTemperatures ? 0 : globalTemperature,
       useCustomTemperatures,
-      customTemperatures,
+      // Only include custom temperatures if they're being used
+      customTemperatures: useCustomTemperatures ? 
+        // Filter to only include temperatures for selected models
+        Object.fromEntries(
+          Object.entries(customTemperatures)
+            .filter(([model]) => selectedModels.includes(model))
+        ) : 
+        {},
       ollamaEndpoint
     };
+  };
+
+  // Export query configuration to a JSON file
+  const handleExportConfig = () => {
+    const config = getCurrentState();
+    const configJson = JSON.stringify(config, null, 2);
+    const blob = new Blob([configJson], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    
+    // Create a temporary link and trigger download
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `rag-query-config-${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(a);
+    a.click();
+    
+    // Clean up
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+  
+  // Trigger file input click
+  const handleImportClick = () => {
+    if (fileInputRef.current) {
+      fileInputRef.current.click();
+    }
+  };
+  
+  // Handle file selection for import
+  const handleImportConfig = (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+    
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const config = JSON.parse(e.target.result);
+        
+        // Update state with imported configuration
+        if (config.query) setQuery(config.query);
+        if (config.selectedModels) setSelectedModels(config.selectedModels);
+        if (config.selectedNamespaces) setSelectedNamespaces(config.selectedNamespaces);
+        if (config.globalSystemPrompt) setGlobalSystemPrompt(config.globalSystemPrompt);
+        if (config.useCustomPrompts !== undefined) setUseCustomPrompts(config.useCustomPrompts);
+        if (config.customSystemPrompts) {
+          setCustomSystemPrompts(prev => ({
+            ...prev,
+            ...config.customSystemPrompts
+          }));
+        }
+        if (config.globalTemperature !== undefined) setGlobalTemperature(config.globalTemperature);
+        if (config.useCustomTemperatures !== undefined) setUseCustomTemperatures(config.useCustomTemperatures);
+        if (config.customTemperatures) {
+          setCustomTemperatures(prev => ({
+            ...prev,
+            ...config.customTemperatures
+          }));
+        }
+        if (config.ollamaEndpoint) setOllamaEndpoint(config.ollamaEndpoint);
+        
+        // Reset file input
+        if (fileInputRef.current) {
+          fileInputRef.current.value = '';
+        }
+      } catch (error) {
+        window.console.error('Error importing configuration:', error);
+        setError('Failed to import configuration. The file may be invalid or corrupted.');
+      }
+    };
+    reader.readAsText(file);
   };
 
   const submitQuery = async () => {
@@ -296,19 +386,49 @@ Given the context information and not prior knowledge, answer the question: ${qu
 
   return (
     <Box>
-      <Box display="flex" alignItems="center" mb={1}>
-        <Typography variant="h5">
-          Step 3: Ask Questions Using RAG
-        </Typography>
-        <Tooltip title="Learn more about how RAG queries work">
-          <IconButton 
-            size="small" 
-            onClick={() => setHelpExpanded(!helpExpanded)}
-            sx={{ ml: 1 }}
+      <Box display="flex" alignItems="center" justifyContent="space-between" mb={1}>
+        <Box display="flex" alignItems="center">
+          <Typography variant="h5">
+            Step 3: Ask Questions Using RAG
+          </Typography>
+          <Tooltip title="Learn more about how RAG queries work">
+            <IconButton 
+              size="small" 
+              onClick={() => setHelpExpanded(!helpExpanded)}
+              sx={{ ml: 1 }}
+            >
+              <HelpOutlineIcon />
+            </IconButton>
+          </Tooltip>
+        </Box>
+        
+        <Stack direction="row" spacing={1}>
+          <Button
+            variant="outlined"
+            startIcon={<SaveIcon />}
+            onClick={handleExportConfig}
+            disabled={isProcessing}
+            size="small"
           >
-            <HelpOutlineIcon />
-          </IconButton>
-        </Tooltip>
+            Export Config
+          </Button>
+          <Button
+            variant="outlined"
+            startIcon={<UploadIcon />}
+            onClick={handleImportClick}
+            disabled={isProcessing}
+            size="small"
+          >
+            Import Config
+          </Button>
+          <input
+            type="file"
+            ref={fileInputRef}
+            onChange={handleImportConfig}
+            accept=".json"
+            style={{ display: 'none' }}
+          />
+        </Stack>
       </Box>
 
       <Typography variant="body2" color="textSecondary" paragraph>
