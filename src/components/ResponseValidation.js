@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Typography, 
   Box, 
@@ -51,6 +51,24 @@ const ResponseValidation = ({
   );
   const [expandedCriteria, setExpandedCriteria] = useState(false);
   const [error, setError] = useState(null);
+  const [currentValidatingModel, setCurrentValidatingModel] = useState(null);
+
+  // Reset validation state when component is mounted or re-mounted
+  useEffect(() => {
+    // Reset validation-related state
+    setCurrentValidatingModel(null);
+    setError(null);
+    
+    // If we're not processing, make sure isProcessing is false
+    if (!isProcessing) {
+      setIsProcessing(false);
+    }
+    
+    // This will run when the component is unmounted
+    return () => {
+      // Clean up any ongoing processes if needed
+    };
+  }, []); // Empty dependency array means this runs once on mount
 
   const handleValidatorModelChange = (event) => {
     setValidatorModel(event.target.value);
@@ -83,6 +101,8 @@ const ResponseValidation = ({
       
       // Process each model response
       for (const model of Object.keys(responses)) {
+        setCurrentValidatingModel(model);
+        
         const response = responses[model];
         const answer = typeof response.answer === 'object' ? response.answer.text : response.answer;
         
@@ -143,6 +163,7 @@ Format your response as a JSON object with the following structure:
         }
       }
       
+      setCurrentValidatingModel(null);
       // Update the validation results
       onValidationComplete(results);
       
@@ -151,6 +172,7 @@ Format your response as a JSON object with the following structure:
       setError('Error validating responses: ' + err.message);
     } finally {
       setIsProcessing(false);
+      setCurrentValidatingModel(null);
     }
   };
 
@@ -456,7 +478,7 @@ Format your response as a JSON object with the following structure:
           </AccordionDetails>
         </Accordion>
         
-        <Box display="flex" justifyContent="center">
+        <Box display="flex" justifyContent="center" flexDirection="column" alignItems="center">
           <Button
             variant="contained"
             color="primary"
@@ -464,15 +486,49 @@ Format your response as a JSON object with the following structure:
             onClick={validateResponses}
             disabled={isProcessing || Object.keys(responses).length === 0}
           >
-            {isProcessing ? (
-              <>
-                <CircularProgress size={24} color="inherit" sx={{ mr: 1 }} />
-                Validating Responses...
-              </>
-            ) : (
-              'Validate Responses'
-            )}
+            {isProcessing ? 'Validating...' : 'Validate Responses'}
           </Button>
+          
+          {isProcessing && (
+            <Box sx={{ width: '100%', maxWidth: 500, mt: 3 }}>
+              <Typography variant="body2" align="center" gutterBottom>
+                Validating responses using {validatorModel}
+              </Typography>
+              <LinearProgress sx={{ mb: 2 }} />
+              
+              <Box sx={{ mt: 2 }}>
+                {Object.keys(responses).map(model => (
+                  <Box key={model} sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
+                    <Box 
+                      sx={{ 
+                        width: 20, 
+                        height: 20, 
+                        borderRadius: '50%', 
+                        mr: 1,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        bgcolor: currentValidatingModel === model ? 'primary.main' : 
+                                 validationResults[model] ? 'success.light' : 'grey.300'
+                      }}
+                    >
+                      {currentValidatingModel === model && <CircularProgress size={16} color="inherit" />}
+                    </Box>
+                    <Typography 
+                      variant="body2" 
+                      color={currentValidatingModel === model ? 'primary' : 
+                             validationResults[model] ? 'success.main' : 'textSecondary'}
+                      sx={{ fontWeight: currentValidatingModel === model ? 'bold' : 'normal' }}
+                    >
+                      {model}
+                      {currentValidatingModel === model && ' (validating...)'}
+                      {validationResults[model] && ' (completed)'}
+                    </Typography>
+                  </Box>
+                ))}
+              </Box>
+            </Box>
+          )}
         </Box>
       </Paper>
 

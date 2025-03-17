@@ -22,7 +22,8 @@ import {
   Switch,
   FormControlLabel,
   Slider,
-  Stack
+  Stack,
+  LinearProgress
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
@@ -79,9 +80,30 @@ const QueryInterface = ({ vectorStore, namespaces, onQuerySubmitted, isProcessin
   const [helpExpanded, setHelpExpanded] = useState(false);
   const [globalPromptExpanded, setGlobalPromptExpanded] = useState(false);
   const [globalTemperatureExpanded, setGlobalTemperatureExpanded] = useState(false);
+  const [currentProcessingModel, setCurrentProcessingModel] = useState(null);
+  const [processingStep, setProcessingStep] = useState('');
+  const [responses, setResponses] = useState({});
 
   // Reference to the file input element
   const fileInputRef = useRef(null);
+
+  // Reset processing state when component is mounted or re-mounted
+  useEffect(() => {
+    // Reset processing-related state
+    setResponses({});
+    setCurrentProcessingModel(null);
+    setProcessingStep('');
+    
+    // If we're not processing, make sure isProcessing is false
+    if (!isProcessing) {
+      setIsProcessing(false);
+    }
+    
+    // This will run when the component is unmounted
+    return () => {
+      // Clean up any ongoing processes if needed
+    };
+  }, []); // Empty dependency array means this runs once on mount
 
   // Load initial state if provided
   useEffect(() => {
@@ -291,6 +313,7 @@ const QueryInterface = ({ vectorStore, namespaces, onQuerySubmitted, isProcessin
 
     setIsProcessing(true);
     setError(null);
+    setProcessingStep('Preparing query');
     
     const responses = {};
     const metrics = {};
@@ -312,6 +335,7 @@ const QueryInterface = ({ vectorStore, namespaces, onQuerySubmitted, isProcessin
       }
       
       // Retrieve documents once for all models
+      setProcessingStep('Retrieving relevant documents');
       const retriever = filteredVectorStore.asRetriever(4); // topK = 4
       const startRetrievalTime = Date.now();
       const docs = await retriever.getRelevantDocuments(query);
@@ -337,6 +361,9 @@ Given the context information and not prior knowledge, answer the question: ${qu
       
       // Process each model with the same retrieved documents
       for (const model of selectedModels) {
+        setCurrentProcessingModel(model);
+        setProcessingStep(`Processing with ${model}`);
+        
         // Get the appropriate system prompt for this model
         const systemPrompt = getSystemPromptForModel(model);
         systemPromptsUsed[model] = systemPrompt;
@@ -388,6 +415,9 @@ Given the context information and not prior knowledge, answer the question: ${qu
         };
       }
       
+      setProcessingStep('Finalizing results');
+      // Store the responses in state
+      setResponses(responses);
       // Pass the current state along with the results
       onQuerySubmitted(responses, metrics, query, systemPromptsUsed, getCurrentState());
     } catch (err) {
@@ -395,6 +425,8 @@ Given the context information and not prior knowledge, answer the question: ${qu
       setError('Error executing query: ' + err.message);
     } finally {
       setIsProcessing(false);
+      setCurrentProcessingModel(null);
+      setProcessingStep('');
     }
   };
 
@@ -769,7 +801,7 @@ Given the context information and not prior knowledge, answer the question: ${qu
         )}
       </Paper>
 
-      <Box mt={3} display="flex" justifyContent="center">
+      <Box mt={3} display="flex" justifyContent="center" flexDirection="column" alignItems="center">
         <Button
           variant="contained"
           color="primary"
@@ -777,15 +809,47 @@ Given the context information and not prior knowledge, answer the question: ${qu
           disabled={isProcessing || !query.trim() || selectedModels.length === 0}
           size="large"
         >
-          {isProcessing ? (
-            <>
-              <CircularProgress size={24} color="inherit" style={{ marginRight: 10 }} />
-              Processing Query...
-            </>
-          ) : (
-            'Submit Query'
-          )}
+          {isProcessing ? 'Processing...' : 'Submit Query'}
         </Button>
+        
+        {isProcessing && (
+          <Box sx={{ width: '100%', maxWidth: 500, mt: 2 }}>
+            <Typography variant="body2" align="center" gutterBottom>
+              {processingStep}
+            </Typography>
+            <LinearProgress sx={{ mb: 1 }} />
+            
+            <Box sx={{ mt: 2 }}>
+              {selectedModels.map(model => (
+                <Box key={model} sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
+                  <Box 
+                    sx={{ 
+                      width: 20, 
+                      height: 20, 
+                      borderRadius: '50%', 
+                      mr: 1,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      bgcolor: currentProcessingModel === model ? 'primary.main' : 'grey.300'
+                    }}
+                  >
+                    {currentProcessingModel === model && <CircularProgress size={16} color="inherit" />}
+                  </Box>
+                  <Typography 
+                    variant="body2" 
+                    color={currentProcessingModel === model ? 'primary' : 'textSecondary'}
+                    sx={{ fontWeight: currentProcessingModel === model ? 'bold' : 'normal' }}
+                  >
+                    {model}
+                    {currentProcessingModel === model && ' (processing...)'}
+                    {Object.keys(responses).includes(model) && ' (completed)'}
+                  </Typography>
+                </Box>
+              ))}
+            </Box>
+          </Box>
+        )}
       </Box>
 
       {error && (

@@ -67,6 +67,16 @@ function App() {
   });
 
   const handleTabChange = (event, newValue) => {
+    // Reset processing state when switching tabs
+    if (isProcessing) {
+      setIsProcessing(false);
+    }
+    
+    // If switching to the validation tab, reset validation results
+    if (newValue === 4) {
+      setValidationResults({});
+    }
+    
     setTabValue(newValue);
   };
 
@@ -99,7 +109,11 @@ function App() {
   };
   
   const handleBackToQuery = () => {
-    setTabValue(2); // Navigate back to the query tab
+    // Reset processing state when going back to query
+    setIsProcessing(false);
+    
+    // Navigate back to the query tab
+    setTabValue(2);
   };
   
   const handleImportResults = (importedResults) => {
