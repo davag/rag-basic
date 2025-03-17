@@ -464,28 +464,29 @@ Given the context information and not prior knowledge, answer the question: ${qu
       
       // Prepare the prompt for getting improvement ideas
       const advisorPrompt = `
-You are an expert at prompt engineering. Please analyze the following system prompt and suggest improvements.
+You are an expert at prompt engineering. Please analyze the following system prompt for a RAG (Retrieval-Augmented Generation) system.
 
 CURRENT SYSTEM PROMPT:
 """
 ${promptToImprove}
 """
 
-This system prompt is intended to be used with a RAG (Retrieval-Augmented Generation) system that retrieves relevant context from documents 
+This system prompt is intended to be used with a RAG system that retrieves relevant context from documents 
 and then answers user questions based on that context.
 
 ${modelToUse ? `The prompt will be used with the ${modelToUse} model.` : 'The prompt will be used with various LLM models.'}
 
 Please provide:
-1. A brief analysis of the strengths and weaknesses of the current prompt
-2. 2-3 specific suggestions for improving the prompt's effectiveness
-3. An improved version of the system prompt that implements your suggestions
+1. A fair analysis of the prompt's quality
+2. If the prompt is already well-crafted with no significant issues, ACKNOWLEDGE THIS EXPLICITLY instead of inventing weaknesses
+3. Only if there are genuine areas for improvement, provide 1-2 specific suggestions
 
-Focus on improvements that would:
-- Enhance accuracy in using the retrieved context
-- Reduce hallucinations
-- Improve helpful behavior
-- Create better formatted responses
+Your analysis should be honest and balanced:
+- If the prompt is already very good, say so - don't invent problems just to have something to suggest
+- If you suggest improvements, they should address real limitations, not theoretical ones
+- Focus on meaningful changes that would significantly improve the prompt's effectiveness
+
+If you recommend changes, also provide an improved version of the system prompt that implements your suggestions.
 
 Format your response with clear headings for each section.
 `;
@@ -771,9 +772,9 @@ Format your response with clear headings for each section.
                   {isGettingPromptIdeas ? (
                     <>
                       <CircularProgress size={16} sx={{ mr: 1 }} />
-                      Getting Ideas...
+                      Getting Feedback...
                     </>
-                  ) : 'Get Improvement Ideas'}
+                  ) : 'Get Prompt Feedback'}
                 </Button>
               </Box>
             </AccordionDetails>
@@ -832,9 +833,9 @@ Format your response with clear headings for each section.
                       {isGettingPromptIdeas ? (
                         <>
                           <CircularProgress size={16} sx={{ mr: 1 }} />
-                          Getting Ideas...
+                          Getting Feedback...
                         </>
-                      ) : 'Get Improvement Ideas'}
+                      ) : 'Get Prompt Feedback'}
                     </Button>
                   </Box>
                 </AccordionDetails>
@@ -849,7 +850,7 @@ Format your response with clear headings for each section.
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
               <Typography variant="h6" gutterBottom>
                 <LightbulbIcon sx={{ mr: 1, verticalAlign: 'middle', color: '#FFC107' }} />
-                Prompt Improvement Ideas
+                Prompt Feedback
               </Typography>
               <Box>
                 <IconButton size="small" onClick={() => setPromptIdeas(null)}>
