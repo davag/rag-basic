@@ -124,7 +124,8 @@ const LlmSettings = ({ showAppSettingsOnly = false }) => {
     'Completeness: Does the response address all aspects of the query?\n' +
     'Relevance: Is the information in the response relevant to the query?\n' +
     'Conciseness: Is the response appropriately concise without omitting important information?\n' +
-    'Clarity: Is the response clear, well-structured, and easy to understand?'
+    'Clarity: Is the response clear, well-structured, and easy to understand?\n' +
+    'Exception handling: Only if the output is code then check exceptions paths'
   );
   const [defaultQueryTemplate, setDefaultQueryTemplate] = useState('');
 
@@ -382,7 +383,8 @@ const LlmSettings = ({ showAppSettingsOnly = false }) => {
       'Completeness: Does the response address all aspects of the query?\n' +
       'Relevance: Is the information in the response relevant to the query?\n' +
       'Conciseness: Is the response appropriately concise without omitting important information?\n' +
-      'Clarity: Is the response clear, well-structured, and easy to understand?';
+      'Clarity: Is the response clear, well-structured, and easy to understand?\n' +
+      'Exception handling: Only if the output is code then check exceptions paths'
     
     setDefaultEvaluationCriteria(defaultCriteria);
     localStorage.setItem('defaultEvaluationCriteria', defaultCriteria);
@@ -786,7 +788,8 @@ const LlmSettings = ({ showAppSettingsOnly = false }) => {
                 'Completeness: Does the response address all aspects of the query?\n' +
                 'Relevance: Is the information in the response relevant to the query?\n' +
                 'Conciseness: Is the response appropriately concise without omitting important information?\n' +
-                'Clarity: Is the response clear, well-structured, and easy to understand?';
+                'Clarity: Is the response clear, well-structured, and easy to understand?\n' +
+                'Exception handling: Only if the output is code then check exceptions paths'
               setDefaultEvaluationCriteria(defaultCriteria);
             }}
           >

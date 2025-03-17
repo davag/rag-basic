@@ -19,7 +19,11 @@ import {
   AccordionSummary,
   AccordionDetails,
   Select,
-  MenuItem
+  MenuItem,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import DownloadIcon from '@mui/icons-material/Download';
@@ -27,9 +31,53 @@ import AssessmentIcon from '@mui/icons-material/Assessment';
 import MoneyOffIcon from '@mui/icons-material/MoneyOff';
 import EmojiEventsIcon from '@mui/icons-material/EmojiEvents';
 import BalanceIcon from '@mui/icons-material/Balance';
+import EditIcon from '@mui/icons-material/Edit';
 import { createLlmInstance, calculateCost } from '../utils/apiServices';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
+
+// Reusable model dropdown component to avoid duplication
+const ModelDropdown = ({ value, onChange, sx = {} }) => (
+  <Select
+    fullWidth
+    value={value}
+    onChange={onChange}
+    variant="outlined"
+    sx={sx}
+  >
+    <MenuItem value="gpt-4o">GPT-4o</MenuItem>
+    <MenuItem value="gpt-4o-mini">GPT-4o Mini</MenuItem>
+    <MenuItem value="claude-3-5-sonnet-latest">Claude 3.5 Sonnet</MenuItem>
+    <MenuItem value="claude-3-7-sonnet-latest">Claude 3.7 Sonnet</MenuItem>
+    <Divider />
+    <MenuItem disabled>
+      <Typography variant="subtitle2">Ollama Models</Typography>
+    </MenuItem>
+    <MenuItem value="llama3.2:latest">Llama 3 (8B)</MenuItem>
+    <MenuItem value="gemma3:12b">Gemma 3 (12B)</MenuItem>
+    <MenuItem value="mistral:latest">Mistral (7B)</MenuItem>
+  </Select>
+);
+
+// Reusable criteria textarea component
+const CriteriaTextArea = ({ value, onChange, rows = 8, sx = {} }) => (
+  <>
+    <Typography variant="body2" color="textSecondary" sx={{ mb: 2 }}>
+      Specify the criteria for evaluating responses. Define one criterion per line, optionally with descriptions after a colon.
+    </Typography>
+    <TextField
+      label="Evaluation Criteria"
+      fullWidth
+      multiline
+      rows={rows}
+      value={value}
+      onChange={onChange}
+      placeholder="Enter evaluation criteria, one per line..."
+      variant="outlined"
+      sx={sx}
+    />
+  </>
+);
 
 // Function to normalize criterion name to title case
 const normalizeCriterionName = (criterion) => {
@@ -68,6 +116,8 @@ const ResponseValidation = ({
   );
   const [expandedCriteria, setExpandedCriteria] = useState(false);
   const [currentValidatingModel, setCurrentValidatingModel] = useState(null);
+  const [sortConfig, setSortConfig] = useState({ key: 'overallScore', direction: 'descending' });
+  const [editCriteriaOpen, setEditCriteriaOpen] = useState(false);
 
   // Load validator model from localStorage on component mount
   useEffect(() => {
@@ -200,13 +250,12 @@ For example, use "Accuracy" not "accuracy" or "ACCURACY".
   };
 
   const formatCost = (cost) => {
-    if (cost === 0) {
-      return 'Free';
-    }
-    return `$${cost.toFixed(4)}`; // Always show in dollars with 4 decimal places
+    if (cost === 0) return 'Free';
+    return cost < 0.01 ? `$${cost.toFixed(6)}` : `$${cost.toFixed(4)}`;
   };
 
   const formatResponseTime = (ms) => {
+    if (!ms) return 'N/A';
     if (ms < 1000) {
       return `${ms}ms`;
     }
@@ -286,6 +335,46 @@ For example, use "Accuracy" not "accuracy" or "ACCURACY".
     // Add a new page for validation results
     doc.addPage();
     yPos = 20;
+    
+    // Performance Efficiency Analysis
+    if (effectivenessData && effectivenessData.mostEffectiveModel) {
+      doc.setFontSize(14);
+      doc.text('Performance Efficiency Analysis', margin, yPos);
+      yPos += 10;
+      
+      // Best Overall Performance
+      doc.setFontSize(12);
+      doc.text('Best Overall Performance:', margin, yPos);
+      yPos += 7;
+      doc.setFontSize(10);
+      doc.text(`Model: ${effectivenessData.mostEffectiveModel}`, margin + 5, yPos);
+      yPos += 5;
+      doc.text(`Quality Score: ${effectivenessData.modelScores[effectivenessData.mostEffectiveModel]}/100`, margin + 5, yPos);
+      yPos += 5;
+      doc.text(`Cost: ${formatCost(effectivenessData.modelCosts[effectivenessData.mostEffectiveModel])}`, margin + 5, yPos);
+      yPos += 5;
+      doc.text(`Response Time: ${formatResponseTime(metrics[effectivenessData.mostEffectiveModel].responseTime)}`, margin + 5, yPos);
+      yPos += 5;
+      doc.text(`Efficiency Score: ${formatEffectivenessScore(effectivenessData.effectivenessScores[effectivenessData.mostEffectiveModel])}`, margin + 5, yPos);
+      yPos += 10;
+      
+      // Highest Quality
+      doc.setFontSize(12);
+      doc.text('Highest Quality:', margin, yPos);
+      yPos += 7;
+      doc.setFontSize(10);
+      doc.text(`Model: ${effectivenessData.highestScoringModel}`, margin + 5, yPos);
+      yPos += 5;
+      doc.text(`Quality Score: ${effectivenessData.modelScores[effectivenessData.highestScoringModel]}/100`, margin + 5, yPos);
+      yPos += 5;
+      doc.text(`Cost: ${formatCost(effectivenessData.modelCosts[effectivenessData.highestScoringModel])}`, margin + 5, yPos);
+      yPos += 5;
+      doc.text(`Response Time: ${formatResponseTime(metrics[effectivenessData.highestScoringModel].responseTime)}`, margin + 5, yPos);
+      yPos += 10;
+      
+      // Add some space
+      yPos += 5;
+    }
     
     // Validation Results
     doc.setFontSize(14);
@@ -435,13 +524,14 @@ For example, use "Accuracy" not "accuracy" or "ACCURACY".
     );
   };
 
-  // Calculate cost-effectiveness score
+  // Calculate performance efficiency score (cost and response time)
   const calculateEffectivenessScore = (validationResults, metrics) => {
     if (!validationResults || Object.keys(validationResults).length === 0) return {};
 
     // Calculate costs for each model
     const modelCosts = {};
     const modelScores = {};
+    const modelResponseTimes = {};
     
     Object.keys(validationResults).forEach(model => {
       if (!metrics[model]) return;
@@ -450,6 +540,10 @@ For example, use "Accuracy" not "accuracy" or "ACCURACY".
       const cost = calculateCost(model, metrics[model].tokenUsage.total);
       modelCosts[model] = cost;
       
+      // Get the response time
+      const responseTime = metrics[model].responseTime || 0;
+      modelResponseTimes[model] = responseTime;
+      
       // Get the overall score
       const result = validationResults[model];
       if (result?.overall?.score) {
@@ -457,38 +551,39 @@ For example, use "Accuracy" not "accuracy" or "ACCURACY".
       }
     });
     
-    // Find best raw score and lowest cost
+    // Find best raw score, lowest cost, and fastest response time
     const bestScore = Math.max(...Object.values(modelScores), 0);
     const lowestCost = Math.min(...Object.values(modelCosts).filter(cost => cost > 0), Infinity);
+    const fastestTime = Math.min(...Object.values(modelResponseTimes).filter(time => time > 0), Infinity);
     
-    // Calculate a cost-effectiveness score for each model
-    // Formula: (model_score / best_score) / (model_cost / lowest_cost)
+    // Calculate a performance efficiency score for each model
+    // Formula: (model_score / best_score) / ((model_cost / lowest_cost) * 0.5 + (model_time / fastest_time) * 0.5)
     // Higher is better, normalized to 100
+    // Weighting: 50% cost, 50% speed
     const rawEffectivenessScores = {};
     
     Object.keys(modelScores).forEach(model => {
       if (modelCosts[model] === 0) {
-        // Free models get a special indicator
-        rawEffectivenessScores[model] = Infinity;
+        // Free models get a special indicator but we still consider response time
+        const timeRatio = modelResponseTimes[model] / fastestTime;
+        // For free models, we only consider speed (with a high base score)
+        rawEffectivenessScores[model] = (90 / timeRatio) * 100;
       } else {
         const scoreRatio = modelScores[model] / bestScore;
         const costRatio = modelCosts[model] / lowestCost;
-        rawEffectivenessScores[model] = (scoreRatio / costRatio) * 100;
+        const timeRatio = modelResponseTimes[model] / fastestTime;
+        // Combined metric that weights cost and speed equally
+        const efficiencyRatio = (costRatio * 0.5) + (timeRatio * 0.5);
+        rawEffectivenessScores[model] = (scoreRatio / efficiencyRatio) * 100;
       }
     });
     
-    // Find the most cost-effective model
+    // Find the most efficient model
     let mostEffectiveModel = null;
     let highestEffectiveness = -1;
     
     Object.entries(rawEffectivenessScores).forEach(([model, score]) => {
-      if (score === Infinity) {
-        // Free models with good scores are automatically most effective
-        if (modelScores[model] >= 70 && (mostEffectiveModel === null || rawEffectivenessScores[mostEffectiveModel] !== Infinity)) {
-          mostEffectiveModel = model;
-          highestEffectiveness = score;
-        }
-      } else if (score > highestEffectiveness) {
+      if (score > highestEffectiveness) {
         mostEffectiveModel = model;
         highestEffectiveness = score;
       }
@@ -529,6 +624,7 @@ For example, use "Accuracy" not "accuracy" or "ACCURACY".
   };
 
   const formatEffectivenessScore = (score) => {
+    if (!score) return 'N/A';
     if (score === Infinity) return "∞ (Free)";
     return score.toFixed(1);
   };
@@ -540,7 +636,7 @@ For example, use "Accuracy" not "accuracy" or "ACCURACY".
       <Paper elevation={2} sx={{ p: 3, mb: 4, bgcolor: '#f9f9fa', border: '1px solid #e0e0e0' }}>
         <Typography variant="h6" gutterBottom sx={{ display: 'flex', alignItems: 'center' }}>
           <BalanceIcon sx={{ mr: 1, color: 'primary.main' }} />
-          Cost-Effectiveness Analysis
+          Performance Efficiency Analysis
         </Typography>
         
         <Grid container spacing={2} sx={{ mt: 1 }}>
@@ -549,25 +645,28 @@ For example, use "Accuracy" not "accuracy" or "ACCURACY".
               <CardContent>
                 <Typography variant="subtitle1" sx={{ display: 'flex', alignItems: 'center', color: 'primary.main', mb: 1 }}>
                   <BalanceIcon sx={{ mr: 1, fontSize: '1.2rem' }} />
-                  Best Value for Money
+                  Best Overall Performance
                 </Typography>
                 
                 {effectivenessData.mostEffectiveModel ? (
                   <>
                     <Typography variant="h6">{effectivenessData.mostEffectiveModel}</Typography>
                     <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-                      Score: {effectivenessData.modelScores[effectivenessData.mostEffectiveModel]}/100
+                      Quality Score: {effectivenessData.modelScores[effectivenessData.mostEffectiveModel]}/100
                     </Typography>
                     <Typography variant="body2" color="text.secondary">
                       Cost: {effectivenessData.modelCosts[effectivenessData.mostEffectiveModel] === 0 ? 
                         'Free' : 
                         `$${effectivenessData.modelCosts[effectivenessData.mostEffectiveModel].toFixed(6)}`}
                     </Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      Speed: {formatResponseTime(metrics[effectivenessData.mostEffectiveModel].responseTime)}
+                    </Typography>
                     <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-                      Effectiveness: {formatEffectivenessScore(effectivenessData.effectivenessScores[effectivenessData.mostEffectiveModel])}
+                      Efficiency Score: {formatEffectivenessScore(effectivenessData.effectivenessScores[effectivenessData.mostEffectiveModel])}
                     </Typography>
                     <Typography variant="body2" color="text.secondary" sx={{ mt: 1, fontStyle: 'italic' }}>
-                      Best balance of quality and cost
+                      Best balance of quality, cost, and speed (with equal weight on cost and speed)
                     </Typography>
                   </>
                 ) : (
@@ -598,8 +697,11 @@ For example, use "Accuracy" not "accuracy" or "ACCURACY".
                         'Free' : 
                         `$${effectivenessData.modelCosts[effectivenessData.highestScoringModel].toFixed(6)}`}
                     </Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      Speed: {formatResponseTime(metrics[effectivenessData.highestScoringModel].responseTime)}
+                    </Typography>
                     <Typography variant="body2" color="text.secondary" sx={{ mt: 1, fontStyle: 'italic' }}>
-                      Best raw quality score regardless of cost
+                      Best raw quality score regardless of cost or speed
                     </Typography>
                   </>
                 ) : (
@@ -630,6 +732,9 @@ For example, use "Accuracy" not "accuracy" or "ACCURACY".
                         'Free' : 
                         `$${effectivenessData.modelCosts[effectivenessData.cheapestGoodModel].toFixed(6)}`}
                     </Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      Speed: {formatResponseTime(metrics[effectivenessData.cheapestGoodModel].responseTime)}
+                    </Typography>
                     <Typography variant="body2" color="text.secondary" sx={{ mt: 1, fontStyle: 'italic' }}>
                       Lowest cost with a score of at least 70
                     </Typography>
@@ -651,6 +756,15 @@ For example, use "Accuracy" not "accuracy" or "ACCURACY".
   const effectivenessData = Object.keys(validationResults).length > 0 ? 
     calculateEffectivenessScore(validationResults, metrics) : 
     null;
+
+  // Sort function for table data
+  const requestSort = (key) => {
+    let direction = 'ascending';
+    if (sortConfig.key === key && sortConfig.direction === 'ascending') {
+      direction = 'descending';
+    }
+    setSortConfig({ key, direction });
+  };
 
   return (
     <Box>
@@ -690,25 +804,11 @@ For example, use "Accuracy" not "accuracy" or "ACCURACY".
               Validation Model
             </Typography>
             <Box sx={{ mb: 2 }}>
-              <Select
-                fullWidth
+              <ModelDropdown 
                 value={validatorModel}
                 onChange={(e) => setValidatorModel(e.target.value)}
-                variant="outlined"
                 sx={{ mb: 2 }}
-              >
-                <MenuItem value="gpt-4o">GPT-4o</MenuItem>
-                <MenuItem value="gpt-4o-mini">GPT-4o Mini</MenuItem>
-                <MenuItem value="claude-3-5-sonnet-latest">Claude 3.5 Sonnet</MenuItem>
-                <MenuItem value="claude-3-7-sonnet-latest">Claude 3.7 Sonnet</MenuItem>
-                <Divider />
-                <MenuItem disabled>
-                  <Typography variant="subtitle2">Ollama Models</Typography>
-                </MenuItem>
-                <MenuItem value="llama3.2:latest">Llama 3 (8B)</MenuItem>
-                <MenuItem value="gemma3:12b">Gemma 3 (12B)</MenuItem>
-                <MenuItem value="mistral:latest">Mistral (7B)</MenuItem>
-              </Select>
+              />
               <Typography variant="body2" color="textSecondary">
                 This model will evaluate the responses from all the models in your comparison. For best results, choose a strong model that can provide insightful analysis.
               </Typography>
@@ -723,18 +823,9 @@ For example, use "Accuracy" not "accuracy" or "ACCURACY".
                 <Typography>Evaluation Criteria</Typography>
               </AccordionSummary>
               <AccordionDetails>
-                <Typography variant="body2" color="textSecondary" sx={{ mb: 2 }}>
-                  Specify the criteria for evaluating responses. Define one criterion per line, optionally with descriptions after a colon.
-                </Typography>
-                <TextField
-                  label="Evaluation Criteria"
-                  fullWidth
-                  multiline
-                  rows={8}
+                <CriteriaTextArea
                   value={customCriteria}
                   onChange={(e) => setCustomCriteria(e.target.value)}
-                  placeholder="Enter evaluation criteria, one per line..."
-                  variant="outlined"
                 />
               </AccordionDetails>
             </Accordion>
@@ -753,8 +844,21 @@ For example, use "Accuracy" not "accuracy" or "ACCURACY".
         </Box>
       ) : (
         <>
-          {/* Show Cost-Effectiveness Analysis first */}
+          {/* Show Performance Efficiency Analysis first */}
           {renderEffectivenessSummary(effectivenessData)}
+
+          {/* Add Edit Criteria button above validation results */}
+          <Box sx={{ mb: 2, display: 'flex', justifyContent: 'flex-end' }}>
+            <Button 
+              variant="contained" 
+              color="secondary"
+              onClick={() => setEditCriteriaOpen(true)}
+              startIcon={<EditIcon />}
+              sx={{ mb: 2 }}
+            >
+              Edit Criteria
+            </Button>
+          </Box>
 
           {/* Then show the Validation Results table */}
           <Box mb={4}>
@@ -765,14 +869,64 @@ For example, use "Accuracy" not "accuracy" or "ACCURACY".
               
               <Typography variant="body2" color="textSecondary" paragraph>
                 These scores assess how well each model response aligns with the evaluation criteria. Higher scores indicate better quality responses.
+                <i style={{ display: 'block', marginTop: '8px', color: '#666' }}>💡 Tip: Click on any column header to sort the table.</i>
               </Typography>
               
               <Box sx={{ overflowX: 'auto' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '20px' }}>
                   <thead>
                     <tr>
-                      <th style={{ textAlign: 'left', padding: '8px', borderBottom: '1px solid #ddd' }}>Model</th>
-                      <th style={{ textAlign: 'center', padding: '8px', borderBottom: '1px solid #ddd' }}>Overall Score</th>
+                      <th 
+                        style={{ 
+                          textAlign: 'left', 
+                          padding: '8px', 
+                          borderBottom: '1px solid #ddd', 
+                          cursor: 'pointer',
+                          backgroundColor: sortConfig.key === 'model' ? '#f5f5f5' : 'transparent',
+                          position: 'relative',
+                          transition: 'background-color 0.2s'
+                        }}
+                        onClick={() => requestSort('model')}
+                      >
+                        <Box sx={{ 
+                          display: 'flex', 
+                          alignItems: 'center', 
+                          justifyContent: 'space-between',
+                          '&:hover': { opacity: 0.8 }
+                        }}>
+                          Model
+                          {sortConfig.key === 'model' && (
+                            <span style={{ marginLeft: '4px' }}>
+                              {sortConfig.direction === 'ascending' ? '↑' : '↓'}
+                            </span>
+                          )}
+                        </Box>
+                      </th>
+                      <th 
+                        style={{ 
+                          textAlign: 'center', 
+                          padding: '8px', 
+                          borderBottom: '1px solid #ddd',
+                          cursor: 'pointer',
+                          backgroundColor: sortConfig.key === 'overallScore' ? '#f5f5f5' : 'transparent',
+                          transition: 'background-color 0.2s'
+                        }}
+                        onClick={() => requestSort('overallScore')}
+                      >
+                        <Box sx={{ 
+                          display: 'flex', 
+                          alignItems: 'center', 
+                          justifyContent: 'center',
+                          '&:hover': { opacity: 0.8 }
+                        }}>
+                          Overall Score
+                          {sortConfig.key === 'overallScore' && (
+                            <span style={{ marginLeft: '4px' }}>
+                              {sortConfig.direction === 'ascending' ? '↑' : '↓'}
+                            </span>
+                          )}
+                        </Box>
+                      </th>
                       {/* Get all unique criteria across all models */}
                       {Object.keys(validationResults).length > 0 && 
                         Object.values(validationResults).some(result => result.criteria) &&
@@ -790,12 +944,110 @@ For example, use "Accuracy" not "accuracy" or "ACCURACY".
                           });
                           
                           return Array.from(criteriaMap.keys()).map(criterion => (
-                            <th key={criterion} style={{ textAlign: 'center', padding: '8px', borderBottom: '1px solid #ddd' }}>{criterion}</th>
+                            <th 
+                              key={criterion} 
+                              style={{ 
+                                textAlign: 'center', 
+                                padding: '8px', 
+                                borderBottom: '1px solid #ddd',
+                                cursor: 'pointer',
+                                backgroundColor: sortConfig.key === `criterion_${criterion}` ? '#f5f5f5' : 'transparent',
+                                transition: 'background-color 0.2s'
+                              }}
+                              onClick={() => requestSort(`criterion_${criterion}`)}
+                            >
+                              <Box sx={{ 
+                                display: 'flex', 
+                                alignItems: 'center', 
+                                justifyContent: 'center',
+                                '&:hover': { opacity: 0.8 }
+                              }}>
+                                {criterion}
+                                {sortConfig.key === `criterion_${criterion}` && (
+                                  <span style={{ marginLeft: '4px' }}>
+                                    {sortConfig.direction === 'ascending' ? '↑' : '↓'}
+                                  </span>
+                                )}
+                              </Box>
+                            </th>
                           ));
                         })()
                       }
-                      <th style={{ textAlign: 'right', padding: '8px', borderBottom: '1px solid #ddd' }}>Cost</th>
-                      <th style={{ textAlign: 'right', padding: '8px', borderBottom: '1px solid #ddd' }}>Cost Ratio</th>
+                      <th 
+                        style={{ 
+                          textAlign: 'right', 
+                          padding: '8px', 
+                          borderBottom: '1px solid #ddd',
+                          cursor: 'pointer',
+                          backgroundColor: sortConfig.key === 'responseTime' ? '#f5f5f5' : 'transparent',
+                          transition: 'background-color 0.2s'
+                        }}
+                        onClick={() => requestSort('responseTime')}
+                      >
+                        <Box sx={{ 
+                          display: 'flex', 
+                          alignItems: 'center', 
+                          justifyContent: 'center',
+                          '&:hover': { opacity: 0.8 }
+                        }}>
+                          Response Time
+                          {sortConfig.key === 'responseTime' && (
+                            <span style={{ marginLeft: '4px' }}>
+                              {sortConfig.direction === 'ascending' ? '↑' : '↓'}
+                            </span>
+                          )}
+                        </Box>
+                      </th>
+                      <th 
+                        style={{ 
+                          textAlign: 'right', 
+                          padding: '8px', 
+                          borderBottom: '1px solid #ddd',
+                          cursor: 'pointer',
+                          backgroundColor: sortConfig.key === 'cost' ? '#f5f5f5' : 'transparent',
+                          transition: 'background-color 0.2s'
+                        }}
+                        onClick={() => requestSort('cost')}
+                      >
+                        <Box sx={{ 
+                          display: 'flex', 
+                          alignItems: 'center', 
+                          justifyContent: 'center',
+                          '&:hover': { opacity: 0.8 }
+                        }}>
+                          Cost
+                          {sortConfig.key === 'cost' && (
+                            <span style={{ marginLeft: '4px' }}>
+                              {sortConfig.direction === 'ascending' ? '↑' : '↓'}
+                            </span>
+                          )}
+                        </Box>
+                      </th>
+                      <th 
+                        style={{ 
+                          textAlign: 'right', 
+                          padding: '8px', 
+                          borderBottom: '1px solid #ddd',
+                          cursor: 'pointer',
+                          backgroundColor: sortConfig.key === 'efficiencyScore' ? '#f5f5f5' : 'transparent',
+                          transition: 'background-color 0.2s'
+                        }}
+                        onClick={() => requestSort('efficiencyScore')}
+                      >
+                        <Box sx={{ 
+                          display: 'flex', 
+                          alignItems: 'center', 
+                          justifyContent: 'center',
+                          '&:hover': { opacity: 0.8 }
+                        }}>
+                          Efficiency Score
+                          {sortConfig.key === 'efficiencyScore' && (
+                            <span style={{ marginLeft: '4px' }}>
+                              {sortConfig.direction === 'ascending' ? '↑' : '↓'}
+                            </span>
+                          )}
+                        </Box>
+                      </th>
                     </tr>
                   </thead>
                   <tbody>
@@ -807,8 +1059,6 @@ For example, use "Accuracy" not "accuracy" or "ACCURACY".
                           modelCosts[model] = calculateCost(model, metrics[model].tokenUsage.total);
                         }
                       });
-                      
-                      const cheapestCost = Math.min(...Object.values(modelCosts).filter(cost => cost > 0), Infinity);
                       
                       // Get all unique criteria
                       // Use a Map to store criteria with normalized keys
@@ -847,24 +1097,65 @@ For example, use "Accuracy" not "accuracy" or "ACCURACY".
                         return '#f44336';
                       };
                       
-                      return Object.keys(validationResults).map(model => {
+                      // Build table data array for sorting
+                      const tableData = Object.keys(validationResults).map(model => {
                         const result = validationResults[model];
                         const cost = modelCosts[model] || 0;
+                        const efficiencyScore = effectivenessData.effectivenessScores[model];
+                        const responseTime = metrics[model].responseTime || 0;
+                        const overallScore = result.overall ? result.overall.score : 0;
                         
-                        // Calculate cost ratio as percentage difference from cheapest
-                        let costRatioDisplay = '';
-                        if (cheapestCost > 0) {
-                          if (cost === cheapestCost) {
-                            // Leave empty for the cheapest model
-                            costRatioDisplay = '';
-                          } else {
-                            // Calculate percentage increase over the cheapest
-                            const percentIncrease = ((cost / cheapestCost) - 1) * 100;
-                            costRatioDisplay = `+${percentIncrease.toFixed(0)}%`;
-                          }
-                        } else {
-                          costRatioDisplay = 'N/A';
+                        // Build a data object with all needed values
+                        const rowData = {
+                          model,
+                          result,
+                          cost,
+                          efficiencyScore,
+                          responseTime,
+                          overallScore
+                        };
+                        
+                        // Add criteria scores
+                        criteriaArray.forEach(criterion => {
+                          const criterionValue = findCriterionValue(result.criteria, criterion);
+                          rowData[`criterion_${criterion}`] = criterionValue ? criterionValue.score : 0;
+                        });
+                        
+                        return rowData;
+                      });
+                      
+                      // Sort the data
+                      const sortedData = [...tableData].sort((a, b) => {
+                        if (sortConfig.key === null) return 0;
+                        
+                        let aValue = a[sortConfig.key];
+                        let bValue = b[sortConfig.key];
+                        
+                        // For special cases like model names
+                        if (sortConfig.key === 'model') {
+                          aValue = String(aValue).toLowerCase();
+                          bValue = String(bValue).toLowerCase();
                         }
+                        
+                        // Handle numeric comparison
+                        if (typeof aValue === 'number' && typeof bValue === 'number') {
+                          if (sortConfig.direction === 'ascending') {
+                            return aValue - bValue;
+                          } else {
+                            return bValue - aValue;
+                          }
+                        }
+                        
+                        // Handle string comparison
+                        if (sortConfig.direction === 'ascending') {
+                          return aValue > bValue ? 1 : -1;
+                        } else {
+                          return bValue > aValue ? 1 : -1;
+                        }
+                      });
+                      
+                      return sortedData.map(rowData => {
+                        const { model, result, cost, efficiencyScore } = rowData;
                         
                         return (
                           <tr key={model}>
@@ -894,16 +1185,19 @@ For example, use "Accuracy" not "accuracy" or "ACCURACY".
                               );
                             })}
                             <td style={{ textAlign: 'right', padding: '8px', borderBottom: '1px solid #ddd' }}>
+                              {formatResponseTime(metrics[model].responseTime)}
+                            </td>
+                            <td style={{ textAlign: 'right', padding: '8px', borderBottom: '1px solid #ddd' }}>
                               {formatCost(cost)}
                             </td>
                             <td style={{ 
                               textAlign: 'right', 
                               padding: '8px', 
                               borderBottom: '1px solid #ddd',
-                              color: cost === cheapestCost ? '#4caf50' : '#f44336',
-                              fontWeight: cost === cheapestCost ? 'bold' : 'normal'
+                              color: model === effectivenessData.mostEffectiveModel ? '#4caf50' : (efficiencyScore >= 80 ? '#8bc34a' : (efficiencyScore >= 50 ? '#ffc107' : '#f44336')),
+                              fontWeight: model === effectivenessData.mostEffectiveModel ? 'bold' : 'normal'
                             }}>
-                              {costRatioDisplay}
+                              {formatEffectivenessScore(efficiencyScore)}
                             </td>
                           </tr>
                         );
@@ -993,6 +1287,56 @@ For example, use "Accuracy" not "accuracy" or "ACCURACY".
           </Grid>
         </>
       )}
+
+      {/* Edit Criteria Dialog */}
+      <Dialog
+        open={editCriteriaOpen}
+        onClose={() => setEditCriteriaOpen(false)}
+        maxWidth="md"
+        fullWidth
+      >
+        <DialogTitle>
+          Edit Evaluation Criteria
+        </DialogTitle>
+        <DialogContent>
+          <CriteriaTextArea
+            value={customCriteria}
+            onChange={(e) => setCustomCriteria(e.target.value)}
+            rows={10}
+            sx={{ mb: 2 }}
+          />
+          <Typography variant="subtitle2" gutterBottom>
+            Validation Model
+          </Typography>
+          <ModelDropdown 
+            value={validatorModel}
+            onChange={(e) => setValidatorModel(e.target.value)}
+            sx={{ mb: 2 }}
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setEditCriteriaOpen(false)}>
+            Cancel
+          </Button>
+          <Button 
+            variant="contained" 
+            color="primary"
+            onClick={() => {
+              setEditCriteriaOpen(false);
+              // Save to localStorage
+              localStorage.setItem('defaultEvaluationCriteria', customCriteria);
+              localStorage.setItem('responseValidatorModel', validatorModel);
+              // Clear validation results and run validation again
+              setIsProcessing(true);
+              onValidationComplete({});
+              validateResponses();
+            }}
+            startIcon={<AssessmentIcon />}
+          >
+            Re-validate with New Criteria
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 };
