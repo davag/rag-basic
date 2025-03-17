@@ -40,6 +40,7 @@ import 'jspdf-autotable';
 import { calculateCost } from '../utils/apiServices';
 import TokenUsageAnalyzer from './TokenUsageAnalyzer';
 import ErrorPatternRecognition from './ErrorPatternRecognition';
+import ContextWindowVisualizer from './ContextWindowVisualizer';
 
 const ResponseComparison = ({ responses, metrics, currentQuery, systemPrompts, onBackToQuery, onImportResults }) => {
   const [expandedSources, setExpandedSources] = useState(false);
@@ -515,6 +516,15 @@ const ResponseComparison = ({ responses, metrics, currentQuery, systemPrompts, o
           metrics={metrics} 
           responses={responses} 
           systemPrompts={systemPrompts} 
+          currentQuery={currentQuery}
+        />
+      </Box>
+
+      {/* Context Window Visualizer */}
+      <Box mb={4}>
+        <ContextWindowVisualizer 
+          responses={responses}
+          systemPrompts={systemPrompts}
           currentQuery={currentQuery}
         />
       </Box>
