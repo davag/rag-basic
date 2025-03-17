@@ -16,7 +16,6 @@ import {
   CardHeader,
   Divider,
   LinearProgress,
-  Rating,
   Chip,
   Stack,
   TextField,
@@ -26,9 +25,8 @@ import {
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import DownloadIcon from '@mui/icons-material/Download';
-import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import AssessmentIcon from '@mui/icons-material/Assessment';
-import { createLlmInstance } from '../utils/apiServices';
+import { createLlmInstance, calculateCost } from '../utils/apiServices';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
 
@@ -156,6 +154,20 @@ Format your response as a JSON object with the following structure:
     }
   };
 
+  const formatCost = (cost) => {
+    if (cost === 0) {
+      return 'Free';
+    }
+    return `$${cost.toFixed(4)}`; // Always show in dollars with 4 decimal places
+  };
+
+  const formatResponseTime = (ms) => {
+    if (ms < 1000) {
+      return `${ms}ms`;
+    }
+    return `${(ms / 1000).toFixed(2)}s`;
+  };
+
   const generatePDF = () => {
     // Create a new jsPDF instance
     const doc = new jsPDF();
@@ -185,6 +197,46 @@ Format your response as a JSON object with the following structure:
     const criteriaLines = doc.splitTextToSize(customCriteria, contentWidth);
     doc.text(criteriaLines, margin, yPos);
     yPos += (criteriaLines.length * 5) + 10;
+    
+    // Performance Metrics
+    yPos += 10;
+    doc.setFontSize(14);
+    doc.text('Performance Metrics', margin, yPos);
+    yPos += 10;
+    
+    // Create a simple table for metrics
+    doc.setFontSize(11);
+    doc.text('Model', margin, yPos);
+    doc.text('Response Time', margin + 60, yPos);
+    doc.text('Token Usage', margin + 120, yPos);
+    doc.text('Est. Cost', margin + 180, yPos);
+    yPos += 7;
+    
+    // Draw a line under headers
+    doc.setDrawColor(200, 200, 200);
+    doc.line(margin, yPos, pageWidth - margin, yPos);
+    yPos += 5;
+    
+    // Table rows
+    doc.setFontSize(10);
+    Object.keys(metrics).forEach((model, index) => {
+      const metric = metrics[model];
+      const cost = calculateCost(model, metric.tokenUsage.total);
+      const costText = formatCost(cost);
+      
+      doc.text(model, margin, yPos);
+      doc.text(formatResponseTime(metric.responseTime), margin + 60, yPos);
+      doc.text(`${metric.tokenUsage.estimated ? '~' : ''}${metric.tokenUsage.total} tokens`, margin + 120, yPos);
+      doc.text(costText, margin + 180, yPos);
+      yPos += 7;
+      
+      // Draw a light line between rows
+      if (index < Object.keys(metrics).length - 1) {
+        doc.setDrawColor(230, 230, 230);
+        doc.line(margin, yPos, pageWidth - margin, yPos);
+        yPos += 3;
+      }
+    });
     
     // Add a new page for validation results
     doc.addPage();
@@ -261,6 +313,18 @@ Format your response as a JSON object with the following structure:
       const responseLines = doc.splitTextToSize(answer, contentWidth - 10);
       doc.text(responseLines, margin + 5, yPos);
       yPos += (responseLines.length * 5) + 10;
+      
+      // Add cost information
+      if (metrics[model]) {
+        const cost = calculateCost(model, metrics[model].tokenUsage.total);
+        doc.setFontSize(11);
+        doc.text(`Estimated Cost: ${formatCost(cost)}`, margin, yPos);
+        yPos += 7;
+        
+        doc.setFontSize(9);
+        doc.text(`(Based on ${metrics[model].tokenUsage.total} tokens)`, margin + 5, yPos);
+        yPos += 7;
+      }
     });
     
     // Add source documents on a new page

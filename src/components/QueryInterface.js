@@ -332,6 +332,9 @@ ${context}
 Given the context information and not prior knowledge, answer the question: ${query}
 `;
       
+      // Estimate input token count (very rough estimate: 1 token ≈ 4 characters)
+      const inputTokenEstimate = Math.round(prompt.length / 4);
+      
       // Process each model with the same retrieved documents
       for (const model of selectedModels) {
         // Get the appropriate system prompt for this model
@@ -356,8 +359,17 @@ Given the context information and not prior knowledge, answer the question: ${qu
         const endTime = Date.now();
         const responseTime = endTime - startTime;
         
+        // Get the answer text
+        const answerText = typeof answer === 'object' ? answer.text : answer;
+        
+        // Estimate output token count (very rough estimate: 1 token ≈ 4 characters)
+        const outputTokenEstimate = Math.round(answerText.length / 4);
+        
+        // Total token usage
+        const totalTokens = inputTokenEstimate + outputTokenEstimate;
+        
         responses[model] = {
-          answer: typeof answer === 'object' ? answer.text : answer,
+          answer: answerText,
           sources: docs.map(doc => ({
             content: doc.pageContent,
             source: doc.metadata.source,
@@ -369,7 +381,9 @@ Given the context information and not prior knowledge, answer the question: ${qu
           responseTime: responseTime + retrievalTime, // Include retrieval time in the total
           tokenUsage: {
             estimated: true,
-            total: Math.round((typeof answer === 'object' ? answer.text : answer).length / 4) // Very rough estimate
+            input: inputTokenEstimate,
+            output: outputTokenEstimate,
+            total: totalTokens
           }
         };
       }

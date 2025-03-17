@@ -22,7 +22,8 @@ import {
   Button,
   Stack,
   Alert,
-  Snackbar
+  Snackbar,
+  Tooltip
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import AccessTimeIcon from '@mui/icons-material/AccessTime';
@@ -33,8 +34,10 @@ import DownloadIcon from '@mui/icons-material/Download';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import SaveIcon from '@mui/icons-material/Save';
 import UploadIcon from '@mui/icons-material/Upload';
+import AttachMoneyIcon from '@mui/icons-material/AttachMoney';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
+import { calculateCost } from '../utils/apiServices';
 
 const ResponseComparison = ({ responses, metrics, currentQuery, systemPrompts, onBackToQuery, onImportResults }) => {
   const [expandedSources, setExpandedSources] = useState(false);
@@ -57,6 +60,13 @@ const ResponseComparison = ({ responses, metrics, currentQuery, systemPrompts, o
       return `${ms}ms`;
     }
     return `${(ms / 1000).toFixed(2)}s`;
+  };
+
+  const formatCost = (cost) => {
+    if (cost === 0) {
+      return 'Free';
+    }
+    return `$${cost.toFixed(4)}`; // Always show in dollars with 4 decimal places
   };
 
   const modelColors = {
@@ -272,18 +282,12 @@ const ResponseComparison = ({ responses, metrics, currentQuery, systemPrompts, o
     doc.text('Performance Metrics', margin, yPos);
     yPos += 10;
     
-    // Create a simple table manually instead of using autoTable
-    const metricsData = Object.keys(metrics).map(model => [
-      `${model} (${getModelVendor(model)})`,
-      formatResponseTime(metrics[model].responseTime),
-      `${metrics[model].tokenUsage.estimated ? '~' : ''}${metrics[model].tokenUsage.total} tokens`
-    ]);
-    
-    // Table headers
+    // Create a simple table for metrics
     doc.setFontSize(11);
     doc.text('Model', margin, yPos);
-    doc.text('Response Time', margin + 80, yPos);
-    doc.text('Token Usage', margin + 150, yPos);
+    doc.text('Response Time', margin + 60, yPos);
+    doc.text('Token Usage', margin + 120, yPos);
+    doc.text('Est. Cost', margin + 180, yPos);
     yPos += 7;
     
     // Draw a line under headers
@@ -293,14 +297,19 @@ const ResponseComparison = ({ responses, metrics, currentQuery, systemPrompts, o
     
     // Table rows
     doc.setFontSize(10);
-    metricsData.forEach((row, index) => {
-      doc.text(row[0], margin, yPos);
-      doc.text(row[1], margin + 80, yPos);
-      doc.text(row[2], margin + 150, yPos);
+    Object.keys(metrics).forEach((model, index) => {
+      const metric = metrics[model];
+      const cost = calculateCost(model, metric.tokenUsage.total);
+      const costText = formatCost(cost);
+      
+      doc.text(model, margin, yPos);
+      doc.text(formatResponseTime(metric.responseTime), margin + 60, yPos);
+      doc.text(`${metric.tokenUsage.estimated ? '~' : ''}${metric.tokenUsage.total} tokens`, margin + 120, yPos);
+      doc.text(costText, margin + 180, yPos);
       yPos += 7;
       
       // Draw a light line between rows
-      if (index < metricsData.length - 1) {
+      if (index < Object.keys(metrics).length - 1) {
         doc.setDrawColor(230, 230, 230);
         doc.line(margin, yPos, pageWidth - margin, yPos);
         yPos += 3;
@@ -447,40 +456,52 @@ const ResponseComparison = ({ responses, metrics, currentQuery, systemPrompts, o
                 <TableCell>Model</TableCell>
                 <TableCell>Response Time</TableCell>
                 <TableCell>Token Usage</TableCell>
+                <TableCell>Estimated Cost</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
-              {Object.keys(metrics).map((model) => (
-                <TableRow key={model}>
-                  <TableCell>
-                    <Box display="flex" alignItems="center">
-                      <Box 
-                        width={16} 
-                        height={16} 
-                        borderRadius="50%" 
-                        bgcolor={modelColors[model] || '#888'} 
-                        mr={1} 
-                      />
-                      <Typography variant="body2">
-                        {model} ({getModelVendor(model)})
-                      </Typography>
-                    </Box>
-                  </TableCell>
-                  <TableCell>
-                    <Box display="flex" alignItems="center">
-                      <AccessTimeIcon fontSize="small" sx={{ mr: 1 }} />
-                      {formatResponseTime(metrics[model].responseTime)}
-                    </Box>
-                  </TableCell>
-                  <TableCell>
-                    <Box display="flex" alignItems="center">
-                      <TokenIcon fontSize="small" sx={{ mr: 1 }} />
-                      {metrics[model].tokenUsage.estimated ? '~' : ''}
-                      {metrics[model].tokenUsage.total} tokens
-                    </Box>
-                  </TableCell>
-                </TableRow>
-              ))}
+              {Object.keys(metrics).map((model) => {
+                const cost = calculateCost(model, metrics[model].tokenUsage.total);
+                return (
+                  <TableRow key={model}>
+                    <TableCell>
+                      <Box display="flex" alignItems="center">
+                        <Box 
+                          width={16} 
+                          height={16} 
+                          borderRadius="50%" 
+                          bgcolor={modelColors[model] || '#888'} 
+                          mr={1} 
+                        />
+                        <Typography variant="body2">
+                          {model} ({getModelVendor(model)})
+                        </Typography>
+                      </Box>
+                    </TableCell>
+                    <TableCell>
+                      <Box display="flex" alignItems="center">
+                        <AccessTimeIcon fontSize="small" sx={{ mr: 1 }} />
+                        {formatResponseTime(metrics[model].responseTime)}
+                      </Box>
+                    </TableCell>
+                    <TableCell>
+                      <Tooltip title={`Input: ~${metrics[model].tokenUsage.input} tokens, Output: ~${metrics[model].tokenUsage.output} tokens`}>
+                        <Box display="flex" alignItems="center">
+                          <TokenIcon fontSize="small" sx={{ mr: 1 }} />
+                          {metrics[model].tokenUsage.estimated ? '~' : ''}
+                          {metrics[model].tokenUsage.total} tokens
+                        </Box>
+                      </Tooltip>
+                    </TableCell>
+                    <TableCell>
+                      <Box display="flex" alignItems="center">
+                        <AttachMoneyIcon fontSize="small" sx={{ mr: 1 }} />
+                        {formatCost(cost)}
+                      </Box>
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
             </TableBody>
           </Table>
         </TableContainer>

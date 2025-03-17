@@ -410,4 +410,73 @@ export const executeQuery = async (chain, query) => {
     window.console.error('Error executing query:', error);
     throw new Error(`Error executing query: ${error.message}`);
   }
+};
+
+/**
+ * Calculate the estimated cost based on token usage for different LLM models
+ * @param {string} model - The model name
+ * @param {number} tokenCount - The number of tokens used
+ * @returns {number} - The estimated cost in USD
+ */
+export const calculateCost = (model, tokenCount) => {
+  // Pricing per 1M tokens (in USD)
+  const pricing = {
+    // OpenAI models
+    'gpt-4o': {
+      input: 5.0,
+      output: 15.0
+    },
+    'gpt-4o-mini': {
+      input: 0.15,
+      output: 0.6
+    },
+    'o1-mini': {
+      input: 0.15,
+      output: 0.6
+    },
+    'o1-preview': {
+      input: 5.0,
+      output: 15.0
+    },
+    
+    // Anthropic models
+    'claude-3-5-sonnet-latest': {
+      input: 3.0,
+      output: 15.0
+    },
+    'claude-3-7-sonnet-latest': {
+      input: 15.0,
+      output: 75.0
+    },
+    
+    // Ollama models (free for local inference)
+    'llama3.2:latest': {
+      input: 0,
+      output: 0
+    },
+    'mistral:latest': {
+      input: 0,
+      output: 0
+    }
+  };
+  
+  // Default pricing if model not found
+  const defaultPricing = {
+    input: 0.5,
+    output: 1.5
+  };
+  
+  // Get pricing for the model or use default
+  const modelPricing = pricing[model] || defaultPricing;
+  
+  // Assume a 50/50 split between input and output tokens for simplicity
+  // In a real implementation, you would track input and output tokens separately
+  const inputTokens = Math.round(tokenCount / 2);
+  const outputTokens = tokenCount - inputTokens;
+  
+  // Calculate cost (price per 1M tokens * token count / 1M)
+  const inputCost = (modelPricing.input * inputTokens) / 1000000;
+  const outputCost = (modelPricing.output * outputTokens) / 1000000;
+  
+  return inputCost + outputCost;
 }; 
