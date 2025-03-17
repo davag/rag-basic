@@ -70,6 +70,12 @@ const ResponseValidation = ({
     if (savedValidatorModel) {
       setValidatorModel(savedValidatorModel);
     }
+    
+    // Load default evaluation criteria from localStorage
+    const savedCriteria = localStorage.getItem('defaultEvaluationCriteria');
+    if (savedCriteria) {
+      setCustomCriteria(savedCriteria);
+    }
   }, []);
 
   // Reset validation state only when component is first mounted, not on re-renders

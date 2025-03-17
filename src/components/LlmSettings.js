@@ -34,7 +34,7 @@ import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import ErrorIcon from '@mui/icons-material/Error';
 import { createLlmInstance } from '../utils/apiServices';
 
-const LlmSettings = () => {
+const LlmSettings = ({ showAppSettingsOnly = false }) => {
   // Get model pricing info from the utility
   const [models, setModels] = useState({
     // OpenAI models
@@ -110,6 +110,14 @@ const LlmSettings = () => {
   const [ollamaEndpoint, setOllamaEndpoint] = useState(process.env.REACT_APP_OLLAMA_API_URL || 'http://localhost:11434');
   const [promptAdvisorModel, setPromptAdvisorModel] = useState('gpt-4o-mini'); // Default advisor model
   const [responseValidatorModel, setResponseValidatorModel] = useState('gpt-4o-mini'); // Default validator model
+  const [defaultEvaluationCriteria, setDefaultEvaluationCriteria] = useState(
+    'Accuracy: Does the response correctly answer the query based on the provided context?\n' +
+    'Completeness: Does the response address all aspects of the query?\n' +
+    'Relevance: Is the information in the response relevant to the query?\n' +
+    'Conciseness: Is the response appropriately concise without omitting important information?\n' +
+    'Clarity: Is the response clear, well-structured, and easy to understand?'
+  );
+  const [defaultQueryTemplate, setDefaultQueryTemplate] = useState('');
 
   const vendorColors = {
     'OpenAI': '#10a37f',    // Green
@@ -276,35 +284,168 @@ const LlmSettings = () => {
 
   // Reset to default models
   const handleResetToDefaults = () => {
-    localStorage.removeItem('llmModels');
-    window.location.reload();
+    const defaultModels = {
+      // OpenAI models
+      'gpt-4o': {
+        vendor: 'OpenAI',
+        input: 5.0,
+        output: 15.0,
+        active: true,
+        description: 'Most capable GPT-4 model optimized for chat at a lower price.'
+      },
+      'gpt-4o-mini': {
+        vendor: 'OpenAI',
+        input: 0.15,
+        output: 0.60,
+        active: true,
+        description: 'Affordable GPT-4 class model for everyday use.'
+      },
+      'o1-mini': {
+        vendor: 'OpenAI',
+        input: 0.15,
+        output: 0.60,
+        active: true,
+        description: 'Affordable model optimized for structured outputs.'
+      },
+      'o1-preview': {
+        vendor: 'OpenAI',
+        input: 5.0,
+        output: 15.0,
+        active: true,
+        description: 'Most capable OpenAI model for specific control over system behavior.'
+      },
+      
+      // Anthropic models
+      'claude-3-7-sonnet-latest': {
+        vendor: 'Anthropic',
+        input: 3.0,
+        output: 15.0,
+        active: true,
+        description: 'Anthropic\'s most capable model for complex tasks.'
+      },
+      'claude-3-5-sonnet-latest': {
+        vendor: 'Anthropic',
+        input: 3.0,
+        output: 15.0,
+        active: true,
+        description: 'Excellent balance of intelligence and speed.'
+      },
+      
+      // Ollama models
+      'llama3.2:latest': {
+        vendor: 'Ollama',
+        input: 0,
+        output: 0,
+        active: true,
+        description: 'Meta\'s Llama 3 model (8B) for local inference.'
+      },
+      'mistral:latest': {
+        vendor: 'Ollama',
+        input: 0,
+        output: 0,
+        active: true,
+        description: 'Mistral AI\'s 7B model for local inference.'
+      }
+    };
+    
+    // Reset all settings to defaults
+    setModels(defaultModels);
+    localStorage.setItem('llmModels', JSON.stringify(defaultModels));
+    
+    setOllamaEndpoint('http://localhost:11434');
+    localStorage.setItem('ollamaEndpoint', 'http://localhost:11434');
+    
+    setPromptAdvisorModel('gpt-4o-mini');
+    localStorage.setItem('promptAdvisorModel', 'gpt-4o-mini');
+    
+    setResponseValidatorModel('gpt-4o-mini');
+    localStorage.setItem('responseValidatorModel', 'gpt-4o-mini');
+    
+    const defaultCriteria = 'Accuracy: Does the response correctly answer the query based on the provided context?\n' +
+      'Completeness: Does the response address all aspects of the query?\n' +
+      'Relevance: Is the information in the response relevant to the query?\n' +
+      'Conciseness: Is the response appropriately concise without omitting important information?\n' +
+      'Clarity: Is the response clear, well-structured, and easy to understand?';
+    
+    setDefaultEvaluationCriteria(defaultCriteria);
+    localStorage.setItem('defaultEvaluationCriteria', defaultCriteria);
+    
+    setDefaultQueryTemplate('');
+    localStorage.setItem('defaultQueryTemplate', '');
   };
 
   // Export settings to JSON
   const handleExportSettings = () => {
-    const dataStr = JSON.stringify(models, null, 2);
-    const dataUri = 'data:application/json;charset=utf-8,'+ encodeURIComponent(dataStr);
+    // Export the current model settings to a JSON file
+    const settings = {
+      models,
+      ollamaEndpoint,
+      promptAdvisorModel,
+      responseValidatorModel,
+      defaultEvaluationCriteria,
+      defaultQueryTemplate
+    };
     
-    const linkElement = document.createElement('a');
-    linkElement.setAttribute('href', dataUri);
-    linkElement.setAttribute('download', 'llm-settings.json');
-    linkElement.click();
+    const jsonStr = JSON.stringify(settings, null, 2);
+    const blob = new Blob([jsonStr], { type: 'application/json' });
+    const href = URL.createObjectURL(blob);
+    
+    // Create a temporary link and trigger the download
+    const link = document.createElement('a');
+    link.href = href;
+    link.download = 'llm-settings.json';
+    document.body.appendChild(link);
+    link.click();
+    
+    // Clean up
+    document.body.removeChild(link);
+    URL.revokeObjectURL(href);
   };
 
   // Import settings from JSON
   const handleImportSettings = (event) => {
     const file = event.target.files[0];
     if (!file) return;
-
+    
     const reader = new FileReader();
     reader.onload = (e) => {
       try {
-        const importedSettings = JSON.parse(e.target.result);
-        setModels(importedSettings);
-        localStorage.setItem('llmModels', JSON.stringify(importedSettings));
+        const settings = JSON.parse(e.target.result);
+        
+        // Validate the imported data
+        if (settings.models) {
+          setModels(settings.models);
+          // Save to localStorage
+          localStorage.setItem('llmModels', JSON.stringify(settings.models));
+        }
+        
+        if (settings.ollamaEndpoint) {
+          setOllamaEndpoint(settings.ollamaEndpoint);
+          localStorage.setItem('ollamaEndpoint', settings.ollamaEndpoint);
+        }
+        
+        if (settings.promptAdvisorModel) {
+          setPromptAdvisorModel(settings.promptAdvisorModel);
+          localStorage.setItem('promptAdvisorModel', settings.promptAdvisorModel);
+        }
+        
+        if (settings.responseValidatorModel) {
+          setResponseValidatorModel(settings.responseValidatorModel);
+          localStorage.setItem('responseValidatorModel', settings.responseValidatorModel);
+        }
+        
+        if (settings.defaultEvaluationCriteria) {
+          setDefaultEvaluationCriteria(settings.defaultEvaluationCriteria);
+          localStorage.setItem('defaultEvaluationCriteria', settings.defaultEvaluationCriteria);
+        }
+
+        if (settings.defaultQueryTemplate) {
+          setDefaultQueryTemplate(settings.defaultQueryTemplate);
+          localStorage.setItem('defaultQueryTemplate', settings.defaultQueryTemplate);
+        }
+        
       } catch (err) {
-        setError('Failed to parse imported settings file');
-        window.console.error('Import error:', err);
+        setError('Failed to import settings: ' + err.message);
       }
     };
     reader.readAsText(file);
@@ -361,6 +502,32 @@ const LlmSettings = () => {
     localStorage.setItem('responseValidatorModel', responseValidatorModel);
   }, [responseValidatorModel]);
 
+  // Save default evaluation criteria to localStorage when it changes
+  useEffect(() => {
+    localStorage.setItem('defaultEvaluationCriteria', defaultEvaluationCriteria);
+  }, [defaultEvaluationCriteria]);
+
+  // Load default evaluation criteria from localStorage on component mount
+  useEffect(() => {
+    const savedCriteria = localStorage.getItem('defaultEvaluationCriteria');
+    if (savedCriteria) {
+      setDefaultEvaluationCriteria(savedCriteria);
+    }
+  }, []);
+
+  // Save default query template to localStorage when it changes
+  useEffect(() => {
+    localStorage.setItem('defaultQueryTemplate', defaultQueryTemplate);
+  }, [defaultQueryTemplate]);
+
+  // Load default query template from localStorage on component mount
+  useEffect(() => {
+    const savedTemplate = localStorage.getItem('defaultQueryTemplate');
+    if (savedTemplate) {
+      setDefaultQueryTemplate(savedTemplate);
+    }
+  }, []);
+
   // Calculate cost for 1K tokens
   const calculateCostPer1K = (model) => {
     // For 1K tokens, assume 500 input and 500 output
@@ -373,7 +540,7 @@ const LlmSettings = () => {
     <Box>
       <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
         <Typography variant="h5">
-          LLM Settings
+          {showAppSettingsOnly ? "App Settings" : "LLM Settings"}
         </Typography>
         <Box>
           <input
@@ -410,20 +577,24 @@ const LlmSettings = () => {
           >
             Reset
           </Button>
-          <Button 
-            startIcon={<AddIcon />}
-            variant="contained" 
-            color="primary"
-            onClick={handleAddModel}
-          >
-            Add Model
-          </Button>
+          {!showAppSettingsOnly && (
+            <Button 
+              startIcon={<AddIcon />}
+              variant="contained" 
+              color="primary"
+              onClick={handleAddModel}
+            >
+              Add Model
+            </Button>
+          )}
         </Box>
       </Box>
 
       <Typography variant="body2" color="textSecondary" paragraph>
-        This panel allows you to manage the LLM models available in the application. You can add, edit, and remove models,
-        as well as test their connectivity. The costs are used to estimate usage expenses in the comparison and validation tabs.
+        {showAppSettingsOnly 
+          ? "This panel allows you to configure app-wide settings such as default evaluation criteria and query templates."
+          : "This panel allows you to manage the LLM models available in the application. You can add, edit, and remove models, as well as test their connectivity. The costs are used to estimate usage expenses in the comparison and validation tabs."
+        }
       </Typography>
 
       {error && (
@@ -432,220 +603,287 @@ const LlmSettings = () => {
         </Alert>
       )}
 
-      {/* Ollama Configuration */}
+      {!showAppSettingsOnly && (
+        <>
+          {/* Ollama Configuration */}
+          <Paper elevation={1} sx={{ p: 3, mb: 3 }}>
+            <Typography variant="h6" gutterBottom>
+              Ollama Configuration
+            </Typography>
+            <Typography variant="body2" color="textSecondary" paragraph>
+              Configure the API endpoint for local Ollama models. This setting is required for using models like Llama and Mistral via Ollama.
+            </Typography>
+            <TextField
+              fullWidth
+              label="Ollama API Endpoint"
+              variant="outlined"
+              value={ollamaEndpoint}
+              onChange={(e) => setOllamaEndpoint(e.target.value)}
+              placeholder="http://localhost:11434"
+              helperText="The URL of your Ollama API endpoint for local models"
+            />
+          </Paper>
+
+          {/* Prompt Advisor Configuration */}
+          <Paper elevation={1} sx={{ p: 3, mb: 3 }}>
+            <Typography variant="h6" gutterBottom>
+              Prompt Advisor Configuration
+            </Typography>
+            <Typography variant="body2" color="textSecondary" paragraph>
+              Select the model to use for generating system prompt improvement ideas. This model will be used when you request suggestions to enhance your prompts.
+            </Typography>
+            <Box sx={{ maxWidth: 400 }}>
+              <FormControl fullWidth variant="outlined">
+                <InputLabel id="prompt-advisor-model-label">Prompt Advisor Model</InputLabel>
+                <Select
+                  labelId="prompt-advisor-model-label"
+                  value={promptAdvisorModel}
+                  onChange={(e) => setPromptAdvisorModel(e.target.value)}
+                  label="Prompt Advisor Model"
+                >
+                  <MenuItem value="gpt-4o">GPT-4o</MenuItem>
+                  <MenuItem value="gpt-4o-mini">GPT-4o Mini</MenuItem>
+                  <MenuItem value="claude-3-5-sonnet-latest">Claude 3.5 Sonnet</MenuItem>
+                  <MenuItem value="claude-3-7-sonnet-latest">Claude 3.7 Sonnet</MenuItem>
+                </Select>
+              </FormControl>
+            </Box>
+          </Paper>
+
+          {/* Response Validator Configuration */}
+          <Paper elevation={1} sx={{ p: 3, mb: 3 }}>
+            <Typography variant="h6" gutterBottom>
+              Response Validator Configuration
+            </Typography>
+            <Typography variant="body2" color="textSecondary" paragraph>
+              Select the model to use for validating responses in the validation tab. This model will analyze responses for accuracy, hallucinations, and other quality metrics.
+            </Typography>
+            <Box sx={{ maxWidth: 400 }}>
+              <FormControl fullWidth variant="outlined">
+                <InputLabel id="response-validator-model-label">Response Validator Model</InputLabel>
+                <Select
+                  labelId="response-validator-model-label"
+                  value={responseValidatorModel}
+                  onChange={(e) => setResponseValidatorModel(e.target.value)}
+                  label="Response Validator Model"
+                >
+                  <MenuItem value="gpt-4o">GPT-4o</MenuItem>
+                  <MenuItem value="gpt-4o-mini">GPT-4o Mini</MenuItem>
+                  <MenuItem value="claude-3-5-sonnet-latest">Claude 3.5 Sonnet</MenuItem>
+                  <MenuItem value="claude-3-7-sonnet-latest">Claude 3.7 Sonnet</MenuItem>
+                </Select>
+              </FormControl>
+            </Box>
+          </Paper>
+        </>
+      )}
+
+      {/* Default Evaluation Criteria Configuration */}
       <Paper elevation={1} sx={{ p: 3, mb: 3 }}>
         <Typography variant="h6" gutterBottom>
-          Ollama Configuration
+          Default Evaluation Criteria
         </Typography>
         <Typography variant="body2" color="textSecondary" paragraph>
-          Configure the API endpoint for local Ollama models. This setting is required for using models like Llama and Mistral via Ollama.
+          Define the default criteria used to evaluate model responses in the validation tab.
+          These criteria will be used as the starting point whenever you validate responses.
         </Typography>
         <TextField
           fullWidth
-          label="Ollama API Endpoint"
+          multiline
+          minRows={8}
+          maxRows={20}
           variant="outlined"
-          value={ollamaEndpoint}
-          onChange={(e) => setOllamaEndpoint(e.target.value)}
-          placeholder="http://localhost:11434"
-          helperText="The URL of your Ollama API endpoint for local models"
+          value={defaultEvaluationCriteria}
+          onChange={(e) => setDefaultEvaluationCriteria(e.target.value)}
+          placeholder="Enter evaluation criteria, one per line..."
+          helperText="Each criterion should be clear and specific. Format as 'Criterion: Description'"
+          sx={{ 
+            '& .MuiOutlinedInput-root': {
+              fontSize: '0.95rem'
+            }
+          }}
+        />
+        <Box sx={{ mt: 1, display: 'flex', justifyContent: 'flex-end' }}>
+          <Button
+            variant="outlined"
+            color="secondary"
+            onClick={() => {
+              const defaultCriteria = 'Accuracy: Does the response correctly answer the query based on the provided context?\n' +
+                'Completeness: Does the response address all aspects of the query?\n' +
+                'Relevance: Is the information in the response relevant to the query?\n' +
+                'Conciseness: Is the response appropriately concise without omitting important information?\n' +
+                'Clarity: Is the response clear, well-structured, and easy to understand?';
+              setDefaultEvaluationCriteria(defaultCriteria);
+            }}
+          >
+            Reset to Default Criteria
+          </Button>
+        </Box>
+      </Paper>
+
+      {/* Default Query Template */}
+      <Paper elevation={1} sx={{ p: 3, mb: 3 }}>
+        <Typography variant="h6" gutterBottom>
+          Default Query Template
+        </Typography>
+        <Typography variant="body2" color="textSecondary" paragraph>
+          Define a default template for queries. This will be pre-filled in the query field when starting a new query.
+          Leave empty if you don't want a default template.
+        </Typography>
+        <TextField
+          fullWidth
+          multiline
+          minRows={6}
+          maxRows={20}
+          variant="outlined"
+          value={defaultQueryTemplate}
+          onChange={(e) => setDefaultQueryTemplate(e.target.value)}
+          placeholder="Enter a default query template..."
+          helperText="This will be the starting point for new queries. Use it for common question structures."
+          sx={{ 
+            '& .MuiOutlinedInput-root': {
+              fontSize: '0.95rem'
+            }
+          }}
         />
       </Paper>
 
-      {/* Prompt Advisor Configuration */}
-      <Paper elevation={1} sx={{ p: 3, mb: 3 }}>
-        <Typography variant="h6" gutterBottom>
-          Prompt Advisor Configuration
-        </Typography>
-        <Typography variant="body2" color="textSecondary" paragraph>
-          Select the model to use for generating system prompt improvement ideas. This model will be used when you request suggestions to enhance your prompts.
-        </Typography>
-        <Box sx={{ maxWidth: 400 }}>
-          <FormControl fullWidth variant="outlined">
-            <InputLabel id="prompt-advisor-model-label">Prompt Advisor Model</InputLabel>
-            <Select
-              labelId="prompt-advisor-model-label"
-              value={promptAdvisorModel}
-              onChange={(e) => setPromptAdvisorModel(e.target.value)}
-              label="Prompt Advisor Model"
-            >
-              <MenuItem value="gpt-4o">GPT-4o</MenuItem>
-              <MenuItem value="gpt-4o-mini">GPT-4o Mini</MenuItem>
-              <MenuItem value="claude-3-5-sonnet-latest">Claude 3.5 Sonnet</MenuItem>
-              <MenuItem value="claude-3-7-sonnet-latest">Claude 3.7 Sonnet</MenuItem>
-            </Select>
-          </FormControl>
-        </Box>
-      </Paper>
-
-      {/* Response Validator Configuration */}
-      <Paper elevation={1} sx={{ p: 3, mb: 3 }}>
-        <Typography variant="h6" gutterBottom>
-          Response Validator Configuration
-        </Typography>
-        <Typography variant="body2" color="textSecondary" paragraph>
-          Select the model to use for validating responses in the validation tab. This model will analyze responses for accuracy, hallucinations, and other quality metrics.
-        </Typography>
-        <Box sx={{ maxWidth: 400 }}>
-          <FormControl fullWidth variant="outlined">
-            <InputLabel id="response-validator-model-label">Response Validator Model</InputLabel>
-            <Select
-              labelId="response-validator-model-label"
-              value={responseValidatorModel}
-              onChange={(e) => setResponseValidatorModel(e.target.value)}
-              label="Response Validator Model"
-            >
-              <MenuItem value="gpt-4o">GPT-4o</MenuItem>
-              <MenuItem value="gpt-4o-mini">GPT-4o Mini</MenuItem>
-              <MenuItem value="claude-3-5-sonnet-latest">Claude 3.5 Sonnet</MenuItem>
-              <MenuItem value="claude-3-7-sonnet-latest">Claude 3.7 Sonnet</MenuItem>
-            </Select>
-          </FormControl>
-        </Box>
-      </Paper>
-
-      <Grid container spacing={3}>
-        {Object.entries(models).map(([modelId, model]) => (
-          <Grid item xs={12} md={6} lg={4} key={modelId}>
-            <Card 
-              variant="outlined" 
-              sx={{ 
-                height: '100%', 
-                display: 'flex', 
-                flexDirection: 'column',
-                opacity: model.active ? 1 : 0.7
-              }}
-            >
-              <Box 
+      {!showAppSettingsOnly && (
+        <Grid container spacing={3}>
+          {Object.entries(models).map(([modelId, model]) => (
+            <Grid item xs={12} md={6} lg={4} key={modelId}>
+              <Card 
+                variant="outlined" 
                 sx={{ 
+                  height: '100%', 
                   display: 'flex', 
-                  alignItems: 'center', 
-                  p: 2,
-                  borderBottom: '1px solid rgba(0, 0, 0, 0.12)',
-                  bgcolor: model.active ? `${vendorColors[model.vendor]}15` : 'transparent'
+                  flexDirection: 'column',
+                  opacity: model.active ? 1 : 0.7
                 }}
               >
                 <Box 
                   sx={{ 
-                    width: 16, 
-                    height: 16, 
-                    borderRadius: '50%',
-                    bgcolor: vendorColors[model.vendor] || vendorColors.Other,
-                    mr: 1 
-                  }} 
-                />
-                <Typography variant="subtitle1" sx={{ flexGrow: 1 }}>
-                  {modelId}
-                </Typography>
-                <Chip 
-                  label={model.vendor} 
-                  size="small" 
-                  sx={{ 
-                    bgcolor: `${vendorColors[model.vendor]}22`,
-                    color: vendorColors[model.vendor] || vendorColors.Other
-                  }} 
-                />
-              </Box>
-              
-              <CardContent sx={{ flexGrow: 1 }}>
-                <Typography variant="body2" color="textSecondary" paragraph>
-                  {model.description}
-                </Typography>
-                
-                <Grid container spacing={1} sx={{ mt: 1 }}>
-                  <Grid item xs={6}>
-                    <Typography variant="caption" color="textSecondary">
-                      Input cost (per 1M tokens)
-                    </Typography>
-                    <Typography variant="body2">
-                      {model.input === 0 ? 'Free' : `$${model.input.toFixed(2)}`}
-                    </Typography>
-                  </Grid>
-                  <Grid item xs={6}>
-                    <Typography variant="caption" color="textSecondary">
-                      Output cost (per 1M tokens)
-                    </Typography>
-                    <Typography variant="body2">
-                      {model.output === 0 ? 'Free' : `$${model.output.toFixed(2)}`}
-                    </Typography>
-                  </Grid>
-                </Grid>
-                
-                <Box sx={{ mt: 2 }}>
-                  <Typography variant="caption" color="textSecondary">
-                    Approximate cost per 1K tokens
+                    display: 'flex', 
+                    alignItems: 'center', 
+                    p: 2,
+                    borderBottom: '1px solid rgba(0, 0, 0, 0.12)',
+                    bgcolor: model.active ? `${vendorColors[model.vendor]}15` : 'transparent'
+                  }}
+                >
+                  <Box 
+                    sx={{ 
+                      width: 16, 
+                      height: 16, 
+                      borderRadius: '50%',
+                      bgcolor: vendorColors[model.vendor] || vendorColors.Other,
+                      mr: 1 
+                    }} 
+                  />
+                  <Typography variant="subtitle1" sx={{ flexGrow: 1 }}>
+                    {modelId}
                   </Typography>
-                  <Typography variant="body1" sx={{ fontWeight: 'bold' }}>
-                    {model.input === 0 && model.output === 0 ? 'Free' : `$${calculateCostPer1K(model)}`}
-                  </Typography>
+                  <Chip 
+                    label={model.vendor} 
+                    size="small" 
+                    sx={{ 
+                      bgcolor: `${vendorColors[model.vendor]}22`,
+                      color: vendorColors[model.vendor] || vendorColors.Other
+                    }} 
+                  />
                 </Box>
                 
+                <CardContent sx={{ flexGrow: 1 }}>
+                  <Typography variant="body2" color="textSecondary" paragraph>
+                    {model.description}
+                  </Typography>
+                  
+                  <Grid container spacing={1} sx={{ mt: 1 }}>
+                    <Grid item xs={6}>
+                      <Typography variant="caption" color="textSecondary">
+                        Input cost (per 1M tokens)
+                      </Typography>
+                      <Typography variant="body2">
+                        {model.input === 0 ? 'Free' : `$${model.input.toFixed(2)}`}
+                      </Typography>
+                    </Grid>
+                    <Grid item xs={6}>
+                      <Typography variant="caption" color="textSecondary">
+                        Output cost (per 1M tokens)
+                      </Typography>
+                      <Typography variant="body2">
+                        {model.output === 0 ? 'Free' : `$${model.output.toFixed(2)}`}
+                      </Typography>
+                    </Grid>
+                  </Grid>
+                  
+                  <Typography variant="body2" sx={{ mt: 2 }}>
+                    1K tokens ≈ {calculateCostPer1K(model)}
+                  </Typography>
+                </CardContent>
+                
+                <CardActions sx={{ display: 'flex', justifyContent: 'space-between', p: 2, borderTop: '1px solid rgba(0, 0, 0, 0.12)' }}>
+                  <Box>
+                    <IconButton 
+                      onClick={() => handleEditModel(modelId)} 
+                      size="small"
+                      title="Edit model"
+                    >
+                      <EditIcon fontSize="small" />
+                    </IconButton>
+                    <IconButton 
+                      onClick={() => handleDeleteConfirm(modelId)} 
+                      size="small"
+                      title="Delete model"
+                    >
+                      <DeleteIcon fontSize="small" />
+                    </IconButton>
+                  </Box>
+                  
+                  <Button
+                    size="small"
+                    startIcon={<VisibilityIcon />}
+                    onClick={() => testLlmConnection(modelId)}
+                    disabled={testingModel === modelId}
+                  >
+                    {testingModel === modelId ? (
+                      <>
+                        <CircularProgress size={16} sx={{ mr: 1 }} />
+                        Testing...
+                      </>
+                    ) : 'Test Connection'}
+                  </Button>
+                </CardActions>
+                
                 {testResults[modelId] && (
-                  <Box sx={{ mt: 2, p: 1, bgcolor: '#f5f5f5', borderRadius: 1 }}>
-                    {testResults[modelId].status === 'success' ? (
-                      <>
-                        <Box display="flex" alignItems="center">
+                  <Box sx={{ p: 2, borderTop: '1px solid rgba(0, 0, 0, 0.12)', bgcolor: '#f9f9f9' }}>
+                    <Typography variant="subtitle2" gutterBottom>
+                      Test Results:
+                    </Typography>
+                    
+                    <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                      {testResults[modelId].status === 'success' ? (
+                        <>
                           <CheckCircleIcon color="success" fontSize="small" sx={{ mr: 1 }} />
-                          <Typography variant="body2" color="success.main">Connection successful</Typography>
-                        </Box>
-                        {testResults[modelId].response && (
-                          <Typography variant="caption" sx={{ display: 'block', mt: 1 }}>
-                            Response: {testResults[modelId].response.substring(0, 100)}
-                            {testResults[modelId].response.length > 100 ? '...' : ''}
+                          <Typography variant="body2" color="success.main">
+                            Connection successful!
                           </Typography>
-                        )}
-                      </>
-                    ) : testResults[modelId].status === 'error' ? (
-                      <>
-                        <Box display="flex" alignItems="center">
+                        </>
+                      ) : (
+                        <>
                           <ErrorIcon color="error" fontSize="small" sx={{ mr: 1 }} />
-                          <Typography variant="body2" color="error">Connection failed</Typography>
-                        </Box>
-                        {testResults[modelId].error && (
-                          <Typography variant="caption" color="error" sx={{ display: 'block', mt: 1 }}>
-                            Error: {testResults[modelId].error}
+                          <Typography variant="body2" color="error">
+                            {testResults[modelId].error}
                           </Typography>
-                        )}
-                      </>
-                    ) : (
-                      <CircularProgress size={16} />
-                    )}
+                        </>
+                      )}
+                    </Box>
                   </Box>
                 )}
-              </CardContent>
-              
-              <CardActions>
-                <Button 
-                  size="small" 
-                  startIcon={<VisibilityIcon />}
-                  onClick={() => testLlmConnection(modelId)}
-                  disabled={testingModel === modelId}
-                >
-                  {testingModel === modelId ? (
-                    <>
-                      <CircularProgress size={16} sx={{ mr: 1 }} />
-                      Testing...
-                    </>
-                  ) : 'Test Connection'}
-                </Button>
-                <Box sx={{ flexGrow: 1 }} />
-                <IconButton 
-                  size="small" 
-                  onClick={() => handleEditModel(modelId)}
-                >
-                  <EditIcon fontSize="small" />
-                </IconButton>
-                <IconButton 
-                  size="small" 
-                  color="error"
-                  onClick={() => handleDeleteConfirm(modelId)}
-                >
-                  <DeleteIcon fontSize="small" />
-                </IconButton>
-              </CardActions>
-            </Card>
-          </Grid>
-        ))}
-      </Grid>
+              </Card>
+            </Grid>
+          ))}
+        </Grid>
+      )}
 
       {/* Edit Model Dialog */}
       <Dialog open={editDialogOpen} onClose={() => setEditDialogOpen(false)}>

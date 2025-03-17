@@ -6,6 +6,8 @@ import SettingsIcon from '@mui/icons-material/Settings';
 import CloseIcon from '@mui/icons-material/Close';
 import CheckIcon from '@mui/icons-material/Check';
 import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
+import TuneIcon from '@mui/icons-material/Tune';
+import SmartToyIcon from '@mui/icons-material/SmartToy';
 
 import DocumentUpload from './components/DocumentUpload';
 import VectorStoreConfig from './components/VectorStoreConfig';
@@ -63,6 +65,7 @@ function App() {
   const [settingsDialogOpen, setSettingsDialogOpen] = useState(false);
   const [showWelcome, setShowWelcome] = useState(true);
   const [showApiKeyNotice, setShowApiKeyNotice] = useState(true);
+  const [settingsTabValue, setSettingsTabValue] = useState(0);
   
   // Store query interface state to preserve it when navigating back
   const [lastQueryState, setLastQueryState] = useState({
@@ -197,6 +200,11 @@ function App() {
   const dismissApiKeyNotice = () => {
     setShowApiKeyNotice(false);
     localStorage.setItem('hasSeenApiKeyNotice', 'true');
+  };
+
+  // Function to handle settings tab changes
+  const handleSettingsTabChange = (event, newValue) => {
+    setSettingsTabValue(newValue);
   };
 
   return (
@@ -563,7 +571,7 @@ function App() {
           <AppBar position="static" color="default" elevation={0}>
             <Toolbar>
               <Typography variant="h6" style={{ flexGrow: 1 }}>
-                LLM Settings
+                Settings
               </Typography>
               <IconButton
                 edge="end"
@@ -576,7 +584,35 @@ function App() {
             </Toolbar>
           </AppBar>
           <DialogContent dividers>
-            <LlmSettings />
+            <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 2 }}>
+              <Tabs
+                value={settingsTabValue}
+                onChange={handleSettingsTabChange}
+                indicatorColor="primary"
+                textColor="primary"
+              >
+                <Tab 
+                  label="LLM Models" 
+                  icon={<SmartToyIcon />} 
+                  iconPosition="start" 
+                />
+                <Tab 
+                  label="App Settings" 
+                  icon={<TuneIcon />} 
+                  iconPosition="start" 
+                />
+              </Tabs>
+            </Box>
+            
+            {/* LLM Models Settings Tab */}
+            <Box hidden={settingsTabValue !== 0}>
+              {settingsTabValue === 0 && <LlmSettings />}
+            </Box>
+            
+            {/* App Settings Tab */}
+            <Box hidden={settingsTabValue !== 1}>
+              {settingsTabValue === 1 && <LlmSettings showAppSettingsOnly />}
+            </Box>
           </DialogContent>
         </Dialog>
         

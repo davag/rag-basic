@@ -107,11 +107,19 @@ const QueryInterface = ({ vectorStore, namespaces, onQuerySubmitted, isProcessin
       setIsProcessing(false);
     }
     
+    // Load default query template from localStorage if query is empty
+    if (!query) {
+      const defaultTemplate = localStorage.getItem('defaultQueryTemplate');
+      if (defaultTemplate) {
+        setQuery(defaultTemplate);
+      }
+    }
+    
     // This will run when the component is unmounted
     return () => {
       // Clean up any ongoing processes if needed
     };
-  }, [isProcessing, setIsProcessing]);
+  }, [isProcessing, setIsProcessing, query]);
 
   // Load initial state if provided
   useEffect(() => {
