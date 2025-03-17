@@ -49,9 +49,8 @@ const QueryInterface = ({ vectorStore, namespaces, onQuerySubmitted, isProcessin
     'claude-3-5-sonnet-latest': DEFAULT_SYSTEM_PROMPTS.anthropic,
     
     // Ollama models
-    'llama3:8b': DEFAULT_SYSTEM_PROMPTS.ollama,
-    'llama3:70b': DEFAULT_SYSTEM_PROMPTS.ollama,
-    'mistral:7b': DEFAULT_SYSTEM_PROMPTS.ollama
+    'llama3.2:latest': DEFAULT_SYSTEM_PROMPTS.ollama,
+    'mistral:latest': DEFAULT_SYSTEM_PROMPTS.ollama
   });
   const [error, setError] = useState(null);
   const [expandedPrompt, setExpandedPrompt] = useState(null);

@@ -170,10 +170,24 @@ class CustomChatOpenAI {
         content: msg.content
       }));
       
-      // Add system message if provided
-      const allMessages = this.systemPrompt 
-        ? [{ role: 'system', content: this.systemPrompt }, ...formattedMessages]
-        : formattedMessages;
+      // Add system message if provided, but handle o1 models differently
+      let allMessages;
+      if (this.modelName.startsWith('o1')) {
+        // For o1 models, convert system message to a user message with special formatting
+        if (this.systemPrompt) {
+          allMessages = [
+            { role: 'user', content: `<system>\n${this.systemPrompt}\n</system>\n\n${formattedMessages[0]?.content || ''}` },
+            ...formattedMessages.slice(1)
+          ];
+        } else {
+          allMessages = formattedMessages;
+        }
+      } else {
+        // For other models, use standard system message
+        allMessages = this.systemPrompt 
+          ? [{ role: 'system', content: this.systemPrompt }, ...formattedMessages]
+          : formattedMessages;
+      }
       
       // Make sure we have an API key
       const apiKey = this.apiKey || process.env.REACT_APP_OPENAI_API_KEY;
@@ -186,17 +200,29 @@ class CustomChatOpenAI {
       window.console.log('Sending OpenAI request:', {
         endpoint: `${this.proxyUrl}/chat/completions`,
         model: this.modelName,
-        messageCount: allMessages.length
+        messageCount: allMessages.length,
+        hasSystemPrompt: !!this.systemPrompt,
+        isO1Model: this.modelName.startsWith('o1')
       });
       
       // Use proxy endpoint to avoid CORS
       const requestData = {
         model: this.modelName,
         messages: allMessages,
-        temperature: this.temperature,
-        max_tokens: 1024,
         openaiApiKey: apiKey
       };
+      
+      // Handle special cases for o1 models
+      if (this.modelName.startsWith('o1')) {
+        // o1 models use max_completion_tokens instead of max_tokens
+        requestData.max_completion_tokens = 1024;
+        // o1 models only support default temperature (1)
+        // Don't set temperature for o1 models
+      } else {
+        // For other models, use standard parameters
+        requestData.max_tokens = 1024;
+        requestData.temperature = this.temperature;
+      }
       
       const response = await axios.post(
         `${this.proxyUrl}/chat/completions`,

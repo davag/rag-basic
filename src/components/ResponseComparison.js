@@ -55,9 +55,8 @@ const ResponseComparison = ({ responses, metrics }) => {
     'claude-3-7-sonnet-latest': '#5436da',
     
     // Ollama models (red)
-    'llama3:8b': '#ff6b6b',
-    'llama3:70b': '#ff6b6b',
-    'mistral:7b': '#ff6b6b'
+    'llama3.2:latest': '#ff6b6b',
+    'mistral:latest': '#ff6b6b'
   };
 
   const getModelVendor = (model) => {
