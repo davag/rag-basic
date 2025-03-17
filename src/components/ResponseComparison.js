@@ -27,10 +27,11 @@ import TokenIcon from '@mui/icons-material/Token';
 import DescriptionIcon from '@mui/icons-material/Description';
 import FolderIcon from '@mui/icons-material/Folder';
 import DownloadIcon from '@mui/icons-material/Download';
+import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
 
-const ResponseComparison = ({ responses, metrics, currentQuery, systemPrompts }) => {
+const ResponseComparison = ({ responses, metrics, currentQuery, systemPrompts, onBackToQuery }) => {
   const [expandedSources, setExpandedSources] = useState(false);
   
   // Get sources from the first model (they're the same for all models)
@@ -250,12 +251,29 @@ const ResponseComparison = ({ responses, metrics, currentQuery, systemPrompts })
     doc.save(`rag-report-${timestamp}.pdf`);
   };
 
+  const handleBackToQuery = () => {
+    if (onBackToQuery && typeof onBackToQuery === 'function') {
+      onBackToQuery();
+    }
+  };
+
   return (
     <Box>
       <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
-        <Typography variant="h5">
-          Response Comparison
-        </Typography>
+        <Box display="flex" alignItems="center">
+          <Button 
+            variant="outlined" 
+            color="primary" 
+            startIcon={<ArrowBackIcon />}
+            onClick={handleBackToQuery}
+            sx={{ mr: 2 }}
+          >
+            Back to Query
+          </Button>
+          <Typography variant="h5">
+            Response Comparison
+          </Typography>
+        </Box>
         <Button 
           variant="contained" 
           color="primary" 

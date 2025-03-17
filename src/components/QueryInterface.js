@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Typography, 
   Box, 
@@ -31,7 +31,7 @@ const DEFAULT_SYSTEM_PROMPT = `You are a helpful assistant that answers question
 If the answer is not in the context, say that you don't know. 
 Do not make up information that is not in the context.`;
 
-const QueryInterface = ({ vectorStore, namespaces, onQuerySubmitted, isProcessing, setIsProcessing }) => {
+const QueryInterface = ({ vectorStore, namespaces, onQuerySubmitted, isProcessing, setIsProcessing, initialState }) => {
   const [query, setQuery] = useState('');
   const [selectedModels, setSelectedModels] = useState(['gpt-4o-mini', 'claude-3-5-sonnet-latest']);
   const [globalSystemPrompt, setGlobalSystemPrompt] = useState(DEFAULT_SYSTEM_PROMPT);
@@ -76,6 +76,32 @@ const QueryInterface = ({ vectorStore, namespaces, onQuerySubmitted, isProcessin
   const [helpExpanded, setHelpExpanded] = useState(false);
   const [globalPromptExpanded, setGlobalPromptExpanded] = useState(false);
   const [globalTemperatureExpanded, setGlobalTemperatureExpanded] = useState(false);
+
+  // Load initial state if provided
+  useEffect(() => {
+    if (initialState) {
+      if (initialState.query) setQuery(initialState.query);
+      if (initialState.selectedModels) setSelectedModels(initialState.selectedModels);
+      if (initialState.selectedNamespaces) setSelectedNamespaces(initialState.selectedNamespaces);
+      if (initialState.globalSystemPrompt) setGlobalSystemPrompt(initialState.globalSystemPrompt);
+      if (initialState.useCustomPrompts !== undefined) setUseCustomPrompts(initialState.useCustomPrompts);
+      if (initialState.customSystemPrompts && Object.keys(initialState.customSystemPrompts).length > 0) {
+        setCustomSystemPrompts(prev => ({
+          ...prev,
+          ...initialState.customSystemPrompts
+        }));
+      }
+      if (initialState.globalTemperature !== undefined) setGlobalTemperature(initialState.globalTemperature);
+      if (initialState.useCustomTemperatures !== undefined) setUseCustomTemperatures(initialState.useCustomTemperatures);
+      if (initialState.customTemperatures && Object.keys(initialState.customTemperatures).length > 0) {
+        setCustomTemperatures(prev => ({
+          ...prev,
+          ...initialState.customTemperatures
+        }));
+      }
+      if (initialState.ollamaEndpoint) setOllamaEndpoint(initialState.ollamaEndpoint);
+    }
+  }, [initialState]);
 
   const handleQueryChange = (event) => {
     setQuery(event.target.value);
@@ -149,6 +175,22 @@ const QueryInterface = ({ vectorStore, namespaces, onQuerySubmitted, isProcessin
       return undefined;
     }
     return useCustomTemperatures ? customTemperatures[model] : globalTemperature;
+  };
+
+  // Get current state to save when submitting
+  const getCurrentState = () => {
+    return {
+      query,
+      selectedModels,
+      selectedNamespaces,
+      globalSystemPrompt,
+      useCustomPrompts,
+      customSystemPrompts,
+      globalTemperature,
+      useCustomTemperatures,
+      customTemperatures,
+      ollamaEndpoint
+    };
   };
 
   const submitQuery = async () => {
@@ -242,7 +284,8 @@ Given the context information and not prior knowledge, answer the question: ${qu
         };
       }
       
-      onQuerySubmitted(responses, metrics, query, systemPromptsUsed);
+      // Pass the current state along with the results
+      onQuerySubmitted(responses, metrics, query, systemPromptsUsed, getCurrentState());
     } catch (err) {
       window.console.error('Error executing query:', err);
       setError('Error executing query: ' + err.message);

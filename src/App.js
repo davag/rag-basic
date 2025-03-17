@@ -46,6 +46,20 @@ function App() {
   const [metrics, setMetrics] = useState({});
   const [currentQuery, setCurrentQuery] = useState('');
   const [systemPrompts, setSystemPrompts] = useState({});
+  
+  // Store query interface state to preserve it when navigating back
+  const [lastQueryState, setLastQueryState] = useState({
+    query: '',
+    selectedModels: ['gpt-4o-mini', 'claude-3-5-sonnet-latest'],
+    selectedNamespaces: ['default'],
+    globalSystemPrompt: '',
+    useCustomPrompts: false,
+    customSystemPrompts: {},
+    globalTemperature: 0,
+    useCustomTemperatures: false,
+    customTemperatures: {},
+    ollamaEndpoint: 'http://localhost:11434'
+  });
 
   const handleTabChange = (event, newValue) => {
     setTabValue(newValue);
@@ -65,12 +79,22 @@ function App() {
     setTabValue(2); // Move to query interface after vector store is created
   };
 
-  const handleQuerySubmitted = (responses, queryMetrics, query, prompts) => {
+  const handleQuerySubmitted = (responses, queryMetrics, query, prompts, queryState) => {
     setLlmResponses(responses);
     setMetrics(queryMetrics);
     setCurrentQuery(query);
     setSystemPrompts(prompts);
+    
+    // Save the query interface state for when the user navigates back
+    if (queryState) {
+      setLastQueryState(queryState);
+    }
+    
     setTabValue(3); // Move to response comparison after query is submitted
+  };
+  
+  const handleBackToQuery = () => {
+    setTabValue(2); // Navigate back to the query tab
   };
 
   // Check if API keys are set
@@ -137,6 +161,7 @@ function App() {
                 onQuerySubmitted={handleQuerySubmitted}
                 isProcessing={isProcessing}
                 setIsProcessing={setIsProcessing}
+                initialState={lastQueryState}
               />
             </TabPanel>
 
@@ -146,6 +171,7 @@ function App() {
                 metrics={metrics}
                 currentQuery={currentQuery}
                 systemPrompts={systemPrompts}
+                onBackToQuery={handleBackToQuery}
               />
             </TabPanel>
           </Paper>
