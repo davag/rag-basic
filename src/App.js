@@ -7,6 +7,7 @@ import DocumentUpload from './components/DocumentUpload';
 import VectorStoreConfig from './components/VectorStoreConfig';
 import QueryInterface from './components/QueryInterface';
 import ResponseComparison from './components/ResponseComparison';
+import ResponseValidation from './components/ResponseValidation';
 
 const theme = createTheme({
   palette: {
@@ -49,6 +50,7 @@ function App() {
   const [snackbarOpen, setSnackbarOpen] = useState(false);
   const [snackbarMessage, setSnackbarMessage] = useState('');
   const [snackbarSeverity, setSnackbarSeverity] = useState('success');
+  const [validationResults, setValidationResults] = useState({});
   
   // Store query interface state to preserve it when navigating back
   const [lastQueryState, setLastQueryState] = useState({
@@ -139,6 +141,10 @@ function App() {
     setSnackbarOpen(false);
   };
 
+  const handleValidationComplete = (results) => {
+    setValidationResults(results);
+  };
+
   // Check if API keys are set
   const openAIApiKey = process.env.REACT_APP_OPENAI_API_KEY;
   const anthropicApiKey = process.env.REACT_APP_ANTHROPIC_API_KEY;
@@ -176,6 +182,7 @@ function App() {
               <Tab label="Configure Vector Store" disabled={documents.length === 0} />
               <Tab label="Query" disabled={!vectorStore} />
               <Tab label="Compare Responses" disabled={Object.keys(llmResponses).length === 0} />
+              <Tab label="Validate Responses" disabled={Object.keys(llmResponses).length === 0} />
             </Tabs>
 
             <TabPanel value={tabValue} index={0}>
@@ -215,6 +222,20 @@ function App() {
                 systemPrompts={systemPrompts}
                 onBackToQuery={handleBackToQuery}
                 onImportResults={handleImportResults}
+              />
+            </TabPanel>
+
+            <TabPanel value={tabValue} index={4}>
+              <ResponseValidation
+                responses={llmResponses}
+                metrics={metrics}
+                currentQuery={currentQuery}
+                systemPrompts={systemPrompts}
+                sources={Object.values(llmResponses)[0]?.sources || []}
+                onValidationComplete={handleValidationComplete}
+                validationResults={validationResults}
+                isProcessing={isProcessing}
+                setIsProcessing={setIsProcessing}
               />
             </TabPanel>
           </Paper>
