@@ -31,13 +31,13 @@ import jsPDF from 'jspdf';
 import 'jspdf-autotable';
 
 const ResponseComparison = ({ responses, metrics, currentQuery, systemPrompts }) => {
-  const [expandedSources, setExpandedSources] = useState({});
+  const [expandedSources, setExpandedSources] = useState(false);
+  
+  // Get sources from the first model (they're the same for all models)
+  const sources = Object.values(responses)[0]?.sources || [];
 
-  const handleSourcesToggle = (model) => {
-    setExpandedSources(prev => ({
-      ...prev,
-      [model]: !prev[model]
-    }));
+  const handleSourcesToggle = () => {
+    setExpandedSources(!expandedSources);
   };
 
   const formatResponseTime = (ms) => {
@@ -203,45 +203,47 @@ const ResponseComparison = ({ responses, metrics, currentQuery, systemPrompts })
       doc.setFontSize(10);
       doc.text(answerLines, margin, yPos);
       yPos += (answerLines.length * 5) + 15;
+    });
+    
+    // Sources
+    if (sources && sources.length > 0) {
+      doc.addPage();
+      yPos = 20;
+      doc.setFontSize(14);
+      doc.text(`Source Documents (${sources.length})`, margin, yPos);
+      yPos += 10;
       
-      // Sources
-      if (responses[model].sources && responses[model].sources.length > 0) {
+      const sourcesByNamespace = getSourcesByNamespace(sources);
+      
+      Object.entries(sourcesByNamespace).forEach(([namespace, namespaceSources]) => {
+        // Add a new page if we're getting close to the bottom
+        if (yPos > 250) {
+          doc.addPage();
+          yPos = 20;
+        }
+        
         doc.setFontSize(12);
-        doc.text(`Sources (${responses[model].sources.length})`, margin, yPos);
-        yPos += 10;
+        doc.text(`Namespace: ${namespace} (${namespaceSources.length} sources)`, margin, yPos);
+        yPos += 7;
         
-        const sourcesByNamespace = getSourcesByNamespace(responses[model].sources);
-        
-        Object.entries(sourcesByNamespace).forEach(([namespace, sources]) => {
+        namespaceSources.forEach((source, idx) => {
           // Add a new page if we're getting close to the bottom
           if (yPos > 250) {
             doc.addPage();
             yPos = 20;
           }
           
-          doc.setFontSize(11);
-          doc.text(`Namespace: ${namespace} (${sources.length} sources)`, margin, yPos);
-          yPos += 7;
+          doc.setFontSize(10);
+          doc.text(`Source: ${source.source}`, margin, yPos);
+          yPos += 5;
           
-          sources.forEach((source, idx) => {
-            // Add a new page if we're getting close to the bottom
-            if (yPos > 250) {
-              doc.addPage();
-              yPos = 20;
-            }
-            
-            doc.setFontSize(10);
-            doc.text(`Source: ${source.source}`, margin, yPos);
-            yPos += 5;
-            
-            const contentLines = doc.splitTextToSize(source.content, contentWidth);
-            doc.setFontSize(9);
-            doc.text(contentLines, margin, yPos);
-            yPos += (contentLines.length * 5) + 10;
-          });
+          const contentLines = doc.splitTextToSize(source.content, contentWidth);
+          doc.setFontSize(9);
+          doc.text(contentLines, margin, yPos);
+          yPos += (contentLines.length * 5) + 10;
         });
-      }
-    });
+      });
+    }
     
     // Save the PDF
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
@@ -314,6 +316,54 @@ const ResponseComparison = ({ responses, metrics, currentQuery, systemPrompts })
         </TableContainer>
       </Box>
 
+      {/* Source Documents Section - Shared across all models */}
+      {sources.length > 0 && (
+        <Box mb={4}>
+          <Accordion 
+            expanded={expandedSources}
+            onChange={handleSourcesToggle}
+          >
+            <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+              <Box display="flex" alignItems="center">
+                <DescriptionIcon fontSize="small" sx={{ mr: 1 }} />
+                <Typography variant="h6">Source Documents ({sources.length})</Typography>
+              </Box>
+            </AccordionSummary>
+            <AccordionDetails>
+              <Typography variant="body2" color="textSecondary" paragraph>
+                These source documents were used as context for all model responses.
+              </Typography>
+              
+              {Object.entries(getSourcesByNamespace(sources)).map(([namespace, namespaceSources]) => (
+                <Box key={namespace} mb={3}>
+                  <Box display="flex" alignItems="center" mb={1}>
+                    <FolderIcon fontSize="small" sx={{ mr: 1 }} />
+                    <Typography variant="subtitle1">
+                      Namespace: {namespace} ({namespaceSources.length} sources)
+                    </Typography>
+                  </Box>
+                  
+                  {namespaceSources.map((source, idx) => (
+                    <Paper 
+                      key={idx} 
+                      variant="outlined" 
+                      sx={{ p: 2, mb: 2, backgroundColor: '#f9f9f9' }}
+                    >
+                      <Typography variant="subtitle2" gutterBottom>
+                        Source: {source.source}
+                      </Typography>
+                      <Typography variant="body2">
+                        {source.content}
+                      </Typography>
+                    </Paper>
+                  ))}
+                </Box>
+              ))}
+            </AccordionDetails>
+          </Accordion>
+        </Box>
+      )}
+
       <Typography variant="h6" gutterBottom>
         Model Responses
       </Typography>
@@ -348,46 +398,6 @@ const ResponseComparison = ({ responses, metrics, currentQuery, systemPrompts })
                     ? responses[model].answer.text 
                     : responses[model].answer}
                 </Typography>
-                
-                <Accordion 
-                  expanded={!!expandedSources[model]}
-                  onChange={() => handleSourcesToggle(model)}
-                  sx={{ mt: 2 }}
-                >
-                  <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-                    <Box display="flex" alignItems="center">
-                      <DescriptionIcon fontSize="small" sx={{ mr: 1 }} />
-                      <Typography>Source Documents ({responses[model].sources.length})</Typography>
-                    </Box>
-                  </AccordionSummary>
-                  <AccordionDetails>
-                    {Object.entries(getSourcesByNamespace(responses[model].sources)).map(([namespace, sources]) => (
-                      <Box key={namespace} mb={2}>
-                        <Box display="flex" alignItems="center" mb={1}>
-                          <FolderIcon fontSize="small" sx={{ mr: 1 }} />
-                          <Typography variant="subtitle2">
-                            Namespace: {namespace} ({sources.length} sources)
-                          </Typography>
-                        </Box>
-                        
-                        {sources.map((source, idx) => (
-                          <Paper 
-                            key={idx} 
-                            variant="outlined" 
-                            sx={{ p: 2, mb: 2, backgroundColor: '#f9f9f9' }}
-                          >
-                            <Typography variant="subtitle2" gutterBottom>
-                              Source: {source.source}
-                            </Typography>
-                            <Typography variant="body2">
-                              {source.content}
-                            </Typography>
-                          </Paper>
-                        ))}
-                      </Box>
-                    ))}
-                  </AccordionDetails>
-                </Accordion>
               </CardContent>
               <CardActions sx={{ justifyContent: 'space-between', px: 2, pt: 0 }}>
                 <Box>

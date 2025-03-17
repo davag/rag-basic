@@ -56,6 +56,8 @@ function App() {
     if (uploadedNamespaces) {
       setNamespaces(uploadedNamespaces);
     }
+    // Automatically navigate to the second tab (Configure Vector Store)
+    setTabValue(1);
   };
 
   const handleVectorStoreCreated = (store) => {

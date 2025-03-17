@@ -279,11 +279,9 @@ const DocumentUpload = ({ onDocumentsUploaded, isProcessing, setIsProcessing }) 
       )}
 
       {processedDocs.length > 0 && (
-        <Box mt={2}>
-          <Alert severity="success">
-            Successfully processed {processedDocs.length} document(s). You can now proceed to configure the vector store.
-          </Alert>
-        </Box>
+        <Alert severity="success" sx={{ mt: 2 }}>
+          Successfully processed {processedDocs.length} document(s). Your documents have been converted into vector embeddings and you are being redirected to the next step.
+        </Alert>
       )}
     </Box>
   );
