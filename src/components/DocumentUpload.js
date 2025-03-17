@@ -12,13 +12,22 @@ import {
   CircularProgress,
   Alert,
   TextField,
-  Chip
+  Chip,
+  Link,
+  Tooltip,
+  IconButton,
+  Accordion,
+  AccordionSummary,
+  AccordionDetails
 } from '@mui/material';
 import { 
   Description as DescriptionIcon,
   PictureAsPdf as PdfIcon,
   InsertDriveFile as FileIcon,
-  Code as CodeIcon
+  Code as CodeIcon,
+  CloudUpload as CloudUploadIcon,
+  HelpOutline as HelpOutlineIcon,
+  ExpandMore as ExpandMoreIcon
 } from '@mui/icons-material';
 import { processFile } from '../utils/documentProcessing';
 
@@ -28,6 +37,7 @@ const DocumentUpload = ({ onDocumentsUploaded, isProcessing, setIsProcessing }) 
   const [error, setError] = useState(null);
   const [namespace, setNamespace] = useState('default');
   const [namespaces, setNamespaces] = useState(['default']);
+  const [helpExpanded, setHelpExpanded] = useState(false);
 
   const onDrop = useCallback(acceptedFiles => {
     setFiles(prevFiles => [...prevFiles, ...acceptedFiles]);
@@ -98,10 +108,62 @@ const DocumentUpload = ({ onDocumentsUploaded, isProcessing, setIsProcessing }) 
 
   return (
     <Box>
-      <Typography variant="h5" gutterBottom>
-        Upload Documents
+      <Box display="flex" alignItems="center" mb={1}>
+        <Typography variant="h5">
+          Step 1: Upload & Process Documents
+        </Typography>
+        <Tooltip title="Learn more about document processing and embeddings">
+          <IconButton 
+            size="small" 
+            onClick={() => setHelpExpanded(!helpExpanded)}
+            sx={{ ml: 1 }}
+          >
+            <HelpOutlineIcon />
+          </IconButton>
+        </Tooltip>
+      </Box>
+      
+      <Typography variant="body2" color="textSecondary" paragraph>
+        In this step, your documents will be uploaded, processed into smaller chunks, and converted into vector embeddings (numerical representations of text) that can be efficiently searched.
       </Typography>
       
+      <Accordion 
+        expanded={helpExpanded} 
+        onChange={() => setHelpExpanded(!helpExpanded)}
+        sx={{ mb: 3 }}
+      >
+        <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+          <Typography variant="subtitle2">How RAG Works: Document Processing & Embeddings</Typography>
+        </AccordionSummary>
+        <AccordionDetails>
+          <Typography variant="body2" paragraph>
+            Retrieval-Augmented Generation (RAG) works in several steps:
+          </Typography>
+          
+          <Typography variant="body2" component="div">
+            <ol>
+              <li><strong>Document Processing:</strong> Your documents are split into smaller chunks that can be processed efficiently.</li>
+              <li><strong>Embedding Creation:</strong> Each chunk is converted into a vector embedding (a list of numbers) that captures its semantic meaning.</li>
+              <li><strong>Vector Storage:</strong> These embeddings are stored in a vector database for efficient similarity search.</li>
+              <li><strong>Retrieval:</strong> When you ask a question, it's also converted to an embedding and used to find the most relevant document chunks.</li>
+              <li><strong>Generation:</strong> The LLM uses these relevant chunks as context to generate an accurate answer.</li>
+            </ol>
+          </Typography>
+          
+          <Typography variant="body2" paragraph>
+            This process allows the AI to "know" information that wasn't in its training data and provide more accurate, up-to-date responses.
+          </Typography>
+          
+          <Link 
+            href="https://www.pinecone.io/learn/retrieval-augmented-generation/" 
+            target="_blank" 
+            rel="noopener noreferrer"
+          >
+            Learn more about Retrieval-Augmented Generation (RAG)
+          </Link>
+        </AccordionDetails>
+      </Accordion>
+
       <Box mb={3}>
         <Typography variant="h6" gutterBottom>
           Document Namespace

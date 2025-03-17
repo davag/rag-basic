@@ -15,9 +15,13 @@ import {
   Accordion,
   AccordionSummary,
   AccordionDetails,
-  Divider
+  Divider,
+  IconButton,
+  Tooltip,
+  Link
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
 import { createLlmInstance, createQaChain, executeQuery } from '../utils/apiServices';
 
 const DEFAULT_SYSTEM_PROMPTS = {
@@ -56,6 +60,7 @@ const QueryInterface = ({ vectorStore, namespaces, onQuerySubmitted, isProcessin
   const [expandedPrompt, setExpandedPrompt] = useState(null);
   const [selectedNamespaces, setSelectedNamespaces] = useState(['default']);
   const [ollamaEndpoint, setOllamaEndpoint] = useState('http://localhost:11434');
+  const [helpExpanded, setHelpExpanded] = useState(false);
 
   const handleQueryChange = (event) => {
     setQuery(event.target.value);
@@ -175,9 +180,61 @@ Given the context information and not prior knowledge, answer the question: ${qu
 
   return (
     <Box>
-      <Typography variant="h5" gutterBottom>
-        Query Interface
+      <Box display="flex" alignItems="center" mb={1}>
+        <Typography variant="h5">
+          Step 3: Ask Questions Using RAG
+        </Typography>
+        <Tooltip title="Learn more about how RAG queries work">
+          <IconButton 
+            size="small" 
+            onClick={() => setHelpExpanded(!helpExpanded)}
+            sx={{ ml: 1 }}
+          >
+            <HelpOutlineIcon />
+          </IconButton>
+        </Tooltip>
+      </Box>
+
+      <Typography variant="body2" color="textSecondary" paragraph>
+        Now that your documents have been processed and stored as vector embeddings, you can ask questions about their content. The system will find the most relevant information and use it to generate accurate answers.
       </Typography>
+      
+      <Accordion 
+        expanded={helpExpanded} 
+        onChange={() => setHelpExpanded(!helpExpanded)}
+        sx={{ mb: 3 }}
+      >
+        <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+          <Typography variant="subtitle2">How RAG Queries Work</Typography>
+        </AccordionSummary>
+        <AccordionDetails>
+          <Typography variant="body2" paragraph>
+            When you ask a question, the RAG system follows these steps:
+          </Typography>
+          
+          <Typography variant="body2" component="div">
+            <ol>
+              <li><strong>Query Embedding:</strong> Your question is converted into a vector embedding using the same model used for your documents.</li>
+              <li><strong>Similarity Search:</strong> The system searches the vector database to find document chunks that are semantically similar to your question.</li>
+              <li><strong>Context Retrieval:</strong> The most relevant chunks are retrieved and combined to form the context for the LLM.</li>
+              <li><strong>Answer Generation:</strong> The LLM uses the retrieved context along with your question to generate an accurate answer.</li>
+              <li><strong>Source Attribution:</strong> The system provides references to the source documents used to generate the answer.</li>
+            </ol>
+          </Typography>
+          
+          <Typography variant="body2" paragraph>
+            You can compare different LLM models to see how they perform with the same retrieved context. This helps evaluate which model provides the best answers for your specific use case.
+          </Typography>
+          
+          <Link 
+            href="https://www.pinecone.io/learn/retrieval-augmented-generation/" 
+            target="_blank" 
+            rel="noopener noreferrer"
+          >
+            Learn more about RAG Query Processing
+          </Link>
+        </AccordionDetails>
+      </Accordion>
 
       <Paper elevation={1} sx={{ p: 3, mb: 3 }}>
         <Typography variant="h6" gutterBottom>

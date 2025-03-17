@@ -12,8 +12,16 @@ import {
   Paper,
   CircularProgress,
   Alert,
-  Chip
+  Chip,
+  Tooltip,
+  IconButton,
+  Accordion,
+  AccordionSummary,
+  AccordionDetails,
+  Link
 } from '@mui/material';
+import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import { RecursiveCharacterTextSplitter } from 'langchain/text_splitter';
 import { OpenAIEmbeddings } from 'langchain/embeddings/openai';
 import { MemoryVectorStore } from 'langchain/vectorstores/memory';
@@ -25,6 +33,7 @@ const VectorStoreConfig = ({ documents, namespaces, onVectorStoreCreated, isProc
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(false);
   const [namespaceSummary, setNamespaceSummary] = useState({});
+  const [helpExpanded, setHelpExpanded] = useState(false);
 
   const handleChunkSizeChange = (event, newValue) => {
     setChunkSize(newValue);
@@ -98,9 +107,73 @@ const VectorStoreConfig = ({ documents, namespaces, onVectorStoreCreated, isProc
 
   return (
     <Box>
-      <Typography variant="h5" gutterBottom>
-        Configure Vector Store
+      <Box display="flex" alignItems="center" mb={1}>
+        <Typography variant="h5">
+          Step 2: Configure & Initialize Vector Database
+        </Typography>
+        <Tooltip title="Learn more about vector databases and chunking">
+          <IconButton 
+            size="small" 
+            onClick={() => setHelpExpanded(!helpExpanded)}
+            sx={{ ml: 1 }}
+          >
+            <HelpOutlineIcon />
+          </IconButton>
+        </Tooltip>
+      </Box>
+
+      <Typography variant="body2" color="textSecondary" paragraph>
+        In this step, your documents will be split into smaller chunks, converted into vector embeddings, and organized into a searchable database. This process is crucial for efficient retrieval of relevant information when you ask questions.
       </Typography>
+      
+      <Accordion 
+        expanded={helpExpanded} 
+        onChange={() => setHelpExpanded(!helpExpanded)}
+        sx={{ mb: 3 }}
+      >
+        <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+          <Typography variant="subtitle2">Understanding Chunking and Vector Databases</Typography>
+        </AccordionSummary>
+        <AccordionDetails>
+          <Typography variant="body2" paragraph>
+            <strong>Document Chunking:</strong> Large documents are split into smaller pieces (chunks) for more precise retrieval. This allows the system to find specific information within documents rather than returning entire documents.
+          </Typography>
+          
+          <Typography variant="body2" paragraph>
+            <strong>Chunk Size:</strong> Determines how many characters are in each chunk. Smaller chunks (500-1000) are better for precise answers to specific questions. Larger chunks (1500-3000) preserve more context but may include irrelevant information.
+          </Typography>
+          
+          <Typography variant="body2" paragraph>
+            <strong>Chunk Overlap:</strong> The number of characters shared between adjacent chunks. Overlap helps maintain context across chunk boundaries, ensuring that sentences or concepts aren't split in a way that loses meaning.
+          </Typography>
+          
+          <Typography variant="body2" paragraph>
+            <strong>Vector Database:</strong> After chunking, each chunk is converted to a vector embedding (a list of numbers) that captures its semantic meaning. These vectors are stored in a database optimized for similarity search.
+          </Typography>
+          
+          <Typography variant="body2" paragraph>
+            <strong>Embedding Models:</strong> Different models create different quality embeddings. Larger models (like text-embedding-3-large) generally produce better results but cost more and may be slower.
+          </Typography>
+          
+          <Box mt={2}>
+            <Link 
+              href="https://www.pinecone.io/learn/chunking-strategies/" 
+              target="_blank" 
+              rel="noopener noreferrer"
+              sx={{ display: 'block', mb: 1 }}
+            >
+              Learn more about Chunking Strategies
+            </Link>
+            <Link 
+              href="https://www.pinecone.io/learn/vector-embeddings/" 
+              target="_blank" 
+              rel="noopener noreferrer"
+            >
+              Learn more about Vector Embeddings
+            </Link>
+          </Box>
+        </AccordionDetails>
+      </Accordion>
 
       <Paper elevation={1} sx={{ p: 3, mb: 3 }}>
         <Grid container spacing={4}>
@@ -178,10 +251,10 @@ const VectorStoreConfig = ({ documents, namespaces, onVectorStoreCreated, isProc
           {isProcessing ? (
             <>
               <CircularProgress size={24} color="inherit" style={{ marginRight: 10 }} />
-              Creating Vector Store...
+              Creating Vector Database...
             </>
           ) : (
-            'Create Vector Store'
+            'Create Vector Database'
           )}
         </Button>
       </Box>
