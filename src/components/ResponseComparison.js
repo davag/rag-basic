@@ -105,13 +105,10 @@ const ResponseComparison = ({ responses, metrics, currentQuery, systemPrompts, o
   };
 
   const getModelVendor = (model) => {
-    if (model.startsWith('gpt') || model.startsWith('o1')) {
-      return 'OpenAI';
-    } else if (model.startsWith('claude')) {
-      return 'Anthropic';
-    } else if (model.includes('llama') || model.includes('mistral')) {
-      return 'Ollama';
-    }
+    if (model.includes('azure-')) return 'AzureOpenAI';
+    if (model.startsWith('gpt') || model.startsWith('o1') || model.startsWith('o3')) return 'OpenAI';
+    if (model.startsWith('claude')) return 'Anthropic';
+    if (model.includes('llama') || model.includes('mistral') || model.includes('gemma')) return 'Ollama';
     return 'Unknown';
   };
 

@@ -34,17 +34,29 @@ export const processModelsInParallel = async (
     const ollamaEndpoint = localStorage.getItem('ollamaEndpoint') || 'http://localhost:11434';
     
     // Create LLM instance with appropriate configuration
-    const llm = createLlmInstance(model, systemPrompt, {
-      ollamaEndpoint: ollamaEndpoint,
-      temperature: temperature
-    });
+    const createLlmWithRetry = async () => {
+      try {
+        window.console.log(`Creating LLM instance for model: ${model}`);
+        return createLlmInstance(model, systemPrompt, {
+          ollamaEndpoint: ollamaEndpoint,
+          temperature: temperature
+        });
+      } catch (error) {
+        window.console.error(`Failed to create LLM for model ${model}:`, error);
+        throw error;
+      }
+    };
     
     // Return a promise that will resolve with model name and result
     return (async () => {
       try {
         const startTime = Date.now();
         
+        // Create the LLM instance
+        const llm = await createLlmWithRetry();
+        
         // Call the LLM directly with the prompt
+        window.console.log(`Invoking model ${model} with prompt (length: ${prompt.length})`);
         const answer = await llm.invoke(prompt);
         
         const endTime = Date.now();
@@ -59,34 +71,42 @@ export const processModelsInParallel = async (
         const outputTokenEstimate = Math.ceil(answerText.length / 4);
         const totalTokenEstimate = inputTokenEstimate + outputTokenEstimate;
         
-        // Return the result for this model
+        // Return the result
         return {
           model,
-          result: {
-            answer: answerText,
-            responseTime,
-            sources: sources.map(doc => ({
-              content: doc.pageContent,
-              source: doc.metadata.source,
-              namespace: doc.metadata.namespace || 'default'
-            }))
-          },
+          answer: answerText,
           metrics: {
             responseTime,
-            elapsedTime, // Include actual elapsed time
+            elapsedTime,
             tokenUsage: {
               estimated: true,
               input: inputTokenEstimate,
               output: outputTokenEstimate,
               total: totalTokenEstimate
             }
-          }
+          },
+          sources
         };
       } catch (error) {
         window.console.error(`Error processing model ${model}:`, error);
+        
+        // Include the error details in the result
         return {
           model,
-          error: error.message
+          error: true,
+          errorMessage: `Error processing model ${model}: ${error.message}`,
+          answer: `Error: ${error.message}`,
+          metrics: {
+            responseTime: 0,
+            elapsedTime: 0,
+            tokenUsage: {
+              estimated: true,
+              input: 0,
+              output: 0,
+              total: 0
+            }
+          },
+          sources
         };
       }
     })();
@@ -108,7 +128,7 @@ export const processModelsInParallel = async (
     if (result.error) {
       // Handle error for this model
       responsesMap[result.model] = {
-        answer: `Error: ${result.error}`,
+        answer: `Error: ${result.errorMessage}`,
         error: result.error,
         sources: sources.map(doc => ({
           content: doc.pageContent,
@@ -130,17 +150,25 @@ export const processModelsInParallel = async (
       };
     } else {
       // Store successful response
-      responsesMap[result.model] = result.result;
+      responsesMap[result.model] = {
+        answer: result.answer,
+        responseTime: result.metrics.responseTime,
+        sources: sources.map(doc => ({
+          content: doc.pageContent,
+          source: doc.metadata.source,
+          namespace: doc.metadata.namespace || 'default'
+        }))
+      };
       
       // Store metrics
       metricsMap[result.model] = {
-        responseTime: result.result.responseTime,
+        responseTime: result.metrics.responseTime,
         elapsedTime: result.metrics.elapsedTime, // Include elapsed time
         tokenUsage: result.metrics.tokenUsage
       };
       
       // Log response time for this model
-      window.console.log(`${result.model} responded in ${result.result.responseTime}ms`);
+      window.console.log(`${result.model} responded in ${result.metrics.responseTime}ms`);
     }
   }
   

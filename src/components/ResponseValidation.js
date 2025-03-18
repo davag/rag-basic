@@ -45,10 +45,28 @@ const ModelDropdown = ({ value, onChange, sx = {} }) => (
     variant="outlined"
     sx={sx}
   >
+    <MenuItem disabled>
+      <Typography variant="subtitle2">OpenAI Models</Typography>
+    </MenuItem>
     <MenuItem value="gpt-4o">GPT-4o</MenuItem>
     <MenuItem value="gpt-4o-mini">GPT-4o Mini</MenuItem>
+    <MenuItem value="o3-mini">o3-mini</MenuItem>
+    
+    <Divider />
+    <MenuItem disabled>
+      <Typography variant="subtitle2">Azure OpenAI Models</Typography>
+    </MenuItem>
+    <MenuItem value="azure-gpt-4o">Azure GPT-4o</MenuItem>
+    <MenuItem value="azure-gpt-4o-mini">Azure GPT-4o Mini</MenuItem>
+    <MenuItem value="azure-o3-mini">Azure o3-mini</MenuItem>
+    
+    <Divider />
+    <MenuItem disabled>
+      <Typography variant="subtitle2">Anthropic Models</Typography>
+    </MenuItem>
     <MenuItem value="claude-3-5-sonnet-latest">Claude 3.5 Sonnet</MenuItem>
     <MenuItem value="claude-3-7-sonnet-latest">Claude 3.7 Sonnet</MenuItem>
+    
     <Divider />
     <MenuItem disabled>
       <Typography variant="subtitle2">Ollama Models</Typography>

@@ -50,6 +50,13 @@ const QueryInterface = ({ vectorStore, namespaces, onQuerySubmitted, isProcessin
     'gpt-4o-mini': DEFAULT_SYSTEM_PROMPT,
     'o1-mini': DEFAULT_SYSTEM_PROMPT,
     'o1-preview': DEFAULT_SYSTEM_PROMPT,
+    'o3-mini': DEFAULT_SYSTEM_PROMPT,
+    
+    // Azure OpenAI models
+    'azure-gpt-4o': DEFAULT_SYSTEM_PROMPT,
+    'azure-gpt-4o-mini': DEFAULT_SYSTEM_PROMPT,
+    'azure-o1-mini': DEFAULT_SYSTEM_PROMPT,
+    'azure-o3-mini': DEFAULT_SYSTEM_PROMPT,
     
     // Anthropic models
     'claude-3-7-sonnet-latest': DEFAULT_SYSTEM_PROMPT,
@@ -57,7 +64,8 @@ const QueryInterface = ({ vectorStore, namespaces, onQuerySubmitted, isProcessin
     
     // Ollama models
     'llama3.2:latest': DEFAULT_SYSTEM_PROMPT,
-    'mistral:latest': DEFAULT_SYSTEM_PROMPT
+    'mistral:latest': DEFAULT_SYSTEM_PROMPT,
+    'gemma3:12b': DEFAULT_SYSTEM_PROMPT
   });
   const [globalTemperature, setGlobalTemperature] = useState(0);
   const [useCustomTemperatures, setUseCustomTemperatures] = useState(false);
@@ -67,6 +75,13 @@ const QueryInterface = ({ vectorStore, namespaces, onQuerySubmitted, isProcessin
     'gpt-4o-mini': 0,
     'o1-mini': 0,
     'o1-preview': 0,
+    'o3-mini': 0,
+    
+    // Azure OpenAI models
+    'azure-gpt-4o': 0,
+    'azure-gpt-4o-mini': 0,
+    'azure-o1-mini': 0,
+    'azure-o3-mini': 0,
     
     // Anthropic models
     'claude-3-7-sonnet-latest': 0,
@@ -74,7 +89,8 @@ const QueryInterface = ({ vectorStore, namespaces, onQuerySubmitted, isProcessin
     
     // Ollama models
     'llama3.2:latest': 0,
-    'mistral:latest': 0
+    'mistral:latest': 0,
+    'gemma3:12b': 0
   });
   const [error, setError] = useState(null);
   const [expandedPrompt, setExpandedPrompt] = useState(null);
@@ -471,9 +487,31 @@ Given the context information and not prior knowledge, answer the question: ${qu
         selectedModels.forEach(model => {
           // For each model, extract its token usage and response time from parallelMetrics
           if (parallelMetrics[model]) {
+            // Store response time and token usage
             metricsMap[model] = {
               responseTime: parallelMetrics[model].responseTime,
+              elapsedTime: parallelMetrics[model].elapsedTime, // Include elapsed time
               tokenUsage: parallelMetrics[model].tokenUsage || {
+                estimated: true,
+                input: 0,
+                output: 0,
+                total: 0
+              }
+            };
+            
+            // For error responses, mark the metrics accordingly
+            if (parallelResponses[model] && parallelResponses[model].error) {
+              metricsMap[model].error = true;
+              metricsMap[model].errorMessage = parallelResponses[model].errorMessage;
+            }
+          } else {
+            // Handle case where metrics are missing for a model
+            metricsMap[model] = {
+              responseTime: 0,
+              elapsedTime: 0,
+              error: true,
+              errorMessage: `No metrics returned for model ${model}`,
+              tokenUsage: {
                 estimated: true,
                 input: 0,
                 output: 0,
@@ -838,6 +876,7 @@ Format your response with clear headings for each section.
             <MenuItem value="gpt-4o-mini">GPT-4o-mini</MenuItem>
             <MenuItem value="o1-mini">o1-mini</MenuItem>
             <MenuItem value="o1-preview">o1-preview</MenuItem>
+            <MenuItem value="o3-mini">o3-mini</MenuItem>
             <Divider />
             <MenuItem disabled>
               <Typography variant="subtitle2">Anthropic Models</Typography>
@@ -851,6 +890,15 @@ Format your response with clear headings for each section.
             <MenuItem value="llama3.2:latest">Llama 3 (8B)</MenuItem>
             <MenuItem value="gemma3:12b">Gemma 3 (12B)</MenuItem>
             <MenuItem value="mistral:latest">Mistral (7B)</MenuItem>
+            <Divider />
+            <MenuItem disabled>
+              <Typography variant="subtitle2">Azure OpenAI Models</Typography>
+            </MenuItem>
+            <MenuItem value="azure-gpt-4o">Azure GPT-4o</MenuItem>
+            <MenuItem value="azure-gpt-4o-mini">Azure GPT-4o-mini</MenuItem>
+            <MenuItem value="azure-o1-mini">Azure o1-mini</MenuItem>
+            <MenuItem value="azure-o3-mini">Azure o3-mini</MenuItem>
+            <Divider />
           </Select>
         </FormControl>
 

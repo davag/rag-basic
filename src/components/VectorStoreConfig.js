@@ -125,6 +125,27 @@ const VectorStoreConfig = ({ documents, namespaces, onVectorStoreCreated, isProc
           modelName: embeddingModel,
           ollamaEndpoint: ollamaEndpoint
         });
+      } else if (embeddingModel.startsWith('azure-')) {
+        // Use Azure OpenAI embeddings
+        const azureApiKey = process.env.REACT_APP_AZURE_OPENAI_API_KEY;
+        const azureEndpoint = process.env.REACT_APP_AZURE_OPENAI_ENDPOINT;
+        const apiVersion = process.env.REACT_APP_AZURE_OPENAI_API_VERSION || '2023-12-01-preview';
+        
+        if (!azureApiKey || !azureEndpoint) {
+          throw new Error('Azure OpenAI requires REACT_APP_AZURE_OPENAI_API_KEY and REACT_APP_AZURE_OPENAI_ENDPOINT to be set in your .env file');
+        }
+        
+        // Get deployment name by removing 'azure-' prefix
+        const deploymentName = embeddingModel.replace('azure-', '');
+        
+        embeddings = new OpenAIEmbeddings({
+          openAIApiKey: azureApiKey,
+          modelName: deploymentName,
+          azureOpenAIApiDeploymentName: deploymentName,
+          azureOpenAIApiKey: azureApiKey,
+          azureOpenAIApiInstanceName: azureEndpoint.replace('https://', '').replace('.openai.azure.com', ''),
+          azureOpenAIApiVersion: apiVersion
+        });
       } else {
         // Use OpenAI embeddings for OpenAI models
         embeddings = new OpenAIEmbeddings({
@@ -275,6 +296,10 @@ const VectorStoreConfig = ({ documents, namespaces, onVectorStoreCreated, isProc
               >
                 <MenuItem value="text-embedding-3-small">text-embedding-3-small (OpenAI)</MenuItem>
                 <MenuItem value="text-embedding-3-large">text-embedding-3-large (OpenAI)</MenuItem>
+                <MenuItem disabled>────── Azure OpenAI Models ──────</MenuItem>
+                <MenuItem value="azure-text-embedding-3-small">azure-text-embedding-3-small (Azure)</MenuItem>
+                <MenuItem value="azure-text-embedding-3-large">azure-text-embedding-3-large (Azure)</MenuItem>
+                <MenuItem disabled>────── Local Models ──────</MenuItem>
                 <MenuItem value="nomic-embed-text">nomic-embed-text (Ollama)</MenuItem>
               </Select>
               <Typography variant="body2" color="textSecondary" sx={{ mt: 1 }}>
