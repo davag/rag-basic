@@ -1046,7 +1046,17 @@ For example, use "Accuracy" not "accuracy" or "ACCURACY".
           {renderEffectivenessSummary(effectivenessData)}
 
           {/* Add Edit Criteria button above validation results */}
-          <Box sx={{ mb: 2, display: 'flex', justifyContent: 'flex-end' }}>
+          <Box sx={{ mb: 2, display: 'flex', justifyContent: 'flex-end', gap: 2 }}>
+            <Button 
+              variant="contained" 
+              color="primary"
+              onClick={validateResponses}
+              startIcon={<AssessmentIcon />}
+              disabled={isProcessing}
+              sx={{ mb: 2 }}
+            >
+              Revalidate
+            </Button>
             <Button 
               variant="contained" 
               color="secondary"
