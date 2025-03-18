@@ -277,6 +277,7 @@ const LlmSettings = ({ showAppSettingsOnly = false }) => {
   };
 
   // Check available Azure deployments
+  // eslint-disable-next-line no-unused-vars
   const checkAzureDeployments = async () => {
     try {
       // Get the Azure API key and endpoint from environment variables
@@ -528,14 +529,100 @@ const LlmSettings = ({ showAppSettingsOnly = false }) => {
     reader.readAsText(file);
   };
 
+  // State for model dialog
+  const [showModelDialog, setShowModelDialog] = useState(false);
+  const [editingModel, setEditingModel] = useState(null);
+  const [editModelData, setEditModelData] = useState({
+    modelId: '',
+    vendor: 'OpenAI',
+    input: 0,
+    output: 0,
+    active: true,
+    description: '',
+    deploymentName: ''
+  });
+
   const handleAddModel = () => {
-    // Just a stub - no functionality needed
+    setEditingModel(null);
+    setEditModelData({
+      modelId: '',
+      vendor: 'OpenAI',
+      input: 0,
+      output: 0,
+      active: true,
+      description: '',
+      deploymentName: ''
+    });
+    setShowModelDialog(true);
   };
 
-  const handleEditModel = () => {
-    // Just a stub - no functionality needed
+  const handleEditModel = (modelId) => {
+    const model = models[modelId];
+    if (model) {
+      setEditingModel(modelId);
+      setEditModelData({
+        modelId: modelId,
+        vendor: model.vendor || 'OpenAI',
+        input: model.input || 0,
+        output: model.output || 0,
+        active: model.active !== undefined ? model.active : true,
+        description: model.description || '',
+        deploymentName: model.deploymentName || ''
+      });
+      setShowModelDialog(true);
+    }
   };
 
+  const handleSaveModel = () => {
+    const newModels = { ...models };
+    
+    // If editing existing model
+    if (editingModel) {
+      newModels[editingModel] = {
+        vendor: editModelData.vendor,
+        input: parseFloat(editModelData.input),
+        output: parseFloat(editModelData.output),
+        active: editModelData.active,
+        description: editModelData.description
+      };
+      
+      // Add deploymentName only for Azure models
+      if (editModelData.vendor === 'AzureOpenAI' && editModelData.deploymentName) {
+        newModels[editingModel].deploymentName = editModelData.deploymentName;
+      }
+    } 
+    // If adding new model
+    else if (editModelData.modelId) {
+      newModels[editModelData.modelId] = {
+        vendor: editModelData.vendor,
+        input: parseFloat(editModelData.input),
+        output: parseFloat(editModelData.output),
+        active: editModelData.active,
+        description: editModelData.description
+      };
+      
+      // Add deploymentName only for Azure models
+      if (editModelData.vendor === 'AzureOpenAI' && editModelData.deploymentName) {
+        newModels[editModelData.modelId].deploymentName = editModelData.deploymentName;
+      }
+    }
+    
+    setModels(newModels);
+    localStorage.setItem('llmModels', JSON.stringify(newModels));
+    setShowModelDialog(false);
+  };
+
+  const handleDeleteModel = () => {
+    if (editingModel) {
+      const newModels = { ...models };
+      delete newModels[editingModel];
+      setModels(newModels);
+      localStorage.setItem('llmModels', JSON.stringify(newModels));
+      setShowModelDialog(false);
+    }
+  };
+
+  // eslint-disable-next-line no-unused-vars
   const addGemmaModel = () => {
     setModels(prev => {
       // Create a copy of the current models
@@ -566,7 +653,7 @@ const LlmSettings = ({ showAppSettingsOnly = false }) => {
   return (
     <Box>
       <Typography variant="h5" gutterBottom>
-        LLM Settings
+        {showAppSettingsOnly ? "App Settings" : "LLM Settings"}
       </Typography>
       
       {/* Error Snackbar */}
@@ -580,6 +667,130 @@ const LlmSettings = ({ showAppSettingsOnly = false }) => {
           {errorMessage}
         </Alert>
       </Snackbar>
+      
+      {/* Model Edit Dialog */}
+      <Dialog
+        open={showModelDialog}
+        onClose={() => setShowModelDialog(false)}
+        maxWidth="md"
+        fullWidth
+      >
+        <DialogTitle>
+          {editingModel ? `Edit Model: ${editingModel}` : 'Add New Model'}
+        </DialogTitle>
+        <DialogContent>
+          <Grid container spacing={2} sx={{ mt: 1 }}>
+            {!editingModel && (
+              <Grid item xs={12}>
+                <TextField
+                  fullWidth
+                  label="Model ID"
+                  value={editModelData.modelId}
+                  onChange={(e) => setEditModelData({...editModelData, modelId: e.target.value})}
+                  helperText="Unique identifier for the model (e.g., gpt-4o, claude-3.5-sonnet)"
+                />
+              </Grid>
+            )}
+            
+            <Grid item xs={12}>
+              <FormControl fullWidth>
+                <InputLabel>Vendor</InputLabel>
+                <Select
+                  value={editModelData.vendor}
+                  onChange={(e) => setEditModelData({...editModelData, vendor: e.target.value})}
+                  label="Vendor"
+                >
+                  <MenuItem value="OpenAI">OpenAI</MenuItem>
+                  <MenuItem value="AzureOpenAI">Azure OpenAI</MenuItem>
+                  <MenuItem value="Anthropic">Anthropic</MenuItem>
+                  <MenuItem value="Ollama">Ollama</MenuItem>
+                  <MenuItem value="Other">Other</MenuItem>
+                </Select>
+              </FormControl>
+            </Grid>
+            
+            <Grid item xs={12} sm={6}>
+              <TextField
+                fullWidth
+                label="Input Cost (per 1M tokens)"
+                type="number"
+                value={editModelData.input}
+                onChange={(e) => setEditModelData({...editModelData, input: e.target.value})}
+                InputProps={{
+                  startAdornment: <Typography sx={{ mr: 1 }}>$</Typography>,
+                }}
+              />
+            </Grid>
+            
+            <Grid item xs={12} sm={6}>
+              <TextField
+                fullWidth
+                label="Output Cost (per 1M tokens)"
+                type="number"
+                value={editModelData.output}
+                onChange={(e) => setEditModelData({...editModelData, output: e.target.value})}
+                InputProps={{
+                  startAdornment: <Typography sx={{ mr: 1 }}>$</Typography>,
+                }}
+              />
+            </Grid>
+            
+            {editModelData.vendor === 'AzureOpenAI' && (
+              <Grid item xs={12}>
+                <TextField
+                  fullWidth
+                  label="Azure Deployment Name"
+                  value={editModelData.deploymentName}
+                  onChange={(e) => setEditModelData({...editModelData, deploymentName: e.target.value})}
+                  helperText="Exact deployment name from your Azure OpenAI resource"
+                />
+              </Grid>
+            )}
+            
+            <Grid item xs={12}>
+              <TextField
+                fullWidth
+                label="Description"
+                multiline
+                rows={2}
+                value={editModelData.description}
+                onChange={(e) => setEditModelData({...editModelData, description: e.target.value})}
+              />
+            </Grid>
+            
+            <Grid item xs={12}>
+              <FormControl component="fieldset">
+                <Typography component="legend">Status</Typography>
+                <Chip 
+                  label={editModelData.active ? "Active" : "Inactive"}
+                  color={editModelData.active ? "success" : "default"}
+                  onClick={() => setEditModelData({...editModelData, active: !editModelData.active})}
+                  sx={{ cursor: 'pointer' }}
+                />
+              </FormControl>
+            </Grid>
+          </Grid>
+        </DialogContent>
+        <DialogActions>
+          {editingModel && (
+            <Button 
+              onClick={handleDeleteModel} 
+              color="error"
+              sx={{ mr: 'auto' }}
+            >
+              Delete
+            </Button>
+          )}
+          <Button onClick={() => setShowModelDialog(false)}>Cancel</Button>
+          <Button 
+            onClick={handleSaveModel} 
+            variant="contained"
+            disabled={!editingModel && !editModelData.modelId}
+          >
+            Save
+          </Button>
+        </DialogActions>
+      </Dialog>
       
       {/* Azure Deployments Dialog */}
       <Dialog 
@@ -646,49 +857,6 @@ const LlmSettings = ({ showAppSettingsOnly = false }) => {
                 margin="normal"
                 variant="outlined"
               />
-              <Button 
-                variant="outlined" 
-                onClick={addGemmaModel}
-                sx={{ mt: 1 }}
-              >
-                Ensure Gemma 3 12B Added
-              </Button>
-            </Paper>
-          </Box>
-          
-          {/* Prompt Advisor Settings */}
-          <Box mb={4}>
-            <Typography variant="h6" gutterBottom>
-              Prompt Advisor Settings
-            </Typography>
-            <Paper elevation={1} sx={{ p: 2, mb: 2 }}>
-              <FormControl fullWidth margin="normal">
-                <InputLabel id="prompt-advisor-model-label">Prompt Advisor Model</InputLabel>
-                <Select
-                  labelId="prompt-advisor-model-label"
-                  id="prompt-advisor-model"
-                  value={promptAdvisorModel}
-                  onChange={e => setPromptAdvisorModel(e.target.value)}
-                  label="Prompt Advisor Model"
-                >
-                  <MenuItem value="gpt-4o">GPT-4o</MenuItem>
-                  <MenuItem value="gpt-4o-mini">GPT-4o-mini</MenuItem>
-                  <MenuItem value="claude-3-5-sonnet-latest">Claude 3.5 Sonnet</MenuItem>
-                  <MenuItem value="llama3.2:latest">Llama 3</MenuItem>
-                </Select>
-                <FormHelperText>
-                  Select the model to use for generating prompt improvement suggestions
-                </FormHelperText>
-              </FormControl>
-              <Button 
-                variant="outlined" 
-                onClick={() => {
-                  localStorage.setItem('promptAdvisorModel', promptAdvisorModel);
-                }}
-                sx={{ mt: 1 }}
-              >
-                Save Setting
-              </Button>
             </Paper>
           </Box>
           
@@ -921,22 +1089,112 @@ const LlmSettings = ({ showAppSettingsOnly = false }) => {
             </Paper>
           </Box>
           
-          {/* Azure OpenAI Configuration */}
+        </>
+      )}
+
+      {showAppSettingsOnly && (
+        <>
+          <Typography variant="body2" color="textSecondary" paragraph>
+            Configure application-wide settings and defaults.
+          </Typography>
+          
+          {/* Prompt Advisor Settings */}
           <Box mb={4}>
             <Typography variant="h6" gutterBottom>
-              Azure OpenAI Configuration
+              Prompt Advisor Settings
             </Typography>
             <Paper elevation={1} sx={{ p: 2, mb: 2 }}>
-              <Typography variant="body2" paragraph>
-                Check available Azure OpenAI deployments to ensure your model deployment names match.
-              </Typography>
-              <Button 
-                variant="contained" 
-                color="primary"
-                onClick={checkAzureDeployments}
-              >
-                Check Available Azure Deployments
-              </Button>
+              <FormControl fullWidth margin="normal">
+                <InputLabel id="prompt-advisor-model-label">Prompt Advisor Model</InputLabel>
+                <Select
+                  labelId="prompt-advisor-model-label"
+                  id="prompt-advisor-model"
+                  value={promptAdvisorModel}
+                  onChange={e => {
+                    setPromptAdvisorModel(e.target.value);
+                    localStorage.setItem('promptAdvisorModel', e.target.value);
+                  }}
+                  label="Prompt Advisor Model"
+                >
+                  <MenuItem value="gpt-4o">GPT-4o</MenuItem>
+                  <MenuItem value="gpt-4o-mini">GPT-4o-mini</MenuItem>
+                  <MenuItem value="claude-3-5-sonnet-latest">Claude 3.5 Sonnet</MenuItem>
+                  <MenuItem value="llama3.2:latest">Llama 3</MenuItem>
+                </Select>
+                <FormHelperText>
+                  Select the model to use for generating prompt improvement suggestions
+                </FormHelperText>
+              </FormControl>
+            </Paper>
+          </Box>
+          
+          {/* Application Defaults */}
+          <Box mb={4}>
+            <Typography variant="h6" gutterBottom>
+              Application Defaults
+            </Typography>
+            <Paper elevation={1} sx={{ p: 2, mb: 2 }}>
+              <Grid container spacing={2}>
+                {/* Response Validator Model */}
+                <Grid item xs={12}>
+                  <FormControl fullWidth variant="outlined">
+                    <InputLabel>Response Validator Model</InputLabel>
+                    <Select
+                      value={responseValidatorModel}
+                      onChange={(e) => {
+                        setResponseValidatorModel(e.target.value);
+                        localStorage.setItem('responseValidatorModel', e.target.value);
+                      }}
+                      label="Response Validator Model"
+                    >
+                      {Object.keys(models)
+                        .filter(modelId => models[modelId].active)
+                        .sort()
+                        .map(modelId => (
+                          <MenuItem key={modelId} value={modelId}>
+                            {modelId}
+                          </MenuItem>
+                        ))
+                      }
+                    </Select>
+                    <FormHelperText>Model used for response validation</FormHelperText>
+                  </FormControl>
+                </Grid>
+                
+                {/* Default Evaluation Criteria */}
+                <Grid item xs={12}>
+                  <TextField
+                    label="Default Evaluation Criteria"
+                    multiline
+                    rows={6}
+                    fullWidth
+                    value={defaultEvaluationCriteria}
+                    onChange={(e) => {
+                      setDefaultEvaluationCriteria(e.target.value);
+                      localStorage.setItem('defaultEvaluationCriteria', e.target.value);
+                    }}
+                    variant="outlined"
+                    helperText="Default criteria for evaluating model responses (one per line)"
+                  />
+                </Grid>
+                
+                {/* Default Query Template */}
+                <Grid item xs={12}>
+                  <TextField
+                    label="Default Query Template"
+                    multiline
+                    rows={3}
+                    fullWidth
+                    value={defaultQueryTemplate}
+                    onChange={(e) => {
+                      setDefaultQueryTemplate(e.target.value);
+                      localStorage.setItem('defaultQueryTemplate', e.target.value);
+                    }}
+                    variant="outlined"
+                    helperText="Default template for formatting user queries (use {{query}} placeholder)"
+                  />
+                </Grid>
+              </Grid>
             </Paper>
           </Box>
         </>
