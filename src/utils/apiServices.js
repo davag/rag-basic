@@ -433,6 +433,11 @@ export const executeQuery = async (chain, query) => {
  * @returns {number} - The estimated cost in USD
  */
 export const calculateCost = (model, tokenCount) => {
+  // Return 0 if tokenCount is undefined, null, or not a valid number
+  if (tokenCount === undefined || tokenCount === null || isNaN(tokenCount)) {
+    return 0;
+  }
+  
   // Try to get custom model pricing from localStorage first
   let customModels = {};
   try {

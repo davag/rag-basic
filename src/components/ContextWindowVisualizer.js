@@ -65,11 +65,16 @@ const ContextWindowVisualizer = ({ responses, systemPrompts, currentQuery }) => 
     const usage = {};
     
     Object.entries(responses).forEach(([model, modelResponse]) => {
+      // Skip if model key is a reserved system property
+      if (['systemPrompts', 'temperatures', 'retrievalTime', 'query'].includes(model)) {
+        return;
+      }
+      
       // Get the model's context window size
       const windowSize = MODEL_CONTEXT_SIZES[model] || MODEL_CONTEXT_SIZES.default;
       
-      // Get system prompt for this model
-      const systemPrompt = systemPrompts[model] || '';
+      // Get system prompt for this model - safely access system prompts
+      const systemPrompt = systemPrompts && systemPrompts[model] ? systemPrompts[model] : '';
       const systemPromptTokens = estimateTokenCount(systemPrompt);
       
       // Calculate tokens in context (retrieval chunks)

@@ -22,6 +22,7 @@ import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import TokenIcon from '@mui/icons-material/Token';
 import AttachMoneyIcon from '@mui/icons-material/AttachMoney';
 import WarningIcon from '@mui/icons-material/Warning';
+import AccessTimeIcon from '@mui/icons-material/AccessTime';
 import { calculateCost } from '../utils/apiServices';
 
 // Utility to estimate token breakdown of a prompt
@@ -108,8 +109,8 @@ ${context}
 Given the context information and not prior knowledge, answer the question: ${currentQuery}
 `;
       
-      // Get the system prompt used for this model
-      const systemPrompt = systemPrompts[model] || "";
+      // Get the system prompt used for this model - safely access system prompts
+      const systemPrompt = systemPrompts && systemPrompts[model] ? systemPrompts[model] : "";
       
       // Estimate token breakdown
       const breakdown = estimateTokenBreakdown(prompt, systemPrompt);
@@ -131,6 +132,21 @@ Given the context information and not prior knowledge, answer the question: ${cu
   // Format large numbers with commas
   const formatNumber = (num) => {
     return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  };
+  
+  // Format elapsed time in a readable format
+  const formatElapsedTime = (ms) => {
+    if (!ms) return 'N/A';
+    
+    const seconds = Math.floor(ms / 1000);
+    const minutes = Math.floor(seconds / 60);
+    const remainingSeconds = seconds % 60;
+    
+    if (minutes > 0) {
+      return `${minutes}m ${remainingSeconds}s`;
+    } else {
+      return `${remainingSeconds}.${Math.floor((ms % 1000) / 100)}s`;
+    }
   };
   
   // Helper to get color for a percentage value
@@ -160,14 +176,20 @@ Given the context information and not prior knowledge, answer the question: ${cu
           
           <Grid container spacing={3}>
             {Object.entries(responses).map(([model, response]) => {
-              const modelMetrics = metrics[model] || { tokenUsage: { input: 0, output: 0, total: 0 } };
+              // Skip if model key is not an actual model in metrics
+              if (!metrics[model] || ['systemPrompts', 'temperatures', 'retrievalTime', 'query'].includes(model)) {
+                return null;
+              }
+              
+              const modelMetrics = metrics[model] || {};
+              const tokenUsage = modelMetrics.tokenUsage || { input: 0, output: 0, total: 0 };
               const breakdown = tokenBreakdowns[model];
               const modelWarnings = warnings[model] || [];
               
               // Get cost for this model
               const modelCost = calculateCost(model, 
-                modelMetrics.tokenUsage.input / 1000, 
-                modelMetrics.tokenUsage.output / 1000
+                tokenUsage.input / 1000, 
+                tokenUsage.output / 1000
               );
                 
               if (!breakdown) return null;
@@ -179,10 +201,10 @@ Given the context information and not prior knowledge, answer the question: ${cu
                       <Typography variant="h6" gutterBottom>{model}</Typography>
                       
                       {/* Token Summary */}
-                      <Stack direction="row" spacing={2} sx={{ mb: 2 }}>
+                      <Stack direction="row" spacing={2} sx={{ mb: 2, flexWrap: 'wrap', gap: 1 }}>
                         <Chip 
                           icon={<TokenIcon />} 
-                          label={`${formatNumber(modelMetrics.tokenUsage.total)} Total Tokens`} 
+                          label={`${formatNumber(tokenUsage.total)} Total Tokens`} 
                           color="primary"
                         />
                         <Chip 
@@ -190,6 +212,13 @@ Given the context information and not prior knowledge, answer the question: ${cu
                           label={`$${modelCost.toFixed(6)}`} 
                           color="secondary"
                         />
+                        {modelMetrics.elapsedTime && (
+                          <Chip
+                            icon={<AccessTimeIcon />}
+                            label={`${formatElapsedTime(modelMetrics.elapsedTime)}`}
+                            color="info"
+                          />
+                        )}
                       </Stack>
                       
                       {/* Input/Output Breakdown */}
@@ -197,18 +226,18 @@ Given the context information and not prior knowledge, answer the question: ${cu
                       <Box sx={{ mb: 2, display: 'flex', alignItems: 'center' }}>
                         <Box sx={{ flexGrow: 1 }}>
                           <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                            <Box sx={{ width: `${calculatePercentage(modelMetrics.tokenUsage.input, modelMetrics.tokenUsage.total)}%`, bgcolor: 'primary.main', height: 10, borderRadius: '4px 0 0 4px' }} />
-                            <Box sx={{ width: `${calculatePercentage(modelMetrics.tokenUsage.output, modelMetrics.tokenUsage.total)}%`, bgcolor: 'secondary.main', height: 10, borderRadius: '0 4px 4px 0' }} />
+                            <Box sx={{ width: `${calculatePercentage(tokenUsage.input, tokenUsage.total)}%`, bgcolor: 'primary.main', height: 10, borderRadius: '4px 0 0 4px' }} />
+                            <Box sx={{ width: `${calculatePercentage(tokenUsage.output, tokenUsage.total)}%`, bgcolor: 'secondary.main', height: 10, borderRadius: '0 4px 4px 0' }} />
                           </Box>
                         </Box>
                         <Box sx={{ ml: 2, display: 'flex', fontSize: '0.75rem' }}>
                           <Box sx={{ color: 'primary.main', display: 'flex', alignItems: 'center', mr: 1 }}>
                             <Box sx={{ width: 8, height: 8, bgcolor: 'primary.main', borderRadius: 1, mr: 0.5 }} />
-                            Input {calculatePercentage(modelMetrics.tokenUsage.input, modelMetrics.tokenUsage.total)}%
+                            Input {calculatePercentage(tokenUsage.input, tokenUsage.total)}%
                           </Box>
                           <Box sx={{ color: 'secondary.main', display: 'flex', alignItems: 'center' }}>
                             <Box sx={{ width: 8, height: 8, bgcolor: 'secondary.main', borderRadius: 1, mr: 0.5 }} />
-                            Output {calculatePercentage(modelMetrics.tokenUsage.output, modelMetrics.tokenUsage.total)}%
+                            Output {calculatePercentage(tokenUsage.output, tokenUsage.total)}%
                           </Box>
                         </Box>
                       </Box>
@@ -226,7 +255,7 @@ Given the context information and not prior knowledge, answer the question: ${cu
                           </TableHead>
                           <TableBody>
                             {Object.entries(breakdown.breakdown).map(([part, tokens]) => {
-                              const percentage = calculatePercentage(tokens, modelMetrics.tokenUsage.input);
+                              const percentage = calculatePercentage(tokens, tokenUsage.input);
                               return (
                                 <TableRow key={part}>
                                   <TableCell component="th" scope="row">

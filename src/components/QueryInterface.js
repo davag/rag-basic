@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { 
   Typography, 
   Box, 
@@ -22,8 +22,7 @@ import {
   Switch,
   FormControlLabel,
   Slider,
-  Stack,
-  LinearProgress
+  Stack
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
@@ -34,6 +33,7 @@ import CloseIcon from '@mui/icons-material/Close';
 import FullscreenIcon from '@mui/icons-material/Fullscreen';
 import FullscreenExitIcon from '@mui/icons-material/FullscreenExit';
 import { createLlmInstance } from '../utils/apiServices';
+import { processModelsInParallel } from '../utils/parallelLLMProcessor';
 
 const DEFAULT_SYSTEM_PROMPT = `You are a helpful assistant that answers questions based on the provided context. 
 If the answer is not in the context, say that you don't know. 
@@ -91,6 +91,10 @@ const QueryInterface = ({ vectorStore, namespaces, onQuerySubmitted, isProcessin
   const [expandedQuery, setExpandedQuery] = useState(false);
   const [expandedGlobalPrompt, setExpandedGlobalPrompt] = useState(false);
   const [expandedCustomPrompts, setExpandedCustomPrompts] = useState({});
+  const [useParallelProcessing, setUseParallelProcessing] = useState(true);
+  const [processingStartTimes, setProcessingStartTimes] = useState({});
+  const [elapsedTimes, setElapsedTimes] = useState({});
+  const [timerInterval, setTimerInterval] = useState(null);
 
   // Reference to the file input element
   const fileInputRef = useRef(null);
@@ -146,6 +150,70 @@ const QueryInterface = ({ vectorStore, namespaces, onQuerySubmitted, isProcessin
     }
   }, [initialState]);
 
+  // Load parallel processing preference from localStorage on mount
+  useEffect(() => {
+    const savedPreference = localStorage.getItem('useParallelProcessing');
+    if (savedPreference !== null) {
+      setUseParallelProcessing(savedPreference === 'true');
+    }
+  }, []);
+
+  // Save parallel processing preference to localStorage
+  useEffect(() => {
+    localStorage.setItem('useParallelProcessing', useParallelProcessing.toString());
+  }, [useParallelProcessing]);
+
+  // Function to update elapsed times
+  const updateElapsedTimes = useCallback(() => {
+    const now = Date.now();
+    const updated = {};
+    
+    Object.entries(processingStartTimes).forEach(([model, startTime]) => {
+      if (startTime) {
+        const elapsed = now - startTime;
+        updated[model] = elapsed;
+      }
+    });
+    
+    setElapsedTimes(updated);
+  }, [processingStartTimes]);
+  
+  // Set up and clear timer
+  useEffect(() => {
+    if (isProcessing) {
+      const interval = setInterval(() => {
+        updateElapsedTimes();
+      }, 100);
+      setTimerInterval(interval);
+    } else {
+      if (timerInterval) {
+        clearInterval(timerInterval);
+        setTimerInterval(null);
+      }
+    }
+    
+    return () => {
+      if (timerInterval) {
+        clearInterval(timerInterval);
+      }
+    };
+  }, [isProcessing, updateElapsedTimes, timerInterval]);
+  
+  // Format milliseconds to display time
+  const formatElapsedTime = (ms) => {
+    if (!ms) return '';
+    
+    const seconds = Math.floor(ms / 1000);
+    const minutes = Math.floor(seconds / 60);
+    const remainingSeconds = seconds % 60;
+    
+    if (minutes > 0) {
+      return `${minutes}m ${remainingSeconds}s`;
+    } else {
+      return `${remainingSeconds}.${Math.floor((ms % 1000) / 100)}s`;
+    }
+  };
+
   const handleQueryChange = (event) => {
     setQuery(event.target.value);
   };
@@ -194,6 +262,10 @@ const QueryInterface = ({ vectorStore, namespaces, onQuerySubmitted, isProcessin
 
   const handleUseCustomTemperaturesChange = (event) => {
     setUseCustomTemperatures(event.target.checked);
+  };
+
+  const handleUseParallelProcessingChange = (event) => {
+    setUseParallelProcessing(event.target.checked);
   };
 
   const handleTemperatureAccordionChange = (model) => (event, isExpanded) => {
@@ -323,9 +395,9 @@ const QueryInterface = ({ vectorStore, namespaces, onQuerySubmitted, isProcessin
     setIsProcessing(true);
     setError(null);
     setProcessingStep('Preparing query');
+    setProcessingStartTimes({});
+    setElapsedTimes({});
     
-    const responses = {};
-    const metrics = {};
     const systemPromptsUsed = {};
     const temperaturesUsed = {};
     
@@ -364,77 +436,150 @@ ${context}
 ---------------------
 Given the context information and not prior knowledge, answer the question: ${query}
 `;
-      
+
       // Estimate input token count (very rough estimate: 1 token ≈ 4 characters)
       const inputTokenEstimate = Math.round(prompt.length / 4);
       
-      // Process each model with the same retrieved documents
-      for (const model of selectedModels) {
-        setCurrentProcessingModel(model);
-        setProcessingStep(`Processing with ${model}`);
+      if (useParallelProcessing) {
+        // Set processing step to indicate parallel processing
+        setCurrentProcessingModel('all models');
+        setProcessingStep('Processing queries in parallel');
         
-        // Get the appropriate system prompt for this model
-        const systemPrompt = getSystemPromptForModel(model);
-        systemPromptsUsed[model] = systemPrompt;
+        // Start timers for all models
+        const startTimes = {};
+        selectedModels.forEach(model => {
+          startTimes[model] = Date.now();
+        });
+        setProcessingStartTimes(startTimes);
         
-        // Get the appropriate temperature for this model
-        const temperature = getTemperatureForModel(model);
-        temperaturesUsed[model] = temperature;
+        // Process all models in parallel
+        const { responses: parallelResponses, metrics: parallelMetrics } = await processModelsInParallel(
+          selectedModels,
+          prompt,
+          {
+            getSystemPromptForModel,
+            getTemperatureForModel,
+            sources: docs
+          }
+        );
         
-        // Get Ollama endpoint from localStorage instead of component state
-        const ollamaEndpoint = localStorage.getItem('ollamaEndpoint') || 'http://localhost:11434';
+        // Update state with results
+        setResponses(parallelResponses);
         
-        // Create LLM instance with appropriate configuration
-        const llm = createLlmInstance(model, systemPrompt, {
-          ollamaEndpoint: ollamaEndpoint,
-          temperature: temperature
+        // Extract the specific metrics for each model to prepare the full metrics object
+        const metricsMap = {};
+        selectedModels.forEach(model => {
+          // For each model, extract its token usage and response time from parallelMetrics
+          if (parallelMetrics[model]) {
+            metricsMap[model] = {
+              responseTime: parallelMetrics[model].responseTime,
+              tokenUsage: parallelMetrics[model].tokenUsage || {
+                estimated: true,
+                input: 0,
+                output: 0,
+                total: 0
+              }
+            };
+          }
         });
         
-        const startTime = Date.now();
-        
-        // Call the LLM directly with the prompt
-        const answer = await llm.invoke(prompt);
-        
-        const endTime = Date.now();
-        const responseTime = endTime - startTime;
-        
-        // Get the answer text
-        const answerText = typeof answer === 'object' ? answer.text : answer;
-        
-        // Estimate output token count (very rough estimate: 1 token ≈ 4 characters)
-        const outputTokenEstimate = Math.round(answerText.length / 4);
-        
-        // Total token usage
-        const totalTokens = inputTokenEstimate + outputTokenEstimate;
-        
-        responses[model] = {
-          answer: answerText,
-          sources: docs.map(doc => ({
-            content: doc.pageContent,
-            source: doc.metadata.source,
-            namespace: doc.metadata.namespace || 'default'
-          }))
+        // Merge metrics with system prompts, temperatures, and retrieval time
+        const metrics = {
+          ...metricsMap,
+          systemPrompts: parallelMetrics.systemPrompts,
+          temperatures: parallelMetrics.temperatures,
+          retrievalTime,
+          query
         };
         
-        metrics[model] = {
-          responseTime: responseTime + retrievalTime, // Include retrieval time in the total
-          tokenUsage: {
-            estimated: true,
-            input: inputTokenEstimate,
-            output: outputTokenEstimate,
-            total: totalTokens
-          }
-        };
+        // Call onQuerySubmitted callback with results and metrics
+        onQuerySubmitted(parallelResponses, metrics, query);
+      } else {
+        // Process models sequentially (old method)
+        const responses = {};
+        const metrics = {};
+        
+        // Process each model with the same retrieved documents
+        for (const model of selectedModels) {
+          setCurrentProcessingModel(model);
+          setProcessingStep(`Processing with ${model}`);
+          
+          // Start timer for current model
+          setProcessingStartTimes(prev => ({
+            ...prev,
+            [model]: Date.now()
+          }));
+          
+          // Get the appropriate system prompt for this model
+          const systemPrompt = getSystemPromptForModel(model);
+          systemPromptsUsed[model] = systemPrompt;
+          
+          // Get the appropriate temperature for this model
+          const temperature = getTemperatureForModel(model);
+          temperaturesUsed[model] = temperature;
+          
+          // Get Ollama endpoint from localStorage instead of component state
+          const ollamaEndpoint = localStorage.getItem('ollamaEndpoint') || 'http://localhost:11434';
+          
+          // Create LLM instance with appropriate configuration
+          const llm = createLlmInstance(model, systemPrompt, {
+            ollamaEndpoint: ollamaEndpoint,
+            temperature: temperature
+          });
+          
+          const startTime = Date.now();
+          
+          // Call the LLM directly with the prompt
+          const answer = await llm.invoke(prompt);
+          
+          const endTime = Date.now();
+          const responseTime = endTime - startTime;
+          
+          // Get the answer text
+          const answerText = typeof answer === 'object' ? answer.text : answer;
+          
+          // Estimate output token count (very rough estimate: 1 token ≈ 4 characters)
+          const outputTokenEstimate = Math.round(answerText.length / 4);
+          
+          // Total token usage
+          const totalTokens = inputTokenEstimate + outputTokenEstimate;
+          
+          responses[model] = {
+            answer: answerText,
+            responseTime,
+            sources: docs.map(doc => ({
+              content: doc.pageContent,
+              source: doc.metadata.source,
+              namespace: doc.metadata.namespace || 'default'
+            }))
+          };
+          
+          // Record final time in metrics
+          metrics[model] = {
+            responseTime: responseTime + retrievalTime, // Include retrieval time in the total
+            elapsedTime: Date.now() - processingStartTimes[model], // Record actual elapsed time
+            tokenUsage: {
+              estimated: true,
+              input: inputTokenEstimate,
+              output: outputTokenEstimate,
+              total: totalTokens
+            }
+          };
+        }
+        
+        // Update metrics with system prompts and temperatures
+        metrics.systemPrompts = systemPromptsUsed;
+        metrics.temperatures = temperaturesUsed;
+        metrics.retrievalTime = retrievalTime;
+        metrics.query = query;
+        
+        // Pass the results
+        setResponses(responses);
+        onQuerySubmitted(responses, metrics, query);
       }
-      
-      setProcessingStep('Finalizing results');
-      // Store the responses in state
-      setResponses(responses);
-      // Pass the current state along with the results
-      onQuerySubmitted(responses, metrics, query, systemPromptsUsed, getCurrentState());
     } catch (err) {
-      window.console.error('Error executing query:', err);
-      setError('Error executing query: ' + err.message);
+      window.console.error('Error processing query:', err);
+      setError(`Error: ${err.message}`);
     } finally {
       setIsProcessing(false);
       setCurrentProcessingModel(null);
@@ -644,7 +789,7 @@ Format your response with clear headings for each section.
         <Typography variant="h6" gutterBottom>
           Select Namespaces to Query
         </Typography>
-        <FormControl fullWidth sx={{ mb: 3 }}>
+        <FormControl fullWidth sx={{ mb: 3, mt: 1 }}>
           <InputLabel id="namespace-select-label">Namespaces</InputLabel>
           <Select
             labelId="namespace-select-label"
@@ -669,7 +814,7 @@ Format your response with clear headings for each section.
           </Select>
         </FormControl>
 
-        <FormControl fullWidth sx={{ mb: 3 }}>
+        <FormControl fullWidth sx={{ mb: 3, mt: 1 }}>
           <InputLabel id="model-select-label">Select Models to Compare</InputLabel>
           <Select
             labelId="model-select-label"
@@ -976,11 +1121,37 @@ Format your response with clear headings for each section.
                       </Typography>
                     )}
                   </Box>
-            </AccordionDetails>
-          </Accordion>
-        ))}
+                </AccordionDetails>
+              </Accordion>
+            ))}
           </>
         )}
+
+        <Typography variant="h6" gutterBottom>
+          RAG Query Configuration
+        </Typography>
+        
+        <Box mb={2}>
+          <FormControlLabel
+            control={
+              <Switch
+                checked={useParallelProcessing}
+                onChange={handleUseParallelProcessingChange}
+                color="primary"
+              />
+            }
+            label={
+              <Box display="flex" alignItems="center">
+                <Typography variant="body1" mr={1}>
+                  Parallel Processing
+                </Typography>
+                <Tooltip title="Process all models in parallel for faster responses. Disable for sequential processing if you encounter rate limiting or timeouts.">
+                  <HelpOutlineIcon fontSize="small" color="action" />
+                </Tooltip>
+              </Box>
+            }
+          />
+        </Box>
       </Paper>
 
       <Box mt={3} display="flex" justifyContent="center" flexDirection="column" alignItems="center">
@@ -996,10 +1167,19 @@ Format your response with clear headings for each section.
         
         {isProcessing && (
           <Box sx={{ width: '100%', maxWidth: 500, mt: 2 }}>
-            <Typography variant="body2" align="center" gutterBottom>
-              {processingStep}
-            </Typography>
-            <LinearProgress sx={{ mb: 1 }} />
+            <Box textAlign="center" py={3}>
+              <CircularProgress />
+              <Typography variant="h6" sx={{ mt: 2 }}>
+                {currentProcessingModel === 'all models' 
+                  ? `${processingStep} (Processing all models simultaneously)` 
+                  : `${processingStep} ${currentProcessingModel ? `with ${currentProcessingModel}` : ''}`}
+              </Typography>
+              <Typography variant="body2" color="textSecondary" sx={{ mt: 1 }}>
+                {currentProcessingModel === 'all models' 
+                  ? `Querying ${selectedModels.length} models in parallel...` 
+                  : 'Processing...'}
+              </Typography>
+            </Box>
             
             <Box sx={{ mt: 2 }}>
               {selectedModels.map(model => (
@@ -1013,19 +1193,22 @@ Format your response with clear headings for each section.
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center',
-                      bgcolor: currentProcessingModel === model ? 'primary.main' : 'grey.300'
+                      bgcolor: currentProcessingModel === model ? 'primary.main' : (Object.keys(responses).includes(model) ? 'success.main' : 'grey.300')
                     }}
                   >
                     {currentProcessingModel === model && <CircularProgress size={16} color="inherit" />}
                   </Box>
                   <Typography 
                     variant="body2" 
-                    color={currentProcessingModel === model ? 'primary' : 'textSecondary'}
+                    color={currentProcessingModel === model ? 'primary' : (Object.keys(responses).includes(model) ? 'success.main' : 'textSecondary')}
                     sx={{ fontWeight: currentProcessingModel === model ? 'bold' : 'normal' }}
                   >
                     {model}
-                    {currentProcessingModel === model && ' (processing...)'}
-                    {Object.keys(responses).includes(model) && ' (completed)'}
+                    {currentProcessingModel === model && ' (processing...'}
+                    {(currentProcessingModel === model || Object.keys(responses).includes(model)) && 
+                      ` ${formatElapsedTime(elapsedTimes[model] || 0)}`}
+                    {currentProcessingModel === model && ')'}
+                    {Object.keys(responses).includes(model) && ` (completed in ${formatElapsedTime(elapsedTimes[model] || 0)})`}
                   </Typography>
                 </Box>
               ))}

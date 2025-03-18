@@ -132,20 +132,22 @@ const ErrorPatternRecognition = ({ responses, currentQuery, systemPrompts }) => 
     return context;
   }, []);
   
-  // Function to analyze responses for error patterns, memoized with useCallback
-  const analyzeErrorPatterns = useCallback(() => {
+  // Function to analyze responses for error patterns
+  const analyzeResponses = useCallback(() => {
     const analysis = {};
-
+    
     Object.entries(responses).forEach(([model, modelResponse]) => {
-      const responseText = typeof modelResponse.answer === 'object' ? 
-        modelResponse.answer.text : 
-        modelResponse.answer;
+      // Skip if model is a system property rather than an actual model name
+      if (['systemPrompts', 'temperatures', 'retrievalTime', 'query'].includes(model)) {
+        return;
+      }
       
+      const responseText = modelResponse.answer || '';
       const foundPatterns = [];
       
-      // Check each error pattern against the response
+      // Check response against each error pattern
       ERROR_PATTERNS.forEach(pattern => {
-        // Check if any regex in the pattern matches
+        // Check if response matches any of the regex patterns
         const matchesFound = pattern.regexPatterns.some(regex => 
           regex.test(responseText)
         );
@@ -188,17 +190,17 @@ const ErrorPatternRecognition = ({ responses, currentQuery, systemPrompts }) => 
   // Initial analysis of responses for error patterns
   useEffect(() => {
     if (Object.keys(responses).length > 0) {
-      analyzeErrorPatterns();
+      analyzeResponses();
     }
-  }, [responses, analyzeErrorPatterns]);
+  }, [responses, analyzeResponses]);
 
   // Function to generate an improved system prompt
   const generateImprovedPrompt = async (model, patterns) => {
     setIsGeneratingImprovedPrompt(prev => ({ ...prev, [model]: true }));
     
     try {
-      // Get the current system prompt for this model
-      const currentPrompt = systemPrompts[model] || '';
+      // Get the current system prompt for this model - safely access systemPrompts
+      const currentPrompt = systemPrompts && systemPrompts[model] ? systemPrompts[model] : '';
       
       // Create a prompt advisor instance
       const advisorModel = localStorage.getItem('promptAdvisorModel') || 'gpt-4o-mini';
