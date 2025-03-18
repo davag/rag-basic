@@ -498,9 +498,9 @@ const ResponseComparison = ({ responses, metrics, currentQuery, systemPrompts, o
                       <TableCell>
                         <Box display="flex" alignItems="center">
                           <AccessTimeIcon fontSize="small" sx={{ mr: 1 }} />
-                          {metrics[model] ? (metrics[model].elapsedTime ? formatElapsedTime(metrics[model].elapsedTime) : metrics[model].responseTime ? formatResponseTime(metrics[model].responseTime) : 'N/A') : 'N/A'}
-                          {metrics[model] && metrics[model].elapsedTime && metrics[model].responseTime && 
-                            <Tooltip title={`API Response Time: ${formatResponseTime(metrics[model].responseTime)}`}>
+                          {metrics[model] && metrics[model].responseTime ? formatResponseTime(metrics[model].responseTime) : 'Unknown'}
+                          {metrics[model] && metrics[model].elapsedTime && metrics[model].elapsedTime !== metrics[model].responseTime && 
+                            <Tooltip title={`Total elapsed time including setup: ${formatElapsedTime(metrics[model].elapsedTime)}`}>
                               <InfoIcon fontSize="small" sx={{ ml: 1, color: 'text.secondary' }} />
                             </Tooltip>
                           }
@@ -589,7 +589,7 @@ const ResponseComparison = ({ responses, metrics, currentQuery, systemPrompts, o
                 <Box>
                   <Chip 
                     icon={<AccessTimeIcon />} 
-                    label={metrics[model] ? (metrics[model].elapsedTime ? formatElapsedTime(metrics[model].elapsedTime) : metrics[model].responseTime ? formatResponseTime(metrics[model].responseTime) : 'N/A') : 'N/A'} 
+                    label={metrics[model] && metrics[model].responseTime ? formatResponseTime(metrics[model].responseTime) : 'Unknown'} 
                     size="small"
                     className="metrics-chip"
                   />

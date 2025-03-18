@@ -148,10 +148,11 @@ app.post('/api/proxy/azure/:endpoint(*)', async (req, res) => {
     console.log(`- Azure endpoint: ${endpoint}`);
     console.log(`- Deployment name: ${deploymentName}`);
     console.log(`- API version: ${apiVersion}`);
-    console.log(`- API key provided: ${apiKey ? 'Yes' : 'No'}`);
+    console.log(`- API key provided: ${apiKey ? 'Yes (length: ' + apiKey.length + ', first 5 chars: ' + apiKey.substring(0, 5) + '...)' : 'No'}`);
     console.log(`- Request body keys: ${Object.keys(req.body).join(', ')}`);
     
     if (!apiKey) {
+      console.error('[AZURE ERROR] Missing API key in request');
       return res.status(401).json({
         error: {
           message: 'Azure OpenAI API key is required'
@@ -160,6 +161,7 @@ app.post('/api/proxy/azure/:endpoint(*)', async (req, res) => {
     }
     
     if (!endpoint) {
+      console.error('[AZURE ERROR] Missing endpoint in request');
       return res.status(400).json({
         error: {
           message: 'Azure OpenAI endpoint is required'
@@ -168,6 +170,7 @@ app.post('/api/proxy/azure/:endpoint(*)', async (req, res) => {
     }
     
     if (!deploymentName) {
+      console.error('[AZURE ERROR] Missing deployment name in request');
       return res.status(400).json({
         error: {
           message: 'Azure OpenAI deployment name is required'
@@ -176,6 +179,7 @@ app.post('/api/proxy/azure/:endpoint(*)', async (req, res) => {
     }
     
     if (!apiVersion) {
+      console.error('[AZURE ERROR] Missing API version in request');
       return res.status(400).json({
         error: {
           message: 'Azure OpenAI API version is required'
@@ -211,29 +215,54 @@ app.post('/api/proxy/azure/:endpoint(*)', async (req, res) => {
     console.log(`[DEBUG] About to make Azure API request to: ${targetUrl}`);
     console.log(`[DEBUG] Request body: ${JSON.stringify(requestBody, null, 2)}`);
     
-    const response = await axios.post(
-      targetUrl,
-      requestBody,
-      {
-        headers: {
-          'Content-Type': 'application/json',
-          'api-key': apiKey
+    try {
+      const response = await axios.post(
+        targetUrl,
+        requestBody,
+        {
+          headers: {
+            'Content-Type': 'application/json',
+            'api-key': apiKey
+          }
+        }
+      );
+      
+      // Log response data structure (without the actual content)
+      if (response.data) {
+        console.log('Azure OpenAI response data structure:');
+        if (response.data.choices) {
+          console.log(`- choices: Array with ${response.data.choices.length} items`);
+        }
+        if (response.data.usage) {
+          console.log(`- usage: ${JSON.stringify(response.data.usage)}`);
         }
       }
-    );
-    
-    // Log response data structure (without the actual content)
-    if (response.data) {
-      console.log('Azure OpenAI response data structure:');
-      if (response.data.choices) {
-        console.log(`- choices: Array with ${response.data.choices.length} items`);
+      
+      res.json(response.data);
+    } catch (error) {
+      console.error('[AZURE ERROR] Request failed:', error.message);
+      
+      // Log more detailed error information
+      if (error.response) {
+        console.error('[AZURE ERROR] Response status:', error.response.status);
+        console.error('[AZURE ERROR] Response data:', JSON.stringify(error.response.data, null, 2));
+        
+        if (error.response.status === 404) {
+          console.error('[AZURE ERROR] 404 Not Found - Check your deployment name and endpoint URL');
+          console.error(`Deployment name: "${deploymentName}"`);
+          console.error(`Endpoint: "${endpoint}"`);
+          console.error(`API version: "${apiVersion}"`);
+        } else if (error.response.status === 401) {
+          console.error('[AZURE ERROR] 401 Unauthorized - Check your API key');
+        }
+      } else if (error.request) {
+        console.error('[AZURE ERROR] No response received. Request:', error.request);
       }
-      if (response.data.usage) {
-        console.log(`- usage: ${JSON.stringify(response.data.usage)}`);
-      }
+      
+      res.status(error.response?.status || 500).json({
+        error: error.response?.data || { message: error.message }
+      });
     }
-    
-    res.json(response.data);
   } catch (error) {
     console.error('Error proxying to Azure OpenAI API:', error.message);
     
@@ -317,6 +346,72 @@ app.use('/api/proxy/anthropic', createProxyMiddleware({
     res.status(500).json({ error: 'Proxy error', message: err.message });
   }
 }));
+
+// Endpoint to list Azure OpenAI deployments
+app.post('/api/list-azure-deployments', async (req, res) => {
+  try {
+    // Extract the Azure OpenAI API key and endpoint from the request or env
+    const apiKey = req.body.azureApiKey || process.env.REACT_APP_AZURE_OPENAI_API_KEY;
+    const endpoint = req.body.azureEndpoint || process.env.REACT_APP_AZURE_OPENAI_ENDPOINT;
+    const apiVersion = req.body.apiVersion || process.env.REACT_APP_AZURE_OPENAI_API_VERSION || '2023-05-15';
+    
+    console.log('[DEBUG] Azure Deployments Request:');
+    console.log(`- Azure endpoint: ${endpoint}`);
+    console.log(`- API version: ${apiVersion}`);
+    console.log(`- API key provided: ${apiKey ? 'Yes' : 'No'}`);
+    
+    if (!apiKey) {
+      return res.status(401).json({
+        error: {
+          message: 'Azure OpenAI API key is required'
+        }
+      });
+    }
+    
+    if (!endpoint) {
+      return res.status(400).json({
+        error: {
+          message: 'Azure OpenAI endpoint is required'
+        }
+      });
+    }
+    
+    // Ensure the endpoint URL is properly formatted
+    let formattedEndpoint = endpoint;
+    if (formattedEndpoint.endsWith('/')) {
+      formattedEndpoint = formattedEndpoint.slice(0, -1);
+    }
+    
+    // List deployments endpoint
+    const deploymentsUrl = `${formattedEndpoint}/openai/deployments?api-version=${apiVersion}`;
+    console.log(`[DEBUG] Requesting Azure deployments from: ${deploymentsUrl}`);
+    
+    const response = await axios.get(
+      deploymentsUrl,
+      {
+        headers: {
+          'api-key': apiKey
+        }
+      }
+    );
+    
+    res.json(response.data);
+  } catch (error) {
+    console.error('Error getting Azure deployments:', error.message);
+    
+    // Log more detailed error information
+    if (error.response) {
+      console.error('Response status:', error.response.status);
+      console.error('Response data:', error.response.data);
+    } else if (error.request) {
+      console.error('No response received. Request:', error.request);
+    }
+    
+    res.status(error.response?.status || 500).json({
+      error: error.response?.data || { message: error.message }
+    });
+  }
+});
 
 // The "catchall" handler: for any request that doesn't match one above, send back the index.html file.
 app.get('*', (req, res) => {

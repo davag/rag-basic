@@ -14,7 +14,17 @@ import {
   InputLabel,
   Select,
   MenuItem,
-  FormHelperText
+  FormHelperText,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  List,
+  ListItem,
+  ListItemText,
+  Chip,
+  Snackbar,
+  Alert
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import EditIcon from '@mui/icons-material/Edit';
@@ -24,7 +34,8 @@ import FileDownloadIcon from '@mui/icons-material/FileDownload';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import ErrorIcon from '@mui/icons-material/Error';
-import { createLlmInstance } from '../utils/apiServices';
+import { createLlmInstance, CustomAzureOpenAI } from '../utils/apiServices';
+import axios from 'axios';
 
 const LlmSettings = ({ showAppSettingsOnly = false }) => {
   // Get model pricing info from the utility
@@ -73,7 +84,7 @@ const LlmSettings = ({ showAppSettingsOnly = false }) => {
       output: 15.0,
       active: true,
       description: 'Azure-hosted GPT-4o - most capable GPT-4 model optimized for chat.',
-      deploymentName: 'gpt-4o'
+      deploymentName: 'GPT-4o'
     },
     'azure-gpt-4o-mini': {
       vendor: 'AzureOpenAI',
@@ -81,7 +92,7 @@ const LlmSettings = ({ showAppSettingsOnly = false }) => {
       output: 0.60,
       active: true,
       description: 'Azure-hosted GPT-4o-mini - affordable, faster version of GPT-4o.',
-      deploymentName: 'gpt4o-mini'
+      deploymentName: 'GPT-4o-mini'
     },
     'azure-o1-mini': {
       vendor: 'AzureOpenAI',
@@ -195,6 +206,106 @@ const LlmSettings = ({ showAppSettingsOnly = false }) => {
     }
   };
 
+  // Test Azure LLM connectivity specifically
+  const testAzureLlmConnection = async (modelId) => {
+    // Update test results for this model to show "testing" status
+    setTestResults(prev => ({...prev, [modelId]: 'testing'}));
+    
+    try {
+      const modelData = models[modelId];
+      if (!modelData || modelData.vendor !== 'AzureOpenAI') {
+        throw new Error('Not an Azure model');
+      }
+      
+      // Get the deployment name
+      const deploymentName = modelData.deploymentName || modelId.replace('azure-', '');
+      
+      // Get the Azure API key and endpoint from environment variables
+      const azureApiKey = process.env.REACT_APP_AZURE_OPENAI_API_KEY;
+      const azureEndpoint = process.env.REACT_APP_AZURE_OPENAI_ENDPOINT;
+      
+      console.log('[AZURE TEST] Testing Azure Model:', {
+        modelId,
+        deploymentName,
+        hasApiKey: !!azureApiKey,
+        hasEndpoint: !!azureEndpoint,
+        apiKeyLength: azureApiKey ? azureApiKey.length : 0,
+        apiKeyFirstFiveChars: azureApiKey ? azureApiKey.substring(0, 5) : '',
+        endpoint: azureEndpoint
+      });
+      
+      if (!azureApiKey) {
+        throw new Error('Azure API key is not set in environment variables');
+      }
+      
+      if (!azureEndpoint) {
+        throw new Error('Azure endpoint is not set in environment variables');
+      }
+      
+      // Create the Azure LLM instance directly
+      const llm = new CustomAzureOpenAI({
+        azureApiKey,
+        azureEndpoint,
+        modelName: modelId, 
+        deploymentName,
+        temperature: 0,
+        systemPrompt: 'You are a helpful assistant.',
+        apiVersion: process.env.REACT_APP_AZURE_OPENAI_API_VERSION
+      });
+      
+      // Test with a simple query
+      const response = await llm.invoke('Hello, can you respond with a short greeting?');
+      
+      // Update test results on success
+      setTestResults(prev => ({
+        ...prev, 
+        [modelId]: { 
+          status: 'success', 
+          response: typeof response === 'object' ? response.text : response 
+        }
+      }));
+    } catch (err) {
+      window.console.error(`[AZURE TEST] Error testing Azure model ${modelId}:`, err);
+      setTestResults(prev => ({
+        ...prev, 
+        [modelId]: { 
+          status: 'error', 
+          error: err.message 
+        }
+      }));
+    }
+  };
+
+  // Check available Azure deployments
+  const checkAzureDeployments = async () => {
+    try {
+      // Get the Azure API key and endpoint from environment variables
+      const azureApiKey = process.env.REACT_APP_AZURE_OPENAI_API_KEY;
+      const azureEndpoint = process.env.REACT_APP_AZURE_OPENAI_ENDPOINT;
+      
+      console.log('[AZURE] Checking deployments:', {
+        hasApiKey: !!azureApiKey,
+        hasEndpoint: !!azureEndpoint, 
+        endpoint: azureEndpoint
+      });
+      
+      const response = await axios.post('/api/list-azure-deployments', {
+        azureApiKey,
+        azureEndpoint
+      });
+      
+      console.log('[AZURE] Available deployments:', response.data);
+      
+      // Display deployments in a dialog
+      setAzureDeployments(response.data.data || []);
+      setShowDeploymentDialog(true);
+    } catch (err) {
+      console.error('[AZURE] Error checking deployments:', err);
+      setErrorMessage(`Error checking Azure deployments: ${err.message}`);
+      setShowError(true);
+    }
+  };
+
   // Reset to default models
   const handleResetToDefaults = () => {
     const defaultModels = {
@@ -243,7 +354,7 @@ const LlmSettings = ({ showAppSettingsOnly = false }) => {
         output: 0.60,
         active: true,
         description: 'Azure-hosted GPT-4o-mini - affordable, faster version of GPT-4o.',
-        deploymentName: 'gpt4o-mini'
+        deploymentName: 'gpt-4o-mini'
       },
       'azure-o1-mini': {
         vendor: 'AzureOpenAI',
@@ -446,11 +557,73 @@ const LlmSettings = ({ showAppSettingsOnly = false }) => {
     });
   };
 
+  // State for Azure deployments dialog
+  const [azureDeployments, setAzureDeployments] = useState([]);
+  const [showDeploymentDialog, setShowDeploymentDialog] = useState(false);
+  const [errorMessage, setErrorMessage] = useState('');
+  const [showError, setShowError] = useState(false);
+
   return (
     <Box>
       <Typography variant="h5" gutterBottom>
         LLM Settings
       </Typography>
+      
+      {/* Error Snackbar */}
+      <Snackbar 
+        open={showError} 
+        autoHideDuration={6000} 
+        onClose={() => setShowError(false)}
+        anchorOrigin={{ vertical: 'top', horizontal: 'center' }}
+      >
+        <Alert onClose={() => setShowError(false)} severity="error">
+          {errorMessage}
+        </Alert>
+      </Snackbar>
+      
+      {/* Azure Deployments Dialog */}
+      <Dialog 
+        open={showDeploymentDialog} 
+        onClose={() => setShowDeploymentDialog(false)}
+        maxWidth="md"
+        fullWidth
+      >
+        <DialogTitle>Available Azure OpenAI Deployments</DialogTitle>
+        <DialogContent>
+          {azureDeployments.length > 0 ? (
+            <List>
+              {azureDeployments.map((deployment, index) => (
+                <ListItem key={index} divider>
+                  <ListItemText
+                    primary={deployment.id || 'Unknown'}
+                    secondary={
+                      <>
+                        <Typography variant="body2" component="span">
+                          Model: {deployment.model || 'Unknown'} | 
+                          Status: {deployment.status || 'Unknown'}
+                        </Typography>
+                        <br />
+                        <Typography variant="caption" component="span">
+                          {deployment.id && `Use deployment name: "${deployment.id}"`}
+                        </Typography>
+                      </>
+                    }
+                  />
+                  <Chip 
+                    label={deployment.status === 'succeeded' ? 'Active' : deployment.status} 
+                    color={deployment.status === 'succeeded' ? 'success' : 'default'}
+                  />
+                </ListItem>
+              ))}
+            </List>
+          ) : (
+            <Typography>No deployments found or unable to retrieve deployments.</Typography>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setShowDeploymentDialog(false)}>Close</Button>
+        </DialogActions>
+      </Dialog>
       
       {!showAppSettingsOnly && (
         <>
@@ -671,22 +844,43 @@ const LlmSettings = ({ showAppSettingsOnly = false }) => {
                               >
                                 Edit
                               </Button>
-                              <Button
-                                size="small"
-                                onClick={() => testLlmConnection(modelId)}
-                                startIcon={
-                                  testResults[modelId] === 'testing' ? 
-                                    <CircularProgress size={16} /> : 
-                                    <VisibilityIcon />
-                                }
-                                color="secondary"
-                                disabled={
-                                  !model.active || 
-                                  testResults[modelId] === 'testing'
-                                }
-                              >
-                                Test
-                              </Button>
+                              <Box>
+                                {model.vendor === 'AzureOpenAI' && (
+                                  <Button
+                                    size="small"
+                                    onClick={() => testAzureLlmConnection(modelId)}
+                                    startIcon={
+                                      testResults[modelId] === 'testing' ? 
+                                        <CircularProgress size={16} /> : 
+                                        <VisibilityIcon />
+                                    }
+                                    color="info"
+                                    disabled={
+                                      !model.active || 
+                                      testResults[modelId] === 'testing'
+                                    }
+                                    sx={{ mr: 1 }}
+                                  >
+                                    Test Azure
+                                  </Button>
+                                )}
+                                <Button
+                                  size="small"
+                                  onClick={() => testLlmConnection(modelId)}
+                                  startIcon={
+                                    testResults[modelId] === 'testing' ? 
+                                      <CircularProgress size={16} /> : 
+                                      <VisibilityIcon />
+                                  }
+                                  color="secondary"
+                                  disabled={
+                                    !model.active || 
+                                    testResults[modelId] === 'testing'
+                                  }
+                                >
+                                  Test
+                                </Button>
+                              </Box>
                             </Box>
                           </CardActions>
                           
@@ -724,6 +918,25 @@ const LlmSettings = ({ showAppSettingsOnly = false }) => {
                     );
                   })}
               </Grid>
+            </Paper>
+          </Box>
+          
+          {/* Azure OpenAI Configuration */}
+          <Box mb={4}>
+            <Typography variant="h6" gutterBottom>
+              Azure OpenAI Configuration
+            </Typography>
+            <Paper elevation={1} sx={{ p: 2, mb: 2 }}>
+              <Typography variant="body2" paragraph>
+                Check available Azure OpenAI deployments to ensure your model deployment names match.
+              </Typography>
+              <Button 
+                variant="contained" 
+                color="primary"
+                onClick={checkAzureDeployments}
+              >
+                Check Available Azure Deployments
+              </Button>
             </Paper>
           </Box>
         </>

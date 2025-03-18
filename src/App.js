@@ -163,6 +163,7 @@ function App() {
   };
 
   const handleVectorStoreCreated = (store) => {
+    console.log('Vector store created:', store);
     setVectorStore(store);
     setTabValue(2); // Move to query interface after vector store is created
   };

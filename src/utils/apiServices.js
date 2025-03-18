@@ -180,8 +180,13 @@ class CustomChatOpenAI {
     safeLogger.log(`CustomChatOpenAI initialized with model: ${this.modelName}`);
     safeLogger.log(`API key provided in constructor: ${this.apiKey ? 'Yes' : 'No'}`);
     safeLogger.log(`Environment API key available: ${process.env.REACT_APP_OPENAI_API_KEY ? 'Yes' : 'No'}`);
-    if (this.modelName.startsWith('o1')) {
-      safeLogger.log('Note: o1 models do not support temperature settings');
+    if (this.modelName.startsWith('o1') || this.modelName.startsWith('o3')) {
+      safeLogger.log(`Note: ${this.modelName.startsWith('o1') ? 'o1' : 'o3'} models use max_completion_tokens instead of max_tokens`);
+      if (this.modelName.startsWith('o1')) {
+        safeLogger.log('Note: o1 models do not support temperature settings');
+      } else {
+        safeLogger.log(`Temperature setting: ${this.temperature}`);
+      }
     } else {
       safeLogger.log(`Temperature setting: ${this.temperature}`);
     }
@@ -195,10 +200,9 @@ class CustomChatOpenAI {
         content: msg.content
       }));
       
-      // Add system message if provided, but handle o1 models differently
+      // For o1 models, convert system message to a user message with special formatting
       let allMessages;
       if (this.modelName.startsWith('o1')) {
-        // For o1 models, convert system message to a user message with special formatting
         if (this.systemPrompt) {
           allMessages = [
             { role: 'user', content: `\n${this.systemPrompt}\n\n${formattedMessages[0]?.content || ''}` },
@@ -228,6 +232,7 @@ class CustomChatOpenAI {
         messageCount: allMessages.length,
         hasSystemPrompt: !!this.systemPrompt,
         isO1Model: this.modelName.startsWith('o1'),
+        isO3Model: this.modelName.startsWith('o3'),
         temperature: this.temperature
       });
       
@@ -238,12 +243,15 @@ class CustomChatOpenAI {
         openaiApiKey: apiKey
       };
       
-      // Handle special cases for o1 models
-      if (this.modelName.startsWith('o1')) {
-        // o1 models use max_completion_tokens instead of max_tokens
+      // Handle special cases for o1 and o3 models
+      if (this.modelName.startsWith('o1') || this.modelName.startsWith('o3')) {
+        // o1 and o3 models use max_completion_tokens instead of max_tokens
         requestData.max_completion_tokens = 1024;
-        // o1 models only support default temperature (1)
-        // Don't set temperature for o1 models
+        
+        // Don't set temperature for o1 models, but set it for o3 models if specified
+        if (this.modelName.startsWith('o3') && this.temperature !== undefined) {
+          requestData.temperature = this.temperature;
+        }
       } else {
         // For other models, use standard parameters
         requestData.max_tokens = 1024;
@@ -251,6 +259,12 @@ class CustomChatOpenAI {
           requestData.temperature = this.temperature;
         }
       }
+      
+      // Log full request data for debugging
+      console.log(`OpenAI Request for model ${this.modelName}:`, {
+        modelType: this.modelName.startsWith('o1') ? 'o1' : (this.modelName.startsWith('o3') ? 'o3' : 'standard'),
+        requestData
+      });
       
       const response = await axios.post(
         `${this.proxyUrl}/chat/completions`,
@@ -292,7 +306,7 @@ class CustomChatOpenAI {
 }
 
 // Custom Azure OpenAI integration for Azure-hosted models
-class CustomAzureOpenAI {
+export class CustomAzureOpenAI {
   constructor(options) {
     this.modelName = options.modelName || 'gpt-4o';
     this.deploymentName = options.deploymentName || options.modelName;
@@ -337,10 +351,12 @@ class CustomAzureOpenAI {
       const endpoint = this.endpoint || process.env.REACT_APP_AZURE_OPENAI_ENDPOINT;
       
       if (!apiKey) {
+        console.error('[AZURE ERROR] API key missing:', { providedInConstructor: !!this.apiKey, fromEnv: !!process.env.REACT_APP_AZURE_OPENAI_API_KEY });
         throw new Error('Azure OpenAI API key is required. Please set REACT_APP_AZURE_OPENAI_API_KEY in your environment variables.');
       }
       
       if (!endpoint) {
+        console.error('[AZURE ERROR] Endpoint missing:', { providedInConstructor: !!this.endpoint, fromEnv: !!process.env.REACT_APP_AZURE_OPENAI_ENDPOINT });
         throw new Error('Azure OpenAI endpoint is required. Please set REACT_APP_AZURE_OPENAI_ENDPOINT in your environment variables.');
       }
       
@@ -360,6 +376,8 @@ class CustomAzureOpenAI {
       console.log(`- Deployment Name: ${this.deploymentName}`);
       console.log(`- Message Count: ${allMessages.length}`);
       console.log(`- First message role: ${allMessages[0]?.role}`);
+      console.log(`- API Key first 5 chars: ${apiKey.substring(0, 5)}...`);
+      console.log(`- Endpoint: ${endpoint}`);
       
       // Use proxy endpoint to avoid CORS
       const requestData = {
@@ -462,6 +480,19 @@ export const createLlmInstance = (model, systemPrompt, options = {}) => {
     safeLogger.error('Error loading custom models from localStorage:', err);
   }
 
+  // Check if this is a validation request and explicitly block o3-mini models
+  if (options.isForValidation && (model.includes('o3-mini') || model.includes('o1-mini'))) {
+    console.warn(`Detected problematic model ${model} for validation. Fallback to gpt-4o instead.`);
+    // Force switch to a reliable model for validation
+    model = 'gpt-4o';
+    // Update localStorage to prevent future issues
+    try {
+      localStorage.setItem('responseValidatorModel', model);
+    } catch (err) {
+      console.error('Error updating localStorage with reliable validator model:', err);
+    }
+  }
+
   // Get the vendor from custom models if available
   const vendor = customModels[model]?.vendor;
   
@@ -495,6 +526,27 @@ export const createLlmInstance = (model, systemPrompt, options = {}) => {
     if (customModels[model]?.deploymentName) {
       deploymentName = customModels[model].deploymentName;
       safeLogger.log(`Using custom deployment name from settings: ${deploymentName}`);
+    }
+    
+    // Specific mapping for known Azure models that need different deployment names
+    const azureDeploymentMap = {
+      'gpt-4o': 'gpt-4o',
+      'gpt-4o-mini': 'gpt-4o-mini',
+      'gpt-35-turbo': 'gpt-35-turbo'
+    };
+    
+    // If we have a mapping for this model name, use it
+    if (azureDeploymentMap[deploymentName]) {
+      safeLogger.log(`Mapped Azure deployment name from ${deploymentName} to ${azureDeploymentMap[deploymentName]}`);
+      deploymentName = azureDeploymentMap[deploymentName];
+    }
+    
+    // Log warning if deployment name contains hyphens, as they might need formatting
+    if (deploymentName.includes('-') || deploymentName === deploymentName.toLowerCase()) {
+      console.warn('[WARNING] Azure deployment names are case-sensitive and might not use hyphens.');
+      console.warn('If you are getting 404 errors, try checking your deployment name in the Azure portal.');
+      console.warn(`Current deployment name: "${deploymentName}"`);
+      console.warn('You can use the "Check Available Azure Deployments" function in settings to see the correct deployment names.');
     }
     
     safeLogger.log(`Using Azure OpenAI with model: ${model}, deployment: ${deploymentName}`);

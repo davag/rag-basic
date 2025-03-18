@@ -76,14 +76,22 @@ const DocumentAnalytics = ({ documents, vectorStore, chunkSize, chunkOverlap }) 
     
     // Get sample chunks if vectorStore exists
     let sampleChunks = [];
-    if (vectorStore && vectorStore.memoryVectors) {
-      // Get up to 5 sample chunks
-      sampleChunks = vectorStore.memoryVectors
-        .slice(0, 5)
-        .map(vector => ({
-          content: vector.pageContent,
-          metadata: vector.metadata
-        }));
+    if (vectorStore) {
+      console.log('Vector store structure:', Object.keys(vectorStore));
+      
+      if (vectorStore.memoryVectors && vectorStore.memoryVectors.length > 0) {
+        // Get up to 5 sample chunks
+        sampleChunks = vectorStore.memoryVectors
+          .slice(0, 5)
+          .map(vector => ({
+            content: vector.content,
+            metadata: vector.metadata
+          }));
+        
+        console.log('Found sample chunks:', sampleChunks.length);
+      } else {
+        console.log('No memory vectors found in vector store');
+      }
     }
     
     setStats({

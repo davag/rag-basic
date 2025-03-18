@@ -577,8 +577,8 @@ Given the context information and not prior knowledge, answer the question: ${qu
           if (parallelMetrics[model]) {
             // Store response time and token usage
             metricsMap[model] = {
-              responseTime: parallelMetrics[model].responseTime,
-              elapsedTime: parallelMetrics[model].elapsedTime, // Include elapsed time
+              responseTime: parallelMetrics[model].responseTime || 0, // Ensure responseTime is never undefined
+              elapsedTime: parallelMetrics[model].elapsedTime || 0, // Ensure elapsedTime is never undefined
               tokenUsage: parallelMetrics[model].tokenUsage || {
                 estimated: true,
                 input: 0,
@@ -624,18 +624,7 @@ Given the context information and not prior knowledge, answer the question: ${qu
         // Call the onQuerySubmitted callback with all results and state
         onQuerySubmitted(
           parallelResponses, 
-          {
-            systemPrompts: systemPromptsUsed,
-            temperatures: temperaturesUsed,
-            responseTime: metrics.retrievalTime + metrics.responseTime,
-            tokenUsage: {
-              estimated: true,
-              input: metrics.systemPrompts.input + metrics.temperatures.input,
-              output: metrics.systemPrompts.output + metrics.temperatures.output,
-              total: metrics.systemPrompts.input + metrics.systemPrompts.output + metrics.temperatures.input + metrics.temperatures.output
-            },
-            elapsedTime: metrics.retrievalTime + metrics.responseTime
-          }, 
+          metrics,  // Just pass the complete metrics object instead of trying to reconstruct it
           query,
           systemPromptsUsed,
           queryState  // Pass complete state for when navigating back

@@ -28,9 +28,6 @@ import {
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import DownloadIcon from '@mui/icons-material/Download';
 import AssessmentIcon from '@mui/icons-material/Assessment';
-import MoneyOffIcon from '@mui/icons-material/MoneyOff';
-import EmojiEventsIcon from '@mui/icons-material/EmojiEvents';
-import BalanceIcon from '@mui/icons-material/Balance';
 import EditIcon from '@mui/icons-material/Edit';
 import { createLlmInstance, calculateCost } from '../utils/apiServices';
 import jsPDF from 'jspdf';
@@ -50,7 +47,6 @@ const ModelDropdown = ({ value, onChange, sx = {} }) => (
     </MenuItem>
     <MenuItem value="gpt-4o">GPT-4o</MenuItem>
     <MenuItem value="gpt-4o-mini">GPT-4o Mini</MenuItem>
-    <MenuItem value="o3-mini">o3-mini</MenuItem>
     
     <Divider />
     <MenuItem disabled>
@@ -58,7 +54,6 @@ const ModelDropdown = ({ value, onChange, sx = {} }) => (
     </MenuItem>
     <MenuItem value="azure-gpt-4o">Azure GPT-4o</MenuItem>
     <MenuItem value="azure-gpt-4o-mini">Azure GPT-4o Mini</MenuItem>
-    <MenuItem value="azure-o3-mini">Azure o3-mini</MenuItem>
     
     <Divider />
     <MenuItem disabled>
@@ -76,6 +71,35 @@ const ModelDropdown = ({ value, onChange, sx = {} }) => (
     <MenuItem value="mistral:latest">Mistral (7B)</MenuItem>
   </Select>
 );
+
+// Function to get a suitable validation model that will work reliably 
+const getReliableValidatorModel = (preferredModel) => {
+  // Define a list of models known to work well for validation
+  const reliableModels = [
+    'gpt-4o',       // Most reliable but most expensive 
+    'gpt-4o-mini',  // Good balance
+    'claude-3-5-sonnet-latest', // Good alternative
+    'azure-gpt-4o', // Azure option
+    'azure-gpt-4o-mini' // Azure alternative
+  ];
+  
+  // Avoid using problematic models for validation
+  const problematicModels = ['o3-mini', 'o1-mini'];
+  
+  // Check if preferred model is problematic
+  if (preferredModel && problematicModels.includes(preferredModel)) {
+    console.warn(`Model ${preferredModel} is known to have issues with validation. Using a more reliable alternative.`);
+    return reliableModels[0];
+  }
+  
+  // If preferred model is in reliable list, use it
+  if (preferredModel && reliableModels.includes(preferredModel)) {
+    return preferredModel;
+  }
+  
+  // Otherwise, return the first reliable model
+  return reliableModels[0];
+};
 
 // Reusable criteria textarea component
 const CriteriaTextArea = ({ value, onChange, rows = 8, sx = {} }) => (
@@ -141,7 +165,20 @@ const ResponseValidation = ({
   useEffect(() => {
     const savedValidatorModel = localStorage.getItem('responseValidatorModel');
     if (savedValidatorModel) {
-      setValidatorModel(savedValidatorModel);
+      // Make sure we're using a reliable model, even for saved preferences
+      const reliableModel = getReliableValidatorModel(savedValidatorModel);
+      setValidatorModel(reliableModel);
+      
+      // If the reliable model differs from the saved one, update localStorage
+      if (reliableModel !== savedValidatorModel) {
+        console.log(`Updated stored validator model from ${savedValidatorModel} to more reliable ${reliableModel}`);
+        localStorage.setItem('responseValidatorModel', reliableModel);
+      }
+    } else {
+      // If no saved model, set a default reliable model
+      const defaultModel = getReliableValidatorModel('gpt-4o-mini');
+      setValidatorModel(defaultModel);
+      localStorage.setItem('responseValidatorModel', defaultModel);
     }
     
     // Load default evaluation criteria from localStorage
@@ -177,12 +214,25 @@ const ResponseValidation = ({
     
     try {
       // Get validator model from localStorage (or use current state as fallback)
-      const validatorModelToUse = localStorage.getItem('responseValidatorModel') || validatorModel;
+      let validatorModelPreference = localStorage.getItem('responseValidatorModel') || validatorModel;
+      
+      // Make sure we're using a reliable model for validation
+      const validatorModelToUse = getReliableValidatorModel(validatorModelPreference);
+      
+      if (validatorModelToUse !== validatorModelPreference) {
+        console.log(`Switched from ${validatorModelPreference} to more reliable ${validatorModelToUse} for validation`);
+        // Update localStorage with reliable model for future use
+        localStorage.setItem('responseValidatorModel', validatorModelToUse);
+        // Update state to reflect the change in UI
+        setValidatorModel(validatorModelToUse);
+      }
+      
       console.log("Using validator model:", validatorModelToUse);
       
       // Create LLM instance for validation
       const llm = createLlmInstance(validatorModelToUse, '', {
-        temperature: 0 // Use deterministic output for evaluation
+        temperature: 0, // Use deterministic output for evaluation
+        isForValidation: true // Signal that this is for validation to avoid problematic models
       });
       
       // Format source documents for the prompt
@@ -235,27 +285,86 @@ Format your response as a JSON object with the following structure:
 }
 
 IMPORTANT: Use consistent Title Case for all criteria names (first letter capitalized, rest lowercase).
+IMPORTANT: Your response MUST be valid JSON. Do not include any text before or after the JSON object.
 For example, use "Accuracy" not "accuracy" or "ACCURACY".
 `;
         
-        // Call the LLM for evaluation
-        const evaluationResult = await llm.invoke(prompt);
-        
-        // Parse the JSON response
         try {
-          // Extract JSON from the response (in case the LLM adds any text before or after the JSON)
-          const jsonMatch = evaluationResult.match(/\{[\s\S]*\}/);
-          if (jsonMatch) {
-            const parsedResult = JSON.parse(jsonMatch[0]);
-            results[model] = parsedResult;
-          } else {
-            throw new Error('Could not extract JSON from the response');
+          console.log(`Sending evaluation request to ${validatorModelToUse} for model: ${model}`);
+          
+          // Call the LLM for evaluation
+          const evaluationResult = await llm.invoke(prompt);
+          
+          // Log raw result for debugging
+          console.log(`Raw evaluation result for ${model} (first 100 chars):`, 
+            evaluationResult.substring(0, 100) + (evaluationResult.length > 100 ? '...' : ''));
+          
+          // Parse the JSON response with multiple attempts and cleaning
+          try {
+            // First attempt: direct JSON parse
+            try {
+              const parsedResult = JSON.parse(evaluationResult);
+              results[model] = parsedResult;
+              console.log(`Successfully parsed result for ${model} on first attempt`);
+              continue; // Skip to next model if successful
+            } catch (directParseError) {
+              console.log(`Direct JSON parse failed for ${model}, trying to extract JSON`);
+            }
+            
+            // Second attempt: Extract JSON from the response with regex
+            const jsonMatch = evaluationResult.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+              console.log("Extracted JSON (first 100 chars):", 
+                jsonMatch[0].substring(0, 100) + (jsonMatch[0].length > 100 ? '...' : ''));
+              
+              try {
+                const parsedResult = JSON.parse(jsonMatch[0]);
+                results[model] = parsedResult;
+                console.log(`Successfully parsed extracted JSON for ${model}`);
+                continue; // Skip to next model if successful
+              } catch (jsonError) {
+                console.error(`JSON parse error for extracted content from ${model}:`, jsonError);
+              }
+              
+              // Third attempt: Clean up the JSON before parsing
+              console.log(`Attempting to clean and parse JSON for ${model}`);
+              const cleanedJson = jsonMatch[0]
+                .replace(/\\'/g, "'")
+                .replace(/\\"/g, '"')
+                .replace(/\\n/g, ' ')
+                .replace(/\s+/g, ' ')
+                .replace(/,\s*}/g, '}')  // Remove trailing commas in objects
+                .replace(/,\s*]/g, ']'); // Remove trailing commas in arrays
+              
+              try {
+                const parsedResult = JSON.parse(cleanedJson);
+                results[model] = parsedResult;
+                console.log(`Successfully parsed cleaned JSON for ${model}`);
+                continue; // Skip to next model if successful
+              } catch (cleanJsonError) {
+                console.error(`Cleaned JSON parse error for ${model}:`, cleanJsonError);
+              }
+            }
+            
+            // If we reach here, all parsing attempts failed
+            console.error(`All parsing attempts failed for ${model}`);
+            results[model] = {
+              error: 'Failed to parse evaluation result JSON',
+              rawResponse: evaluationResult.substring(0, 500) // Truncate very long responses
+            };
+            
+          } catch (parseError) {
+            console.error(`Error in JSON parsing process for ${model}:`, parseError);
+            results[model] = {
+              error: `Failed to parse evaluation result: ${parseError.message}`,
+              rawResponse: evaluationResult.substring(0, 500) // Truncate very long responses
+            };
           }
-        } catch (parseError) {
-          window.console.error('Error parsing evaluation result:', parseError);
+        } catch (modelError) {
+          console.error(`Error calling validator model for ${model}:`, modelError);
           results[model] = {
-            error: 'Failed to parse evaluation result',
-            rawResponse: evaluationResult
+            error: `Validator model error: ${modelError.message}`,
+            rawResponse: null
           };
         }
       }
@@ -293,237 +402,277 @@ For example, use "Accuracy" not "accuracy" or "ACCURACY".
   };
 
   const generatePDF = () => {
-    // Create a new jsPDF instance
-    const doc = new jsPDF();
-    const pageWidth = doc.internal.pageSize.getWidth();
-    const margin = 15;
-    const contentWidth = pageWidth - (margin * 2);
-    
-    // Title
-    doc.setFontSize(18);
-    doc.text('RAG Response Validation Report', margin, 20);
-    
-    // Query
-    doc.setFontSize(14);
-    doc.text('Query', margin, 30);
-    doc.setFontSize(12);
-    const queryLines = doc.splitTextToSize(currentQuery || 'No query provided', contentWidth);
-    doc.text(queryLines, margin, 40);
-    
-    let yPos = 40 + (queryLines.length * 7);
-    
-    // Validation Criteria
-    yPos += 10;
-    doc.setFontSize(14);
-    doc.text('Validation Criteria', margin, yPos);
-    yPos += 10;
-    doc.setFontSize(10);
-    const criteriaLines = doc.splitTextToSize(customCriteria, contentWidth);
-    doc.text(criteriaLines, margin, yPos);
-    yPos += (criteriaLines.length * 5) + 10;
-    
-    // Performance Metrics
-    yPos += 10;
-    doc.setFontSize(14);
-    doc.text('Performance Metrics', margin, yPos);
-    yPos += 10;
-    
-    // Create a simple table for metrics
-    doc.setFontSize(11);
-    doc.text('Model', margin, yPos);
-    doc.text('Response Time', margin + 60, yPos);
-    doc.text('Token Usage', margin + 120, yPos);
-    doc.text('Est. Cost', margin + 180, yPos);
-    yPos += 7;
-    
-    // Draw a line under headers
-    doc.setDrawColor(200, 200, 200);
-    doc.line(margin, yPos, pageWidth - margin, yPos);
-    yPos += 5;
-    
-    // Table rows
-    doc.setFontSize(10);
-    Object.keys(metrics).forEach((model, index) => {
-      if (metrics[model]) {
-        const cost = calculateCost(model, metrics[model]?.tokenUsage?.total || 0);
-        const costText = formatCost(cost);
-        
-        doc.text(model, margin, yPos);
-        doc.text(formatResponseTime(metrics[model]?.responseTime || 0), margin + 60, yPos);
-        doc.text(`${metrics[model]?.tokenUsage?.estimated ? '~' : ''}${metrics[model]?.tokenUsage?.total || 0} tokens`, margin + 120, yPos);
-        doc.text(costText, margin + 180, yPos);
-        yPos += 7;
-        
-        // Draw a light line between rows
-        if (index < Object.keys(metrics).length - 1) {
-          doc.setDrawColor(230, 230, 230);
-          doc.line(margin, yPos, pageWidth - margin, yPos);
-          yPos += 3;
-        }
-      }
-    });
-    
-    // Add a new page for validation results
-    doc.addPage();
-    yPos = 20;
-    
-    // Performance Efficiency Analysis
-    if (effectivenessData && effectivenessData.mostEffectiveModel) {
+    try {
+      // Create a new jsPDF instance
+      const doc = new jsPDF();
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const margin = 15;
+      const contentWidth = pageWidth - (margin * 2);
+      
+      // Title
+      doc.setFontSize(18);
+      doc.text('RAG Response Validation Report', margin, 20);
+      
+      // Query
       doc.setFontSize(14);
-      doc.text('Performance Efficiency Analysis', margin, yPos);
-      yPos += 10;
-      
-      // Best Overall Performance
+      doc.text('Query', margin, 30);
       doc.setFontSize(12);
-      doc.text('Best Overall Performance:', margin, yPos);
-      yPos += 7;
+      const queryLines = doc.splitTextToSize(currentQuery || 'No query provided', contentWidth);
+      doc.text(queryLines, margin, 40);
+      
+      let yPos = 40 + (queryLines.length * 7);
+      
+      // Validation Criteria
+      yPos += 10;
+      doc.setFontSize(14);
+      doc.text('Validation Criteria', margin, yPos);
+      yPos += 10;
       doc.setFontSize(10);
-      doc.text(`Model: ${effectivenessData.mostEffectiveModel}`, margin + 5, yPos);
-      yPos += 5;
-      doc.text(`Quality Score: ${effectivenessData.modelScores[effectivenessData.mostEffectiveModel]}/100`, margin + 5, yPos);
-      yPos += 5;
-      doc.text(`Cost: ${formatCost(effectivenessData.modelCosts[effectivenessData.mostEffectiveModel])}`, margin + 5, yPos);
-      yPos += 5;
-      doc.text(`Response Time: ${formatResponseTime(metrics[effectivenessData.mostEffectiveModel].responseTime)}`, margin + 5, yPos);
-      yPos += 5;
-      doc.text(`Efficiency Score: ${formatEffectivenessScore(effectivenessData.effectivenessScores[effectivenessData.mostEffectiveModel])}`, margin + 5, yPos);
+      const criteriaLines = doc.splitTextToSize(customCriteria, contentWidth);
+      doc.text(criteriaLines, margin, yPos);
+      yPos += (criteriaLines.length * 5) + 10;
+      
+      // Performance Metrics
+      yPos += 10;
+      doc.setFontSize(14);
+      doc.text('Performance Metrics', margin, yPos);
       yPos += 10;
       
-      // Highest Quality
-      doc.setFontSize(12);
-      doc.text('Highest Quality:', margin, yPos);
+      // Create a simple table for metrics
+      doc.setFontSize(11);
+      doc.text('Model', margin, yPos);
+      doc.text('Response Time', margin + 60, yPos);
+      doc.text('Token Usage', margin + 120, yPos);
+      doc.text('Est. Cost', margin + 180, yPos);
       yPos += 7;
+      
+      // Draw a line under headers
+      doc.setDrawColor(200, 200, 200);
+      doc.line(margin, yPos, pageWidth - margin, yPos);
+      yPos += 5;
+      
+      // Table rows
       doc.setFontSize(10);
-      doc.text(`Model: ${effectivenessData.highestScoringModel}`, margin + 5, yPos);
-      yPos += 5;
-      doc.text(`Quality Score: ${effectivenessData.modelScores[effectivenessData.highestScoringModel]}/100`, margin + 5, yPos);
-      yPos += 5;
-      doc.text(`Cost: ${formatCost(effectivenessData.modelCosts[effectivenessData.highestScoringModel])}`, margin + 5, yPos);
-      yPos += 5;
-      doc.text(`Response Time: ${formatResponseTime(metrics[effectivenessData.highestScoringModel].responseTime)}`, margin + 5, yPos);
-      yPos += 10;
+      Object.keys(metrics || {}).forEach((model, index) => {
+        if (metrics[model]) {
+          const cost = calculateCost(model, metrics[model]?.tokenUsage?.total || 0);
+          const costText = formatCost(cost);
+          
+          doc.text(model, margin, yPos);
+          doc.text(formatResponseTime(metrics[model]?.responseTime || 0), margin + 60, yPos);
+          doc.text(`${metrics[model]?.tokenUsage?.estimated ? '~' : ''}${metrics[model]?.tokenUsage?.total || 0} tokens`, margin + 120, yPos);
+          doc.text(costText, margin + 180, yPos);
+          yPos += 7;
+          
+          // Draw a light line between rows
+          if (index < Object.keys(metrics).length - 1) {
+            doc.setDrawColor(230, 230, 230);
+            doc.line(margin, yPos, pageWidth - margin, yPos);
+            yPos += 3;
+          }
+        }
+      });
       
-      // Add some space
-      yPos += 5;
-    }
-    
-    // Validation Results
-    doc.setFontSize(14);
-    doc.text('Validation Results', margin, yPos);
-    yPos += 10;
-    
-    // Process each model's validation results
-    Object.keys(validationResults).forEach((model, index) => {
-      if (index > 0) {
-        // Add a new page for each model after the first
-        doc.addPage();
-        yPos = 20;
-      }
+      // Add a new page for validation results
+      doc.addPage();
+      yPos = 20;
       
-      doc.setFontSize(12);
-      doc.text(`Model: ${model}`, margin, yPos);
-      yPos += 10;
-      
-      const result = validationResults[model];
-      
-      if (result.error) {
+      // Performance Efficiency Analysis
+      if (effectivenessData && !effectivenessData.error && effectivenessData.mostEffectiveModel) {
+        doc.setFontSize(14);
+        doc.text('Performance Efficiency Analysis', margin, yPos);
+        yPos += 10;
+        
+        // Best Overall Performance
+        doc.setFontSize(12);
+        doc.text('Best Overall Performance:', margin, yPos);
+        yPos += 7;
+        doc.setFontSize(10);
+        doc.text(`Model: ${effectivenessData.mostEffectiveModel}`, margin + 5, yPos);
+        yPos += 5;
+        const modelQualityScore = effectivenessData.modelData?.[effectivenessData.mostEffectiveModel]?.qualityScore || 0;
+        doc.text(`Quality Score: ${modelQualityScore}/100`, margin + 5, yPos);
+        yPos += 5;
+        const modelCost = effectivenessData.modelData?.[effectivenessData.mostEffectiveModel]?.cost || 0;
+        doc.text(`Cost: ${formatCost(modelCost)}`, margin + 5, yPos);
+        yPos += 5;
+        doc.text(`Response Time: ${formatResponseTime(effectivenessData.mostEffectiveResponseTime)}`, margin + 5, yPos);
+        yPos += 5;
+        doc.text(`Efficiency Score: ${formatEffectivenessScore(effectivenessData.mostEffectiveScore)}`, margin + 5, yPos);
+        yPos += 10;
+        
+        // Fastest Model
+        if (effectivenessData.fastestModel) {
+          doc.setFontSize(12);
+          doc.text('Fastest Model:', margin, yPos);
+          yPos += 7;
+          doc.setFontSize(10);
+          doc.text(`Model: ${effectivenessData.fastestModel}`, margin + 5, yPos);
+          yPos += 5;
+          doc.text(`Response time: ${formatResponseTime(effectivenessData.fastestResponseTime)}`, margin + 5, yPos);
+          yPos += 5;
+          doc.text(`Quality Score: ${effectivenessData.fastestScore}/100`, margin + 5, yPos);
+          yPos += 10;
+        }
+        
+        // Best Value Model
+        if (effectivenessData.bestValueModel) {
+          doc.setFontSize(12);
+          doc.text('Best Value Model:', margin, yPos);
+          yPos += 7;
+          doc.setFontSize(10);
+          doc.text(`Model: ${effectivenessData.bestValueModel}`, margin + 5, yPos);
+          yPos += 5;
+          doc.text(`Efficiency: ${formatEffectivenessScore(effectivenessData.bestValueEfficiency)}`, margin + 5, yPos);
+          yPos += 10;
+        }
+        
+        // Add some space
+        yPos += 5;
+      } else if (effectivenessData && effectivenessData.error) {
+        doc.setFontSize(14);
+        doc.text('Performance Efficiency Analysis', margin, yPos);
+        yPos += 10;
+        
+        doc.setFontSize(12);
         doc.setTextColor(255, 0, 0);
-        doc.text(`Error: ${result.error}`, margin, yPos);
+        doc.text(`Error: ${effectivenessData.error}`, margin, yPos);
         doc.setTextColor(0, 0, 0);
         yPos += 10;
-        return;
       }
       
-      // Overall score
-      if (result.overall) {
-        doc.setFontSize(12);
-        doc.text(`Overall Score: ${result.overall.score}/100`, margin, yPos);
-        yPos += 7;
+      // Validation Results
+      doc.setFontSize(14);
+      doc.text('Validation Results', margin, yPos);
+      yPos += 10;
+      
+      // Process each model's validation results
+      Object.keys(validationResults || {}).forEach((model, index) => {
+        if (index > 0) {
+          // Add a new page for each model after the first
+          doc.addPage();
+          yPos = 20;
+        }
         
-        doc.setFontSize(10);
-        const overallExplanationLines = doc.splitTextToSize(result.overall.explanation, contentWidth);
-        doc.text(overallExplanationLines, margin, yPos);
-        yPos += (overallExplanationLines.length * 5) + 10;
-      }
-      
-      // Individual criteria
-      if (result.criteria) {
         doc.setFontSize(12);
-        doc.text('Criteria Scores:', margin, yPos);
+        doc.text(`Model: ${model}`, margin, yPos);
         yPos += 10;
         
-        Object.entries(result.criteria).forEach(([criterion, details]) => {
+        const result = validationResults[model];
+        
+        if (!result || result.error) {
+          doc.setTextColor(255, 0, 0);
+          doc.text(`Error: ${result?.error || 'Unknown error'}`, margin, yPos);
+          doc.setTextColor(0, 0, 0);
+          yPos += 10;
+          return;
+        }
+        
+        // Overall score
+        if (result.overall) {
+          doc.setFontSize(12);
+          doc.text(`Overall Score: ${result.overall.score}/100`, margin, yPos);
+          yPos += 7;
+          
+          doc.setFontSize(10);
+          const overallExplanationLines = doc.splitTextToSize(result.overall.explanation, contentWidth);
+          doc.text(overallExplanationLines, margin, yPos);
+          yPos += (overallExplanationLines.length * 5) + 10;
+        }
+        
+        // Individual criteria
+        if (result.criteria) {
+          doc.setFontSize(12);
+          doc.text('Criteria Scores:', margin, yPos);
+          yPos += 10;
+          
+          Object.entries(result.criteria).forEach(([criterion, details]) => {
+            doc.setFontSize(11);
+            doc.text(`${criterion}: ${details.score}/100`, margin, yPos);
+            yPos += 7;
+            
+            doc.setFontSize(9);
+            const explanationLines = doc.splitTextToSize(details.explanation, contentWidth - 10);
+            doc.text(explanationLines, margin + 5, yPos);
+            yPos += (explanationLines.length * 5) + 7;
+          });
+        }
+        
+        // Add model response
+        yPos += 5;
+        doc.setFontSize(12);
+        doc.text('Model Response:', margin, yPos);
+        yPos += 7;
+        
+        if (responses && responses[model]) {
+          const answer = typeof responses[model].answer === 'object' ? 
+            responses[model].answer.text : 
+            responses[model].answer;
+          
+          doc.setFontSize(9);
+          const responseLines = doc.splitTextToSize(answer, contentWidth - 10);
+          doc.text(responseLines, margin + 5, yPos);
+          yPos += (responseLines.length * 5) + 10;
+          
+          // Add cost information
+          if (metrics && metrics[model]) {
+            const cost = calculateCost(model, metrics[model]?.tokenUsage?.total || 0);
+            doc.setFontSize(11);
+            doc.text(`Estimated Cost: ${formatCost(cost)}`, margin, yPos);
+            yPos += 7;
+            
+            doc.setFontSize(9);
+            doc.text(`(Based on ${metrics[model]?.tokenUsage?.total || 0} tokens)`, margin + 5, yPos);
+            yPos += 7;
+          }
+        } else {
+          doc.setFontSize(9);
+          doc.text("Response data not available", margin + 5, yPos);
+          yPos += 10;
+        }
+      });
+      
+      // Add source documents on a new page
+      doc.addPage();
+      yPos = 20;
+      doc.setFontSize(14);
+      doc.text('Source Documents', margin, yPos);
+      yPos += 10;
+      
+      if (sources && sources.length > 0) {
+        sources.forEach((source, index) => {
+          // Add a new page if we're getting close to the bottom
+          if (yPos > 250) {
+            doc.addPage();
+            yPos = 20;
+          }
+          
           doc.setFontSize(11);
-          doc.text(`${criterion}: ${details.score}/100`, margin, yPos);
+          doc.text(`Source ${index + 1}: ${source.source}`, margin, yPos);
           yPos += 7;
           
           doc.setFontSize(9);
-          const explanationLines = doc.splitTextToSize(details.explanation, contentWidth - 10);
-          doc.text(explanationLines, margin + 5, yPos);
-          yPos += (explanationLines.length * 5) + 7;
+          // Truncate very long source content for the PDF
+          const contentToShow = source.content.length > 2000 ? 
+            source.content.substring(0, 2000) + '... (truncated)' : 
+            source.content;
+          
+          const contentLines = doc.splitTextToSize(contentToShow, contentWidth - 5);
+          doc.text(contentLines, margin + 5, yPos);
+          yPos += (contentLines.length * 5) + 10;
         });
+      } else {
+        doc.setFontSize(10);
+        doc.text("No source documents available", margin, yPos);
       }
       
-      // Add model response
-      yPos += 5;
-      doc.setFontSize(12);
-      doc.text('Model Response:', margin, yPos);
-      yPos += 7;
-      
-      const answer = typeof responses[model].answer === 'object' ? 
-        responses[model].answer.text : 
-        responses[model].answer;
-      
-      doc.setFontSize(9);
-      const responseLines = doc.splitTextToSize(answer, contentWidth - 10);
-      doc.text(responseLines, margin + 5, yPos);
-      yPos += (responseLines.length * 5) + 10;
-      
-      // Add cost information
-      if (metrics[model]) {
-        const cost = calculateCost(model, metrics[model]?.tokenUsage?.total || 0);
-        doc.setFontSize(11);
-        doc.text(`Estimated Cost: ${formatCost(cost)}`, margin, yPos);
-        yPos += 7;
-        
-        doc.setFontSize(9);
-        doc.text(`(Based on ${metrics[model]?.tokenUsage?.total || 0} tokens)`, margin + 5, yPos);
-        yPos += 7;
-      }
-    });
-    
-    // Add source documents on a new page
-    doc.addPage();
-    yPos = 20;
-    doc.setFontSize(14);
-    doc.text('Source Documents', margin, yPos);
-    yPos += 10;
-    
-    sources.forEach((source, index) => {
-      // Add a new page if we're getting close to the bottom
-      if (yPos > 250) {
-        doc.addPage();
-        yPos = 20;
-      }
-      
-      doc.setFontSize(11);
-      doc.text(`Source ${index + 1}: ${source.source}`, margin, yPos);
-      yPos += 7;
-      
-      doc.setFontSize(9);
-      // Truncate very long source content for the PDF
-      const contentToShow = source.content.length > 2000 ? 
-        source.content.substring(0, 2000) + '... (truncated)' : 
-        source.content;
-      
-      const contentLines = doc.splitTextToSize(contentToShow, contentWidth - 5);
-      doc.text(contentLines, margin + 5, yPos);
-      yPos += (contentLines.length * 5) + 10;
-    });
-    
-    // Save the PDF
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    doc.save(`rag-validation-report-${timestamp}.pdf`);
+      // Save the PDF
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      doc.save(`rag-validation-report-${timestamp}.pdf`);
+    } catch (error) {
+      console.error("Error generating PDF:", error);
+      alert("Failed to generate PDF report. Check console for details.");
+    }
   };
 
   // Helper function to render a score with a colored bar
@@ -557,101 +706,132 @@ For example, use "Accuracy" not "accuracy" or "ACCURACY".
 
   // Calculate performance efficiency score (cost and response time)
   const calculateEffectivenessScore = (validationResults, metrics) => {
-    if (!validationResults || Object.keys(validationResults).length === 0) return {};
-
-    // Calculate costs for each model
-    const modelCosts = {};
-    const modelScores = {};
-    const modelResponseTimes = {};
-    
-    Object.keys(validationResults).forEach(model => {
-      if (!metrics[model]) return;
-      
-      // Get the cost
-      const cost = calculateCost(model, metrics[model]?.tokenUsage?.total || 0);
-      modelCosts[model] = cost;
-      
-      // Get the response time
-      const responseTime = metrics[model]?.responseTime || 0;
-      modelResponseTimes[model] = responseTime;
-      
-      // Get the overall score
-      const result = validationResults[model];
-      if (result?.overall?.score) {
-        modelScores[model] = result.overall.score;
+    try {
+      // Make sure we have validation results
+      if (!validationResults || Object.keys(validationResults).length === 0) {
+        console.error('No validation results to calculate effectiveness');
+        return { error: 'No validation results available to calculate effectiveness' };
       }
-    });
-    
-    // Find best raw score, lowest cost, and fastest response time
-    const bestScore = Math.max(...Object.values(modelScores), 0);
-    const lowestCost = Math.min(...Object.values(modelCosts).filter(cost => cost > 0), Infinity);
-    const fastestTime = Math.min(...Object.values(modelResponseTimes).filter(time => time > 0), Infinity);
-    
-    // Calculate a performance efficiency score for each model
-    // Formula: (model_score / best_score) / ((model_cost / lowest_cost) * 0.5 + (model_time / fastest_time) * 0.5)
-    // Higher is better, normalized to 100
-    // Weighting: 50% cost, 50% speed
-    const rawEffectivenessScores = {};
-    
-    Object.keys(modelScores).forEach(model => {
-      if (modelCosts[model] === 0) {
-        // Free models get a special indicator but we still consider response time
-        const timeRatio = modelResponseTimes[model] / fastestTime;
-        // For free models, we only consider speed (with a high base score)
-        rawEffectivenessScores[model] = (90 / timeRatio) * 100;
-      } else {
-        const scoreRatio = modelScores[model] / bestScore;
-        const costRatio = modelCosts[model] / lowestCost;
-        const timeRatio = modelResponseTimes[model] / fastestTime;
-        // Combined metric that weights speed more heavily than cost (75% speed, 25% cost)
-        const efficiencyRatio = (costRatio * 0.25) + (timeRatio * 0.75);
-        rawEffectivenessScores[model] = (scoreRatio / efficiencyRatio) * 100;
+      
+      // Check if all validation results have errors
+      const allHaveErrors = Object.values(validationResults).every(result => result.error);
+      if (allHaveErrors) {
+        console.error('All validation results contain errors, cannot calculate effectiveness');
+        return { error: 'All model validations failed. Please try again.' };
       }
-    });
-    
-    // Find the most efficient model
-    let mostEffectiveModel = null;
-    let highestEffectiveness = -1;
-    
-    Object.entries(rawEffectivenessScores).forEach(([model, score]) => {
-      if (score > highestEffectiveness) {
-        mostEffectiveModel = model;
-        highestEffectiveness = score;
+      
+      const results = {};
+      
+      // Calculate metrics for each model
+      Object.entries(validationResults).forEach(([model, validation]) => {
+        // Skip if there's an error with this validation
+        if (validation.error) {
+          console.log(`Skipping ${model} due to validation error`);
+          return;
+        }
+        
+        // Skip if the validation doesn't have overall score
+        if (!validation.overall || !validation.overall.score) {
+          console.log(`Skipping ${model} due to missing overall score`);
+          return;
+        }
+        
+        // Get the validation score
+        const score = parseFloat(validation.overall.score);
+        
+        // Get response time 
+        let responseTime = 0;
+        if (metrics && metrics[model] && typeof metrics[model].responseTime === 'number') {
+          responseTime = metrics[model].responseTime;
+        } else {
+          console.warn(`No response time metric found for ${model}, using 0`);
+        }
+        
+        // Calculate cost based on token usage
+        let cost = 0;
+        if (metrics && metrics[model] && metrics[model].tokenUsage && metrics[model].tokenUsage.total) {
+          const tokenCount = metrics[model].tokenUsage.total;
+          cost = calculateCost(model, tokenCount);
+        }
+        
+        // Calculate efficiency score (value for money)
+        // Higher score is better, lower cost is better, and lower response time is better
+        const speedFactor = responseTime > 0 ? 5000 / responseTime : 100; // 5000ms is reference point
+        const costFactor = cost > 0 ? 0.01 / cost : 100; // $0.01 is reference point
+        
+        // Total effectiveness combines all factors
+        // Weight: 70% quality, 20% speed, 10% cost
+        const efficiencyScore = score * 0.7 + (speedFactor * 20) * 0.2 + (costFactor * 10) * 0.1;
+        
+        results[model] = {
+          qualityScore: score,
+          responseTime: responseTime,
+          cost: cost,
+          speedFactor: speedFactor,
+          costFactor: costFactor,
+          efficiencyScore: efficiencyScore
+        };
+      });
+      
+      // Check if we have any valid results
+      if (Object.keys(results).length === 0) {
+        console.error('No valid results after processing validations');
+        return { error: 'Could not calculate valid effectiveness scores from validations' };
       }
-    });
-    
-    // Determine the highest scoring model
-    const sortedModels = Object.entries(modelScores)
-      .sort((a, b) => b[1] - a[1]);
-    
-    // Get the highest score
-    const highestScore = sortedModels[0]?.[1] || 0;
-    
-    // Filter models with the highest score
-    const topScoringModels = sortedModels
-      .filter((entry) => entry[1] === highestScore);
-    
-    const highestScoringModel = topScoringModels[0]?.[0];
-    
-    // Determine the cheapest model with a good score (at least 70)
-    const goodModels = Object.entries(modelScores)
-      .filter(([_, score]) => score >= 70)
-      .map(([model]) => model);
-    
-    const cheapestGoodModel = goodModels.length > 0 ? 
-      goodModels.reduce((cheapest, model) => 
-        (modelCosts[model] < modelCosts[cheapest]) ? model : cheapest, 
-        goodModels[0]
-      ) : null;
-    
-    return {
-      modelCosts,
-      modelScores,
-      effectivenessScores: rawEffectivenessScores,
-      mostEffectiveModel,
-      highestScoringModel,
-      cheapestGoodModel
-    };
+      
+      // Find the most effective model (highest efficiency score)
+      let mostEffectiveModel = '';
+      let mostEffectiveScore = 0;
+      let mostEffectiveResponseTime = 0;
+      
+      // Find the best value model (consider efficiency with cost)
+      let bestValueModel = '';
+      let bestValueEfficiency = 0;
+      
+      // Find the fastest model
+      let fastestModel = '';
+      let fastestResponseTime = Infinity;
+      let fastestScore = 0;
+      
+      Object.entries(results).forEach(([model, data]) => {
+        // Most effective model
+        if (data.efficiencyScore > mostEffectiveScore) {
+          mostEffectiveModel = model;
+          mostEffectiveScore = data.efficiencyScore;
+          mostEffectiveResponseTime = data.responseTime;
+        }
+        
+        // Best value model (consider efficiency with cost)
+        const valueMetric = data.efficiencyScore * data.costFactor;
+        if (valueMetric > bestValueEfficiency) {
+          bestValueModel = model;
+          bestValueEfficiency = valueMetric;
+        }
+        
+        // Fastest model
+        if (data.responseTime < fastestResponseTime) {
+          fastestModel = model;
+          fastestResponseTime = data.responseTime;
+          fastestScore = data.qualityScore;
+        }
+      });
+      
+      // Return the calculated results
+      return {
+        mostEffectiveModel,
+        mostEffectiveScore,
+        mostEffectiveResponseTime,
+        bestValueModel,
+        bestValueEfficiency,
+        fastestModel,
+        fastestResponseTime,
+        fastestScore,
+        modelData: results
+      };
+    } catch (error) {
+      console.error('Error calculating effectiveness score:', error);
+      return { error: `Error calculating effectiveness score: ${error.message}` };
+    }
   };
 
   const formatEffectivenessScore = (score) => {
@@ -661,132 +841,119 @@ For example, use "Accuracy" not "accuracy" or "ACCURACY".
   };
 
   const renderEffectivenessSummary = (effectivenessData) => {
-    if (!effectivenessData || !effectivenessData.mostEffectiveModel) return null;
+    // Display a message if there was an error in effectiveness calculation
+    if (effectivenessData.error) {
+      return (
+        <Alert severity="error" sx={{ mb: 3 }}>
+          {effectivenessData.error}
+        </Alert>
+      );
+    }
+    
+    if (!effectivenessData.mostEffectiveModel) {
+      return (
+        <Alert severity="warning" sx={{ mb: 3 }}>
+          No valid model effectiveness data available.
+        </Alert>
+      );
+    }
     
     return (
-      <Paper elevation={2} sx={{ p: 3, mb: 4, bgcolor: '#f9f9fa', border: '1px solid #e0e0e0' }}>
-        <Typography variant="h6" gutterBottom sx={{ display: 'flex', alignItems: 'center' }}>
-          <BalanceIcon sx={{ mr: 1, color: 'primary.main' }} />
-          Performance Efficiency Analysis
-        </Typography>
-        
-        <Grid container spacing={2} sx={{ mt: 1 }}>
-          <Grid item xs={12} md={4}>
-            <Card variant="outlined" sx={{ height: '100%', bgcolor: effectivenessData.mostEffectiveModel ? '#f0f7ff' : 'inherit', border: '1px solid #bbdefb' }}>
-              <CardContent>
-                <Typography variant="subtitle1" sx={{ display: 'flex', alignItems: 'center', color: 'primary.main', mb: 1 }}>
-                  <BalanceIcon sx={{ mr: 1, fontSize: '1.2rem' }} />
-                  Best Overall Performance
-                </Typography>
-                
-                {effectivenessData.mostEffectiveModel ? (
-                  <>
-                    <Typography variant="h6">{effectivenessData.mostEffectiveModel}</Typography>
-                    <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-                      Quality Score: {effectivenessData.modelScores[effectivenessData.mostEffectiveModel]}/100
-                    </Typography>
-                    <Typography variant="body2" color="text.secondary">
-                      Cost: {effectivenessData.modelCosts[effectivenessData.mostEffectiveModel] === 0 ? 
-                        'Free' : 
-                        `$${effectivenessData.modelCosts[effectivenessData.mostEffectiveModel].toFixed(6)}`}
-                    </Typography>
-                    <Typography variant="body2" color="text.secondary">
-                      Speed: {formatResponseTime(metrics[effectivenessData.mostEffectiveModel].responseTime)}
-                    </Typography>
-                    <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-                      Efficiency Score: {formatEffectivenessScore(effectivenessData.effectivenessScores[effectivenessData.mostEffectiveModel])}
-                    </Typography>
-                    <Typography variant="body2" color="text.secondary" sx={{ mt: 1, fontStyle: 'italic' }}>
-                      Best balance of quality, cost, and speed (with higher weight on speed)
-                    </Typography>
-                  </>
-                ) : (
-                  <Typography variant="body2" color="text.secondary">
-                    Insufficient data to determine
-                  </Typography>
-                )}
-              </CardContent>
-            </Card>
-          </Grid>
-          
-          <Grid item xs={12} md={4}>
-            <Card variant="outlined" sx={{ height: '100%', bgcolor: effectivenessData.highestScoringModel ? '#f1f8e9' : 'inherit', border: '1px solid #c5e1a5' }}>
-              <CardContent>
-                <Typography variant="subtitle1" sx={{ display: 'flex', alignItems: 'center', color: 'success.main', mb: 1 }}>
-                  <EmojiEventsIcon sx={{ mr: 1, fontSize: '1.2rem' }} />
-                  Highest Quality
-                </Typography>
-                
-                {effectivenessData.highestScoringModel ? (
-                  <>
-                    <Typography variant="h6">{effectivenessData.highestScoringModel}</Typography>
-                    <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-                      Score: {effectivenessData.modelScores[effectivenessData.highestScoringModel]}/100
-                    </Typography>
-                    <Typography variant="body2" color="text.secondary">
-                      Cost: {effectivenessData.modelCosts[effectivenessData.highestScoringModel] === 0 ? 
-                        'Free' : 
-                        `$${effectivenessData.modelCosts[effectivenessData.highestScoringModel].toFixed(6)}`}
-                    </Typography>
-                    <Typography variant="body2" color="text.secondary">
-                      Speed: {formatResponseTime(metrics[effectivenessData.highestScoringModel].responseTime)}
-                    </Typography>
-                    <Typography variant="body2" color="text.secondary" sx={{ mt: 1, fontStyle: 'italic' }}>
-                      Best raw quality score regardless of cost or speed
-                    </Typography>
-                  </>
-                ) : (
-                  <Typography variant="body2" color="text.secondary">
-                    Insufficient data to determine
-                  </Typography>
-                )}
-              </CardContent>
-            </Card>
-          </Grid>
-          
-          <Grid item xs={12} md={4}>
-            <Card variant="outlined" sx={{ height: '100%', bgcolor: effectivenessData.cheapestGoodModel ? '#fff8e1' : 'inherit', border: '1px solid #ffe082' }}>
-              <CardContent>
-                <Typography variant="subtitle1" sx={{ display: 'flex', alignItems: 'center', color: '#ff8f00', mb: 1 }}>
-                  <MoneyOffIcon sx={{ mr: 1, fontSize: '1.2rem' }} />
-                  Budget Choice
-                </Typography>
-                
-                {effectivenessData.cheapestGoodModel ? (
-                  <>
-                    <Typography variant="h6">{effectivenessData.cheapestGoodModel}</Typography>
-                    <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-                      Score: {effectivenessData.modelScores[effectivenessData.cheapestGoodModel]}/100
-                    </Typography>
-                    <Typography variant="body2" color="text.secondary">
-                      Cost: {effectivenessData.modelCosts[effectivenessData.cheapestGoodModel] === 0 ? 
-                        'Free' : 
-                        `$${effectivenessData.modelCosts[effectivenessData.cheapestGoodModel].toFixed(6)}`}
-                    </Typography>
-                    <Typography variant="body2" color="text.secondary">
-                      Speed: {formatResponseTime(metrics[effectivenessData.cheapestGoodModel].responseTime)}
-                    </Typography>
-                    <Typography variant="body2" color="text.secondary" sx={{ mt: 1, fontStyle: 'italic' }}>
-                      Lowest cost with a score of at least 70
-                    </Typography>
-                  </>
-                ) : (
-                  <Typography variant="body2" color="text.secondary">
-                    No models with sufficient quality
-                  </Typography>
-                )}
-              </CardContent>
-            </Card>
-          </Grid>
+      <Grid container spacing={2} alignItems="stretch" sx={{ mb: 3 }}>
+        {/* Most Effective Model Card */}
+        <Grid item xs={12} md={4}>
+          <Card 
+            variant="outlined" 
+            sx={{
+              height: '100%',
+              borderColor: '#4caf50',
+              borderWidth: 2,
+              display: 'flex',
+              flexDirection: 'column'
+            }}
+          >
+            <CardContent sx={{ flex: '1 0 auto' }}>
+              <Typography variant="h6" component="div" gutterBottom align="center">
+                Most Effective Model
+              </Typography>
+              <Typography variant="h5" component="div" gutterBottom align="center" color="primary">
+                {effectivenessData.mostEffectiveModel}
+              </Typography>
+              <Typography variant="body1" align="center">
+                Score: <strong>{formatEffectivenessScore(effectivenessData.mostEffectiveScore)}</strong>
+              </Typography>
+              <Typography variant="body2" align="center" color="text.secondary">
+                Response time: {formatResponseTime(effectivenessData.mostEffectiveResponseTime)}
+              </Typography>
+            </CardContent>
+          </Card>
         </Grid>
-      </Paper>
+        
+        {/* Best Value Model Card */}
+        <Grid item xs={12} md={4}>
+          <Card 
+            variant="outlined" 
+            sx={{
+              height: '100%',
+              borderColor: '#2196f3',
+              borderWidth: 2,
+              display: 'flex',
+              flexDirection: 'column'
+            }}
+          >
+            <CardContent sx={{ flex: '1 0 auto' }}>
+              <Typography variant="h6" component="div" gutterBottom align="center">
+                Best Value Model
+              </Typography>
+              <Typography variant="h5" component="div" gutterBottom align="center" color="primary">
+                {effectivenessData.bestValueModel}
+              </Typography>
+              <Typography variant="body1" align="center">
+                Efficiency: <strong>{formatEffectivenessScore(effectivenessData.bestValueEfficiency)}</strong>
+              </Typography>
+              <Typography variant="body2" align="center" color="text.secondary">
+                Balances quality vs. cost
+              </Typography>
+            </CardContent>
+          </Card>
+        </Grid>
+        
+        {/* Fastest Model Card */}
+        <Grid item xs={12} md={4}>
+          <Card 
+            variant="outlined" 
+            sx={{
+              height: '100%',
+              borderColor: '#ff9800',
+              borderWidth: 2,
+              display: 'flex',
+              flexDirection: 'column'
+            }}
+          >
+            <CardContent sx={{ flex: '1 0 auto' }}>
+              <Typography variant="h6" component="div" gutterBottom align="center">
+                Fastest Model
+              </Typography>
+              <Typography variant="h5" component="div" gutterBottom align="center" color="primary">
+                {effectivenessData.fastestModel}
+              </Typography>
+              <Typography variant="body1" align="center">
+                Response time: <strong>{formatResponseTime(effectivenessData.fastestResponseTime)}</strong>
+              </Typography>
+              <Typography variant="body2" align="center" color="text.secondary">
+                Speed score: {formatEffectivenessScore(effectivenessData.fastestScore)}
+              </Typography>
+            </CardContent>
+          </Card>
+        </Grid>
+      </Grid>
     );
   };
 
   // Calculate effectiveness when validation results or metrics change
-  const effectivenessData = Object.keys(validationResults).length > 0 ? 
+  const effectivenessData = Object.keys(validationResults).length > 0 && metrics ? 
     calculateEffectivenessScore(validationResults, metrics) : 
-    null;
+    { error: "No validation results available yet" };
 
   // Sort function for table data
   const requestSort = (key) => {
@@ -968,8 +1135,10 @@ For example, use "Accuracy" not "accuracy" or "ACCURACY".
                           Object.values(validationResults).forEach(result => {
                             if (result.criteria) {
                               Object.keys(result.criteria).forEach(criterion => {
+                                // Normalize each criterion name for consistent matching
                                 const normalizedKey = normalizeCriterionName(criterion);
-                                criteriaMap.set(normalizedKey, true);
+                                // Store with normalized key for later retrieval
+                                criteriaMap.set(normalizedKey, criterion); // Store original key as value
                               });
                             }
                           });
@@ -1098,7 +1267,9 @@ For example, use "Accuracy" not "accuracy" or "ACCURACY".
                       Object.values(validationResults).forEach(result => {
                         if (result.criteria) {
                           Object.keys(result.criteria).forEach(criterion => {
+                            // Normalize each criterion name for consistent matching
                             const normalizedKey = normalizeCriterionName(criterion);
+                            // Store with normalized key for later retrieval
                             criteriaMap.set(normalizedKey, criterion); // Store original key as value
                           });
                         }
@@ -1132,7 +1303,8 @@ For example, use "Accuracy" not "accuracy" or "ACCURACY".
                       const tableData = Object.keys(validationResults).map(model => {
                         const result = validationResults[model];
                         const cost = modelCosts[model] || 0;
-                        const efficiencyScore = effectivenessData.effectivenessScores[model];
+                        // Get efficiency score from the new structure
+                        const efficiencyScore = effectivenessData?.modelData?.[model]?.efficiencyScore ?? 0;
                         const responseTime = metrics[model]?.responseTime || 0;
                         const overallScore = result.overall ? result.overall.score : 0;
                         
@@ -1216,7 +1388,7 @@ For example, use "Accuracy" not "accuracy" or "ACCURACY".
                               );
                             })}
                             <td style={{ textAlign: 'right', padding: '8px', borderBottom: '1px solid #ddd' }}>
-                              {formatResponseTime(metrics[model]?.responseTime || 0)}
+                              {metrics[model] && typeof metrics[model].responseTime === 'number' ? formatResponseTime(metrics[model].responseTime) : 'Unknown'}
                             </td>
                             <td style={{ textAlign: 'right', padding: '8px', borderBottom: '1px solid #ddd' }}>
                               {formatCost(cost)}
