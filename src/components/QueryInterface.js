@@ -141,27 +141,95 @@ const QueryInterface = ({ vectorStore, namespaces, onQuerySubmitted, isProcessin
     };
   }, [isProcessing, setIsProcessing, query]);
 
-  // Load initial state if provided
+  // Initialize state from initialState or localStorage (with priority for initialState)
   useEffect(() => {
-    if (initialState) {
-      if (initialState.query) setQuery(initialState.query);
-      if (initialState.selectedModels) setSelectedModels(initialState.selectedModels);
-      if (initialState.selectedNamespaces) setSelectedNamespaces(initialState.selectedNamespaces);
-      if (initialState.globalSystemPrompt) setGlobalSystemPrompt(initialState.globalSystemPrompt);
-      if (initialState.useCustomPrompts !== undefined) setUseCustomPrompts(initialState.useCustomPrompts);
-      if (initialState.customSystemPrompts && Object.keys(initialState.customSystemPrompts).length > 0) {
-        setCustomSystemPrompts(prev => ({
-          ...prev,
-          ...initialState.customSystemPrompts
+    console.log("QueryInterface initializing with initialState:", initialState);
+    
+    // Reset all state to defaults first to avoid mixing old state
+    if (initialState && Object.keys(initialState).length > 0) {
+      const cleanState = { ...initialState };
+      
+      // Log the state we're loading
+      console.log("Loading query state with priority:", {
+        query: cleanState.query || '(empty)',
+        modelCount: cleanState.selectedModels?.length || 0,
+        hasCustomPrompts: !!cleanState.useCustomPrompts
+      });
+      
+      // Always set query from initialState if available
+      if (cleanState.query) {
+        console.log("Setting query from initialState:", cleanState.query);
+        setQuery(cleanState.query);
+      }
+      
+      // Set selected models with a fallback
+      setSelectedModels(
+        (cleanState.selectedModels && cleanState.selectedModels.length > 0) 
+          ? cleanState.selectedModels 
+          : ['gpt-4o-mini', 'claude-3-5-sonnet-latest']
+      );
+      
+      // Set selected namespaces with a fallback
+      setSelectedNamespaces(
+        (cleanState.selectedNamespaces && cleanState.selectedNamespaces.length > 0) 
+          ? cleanState.selectedNamespaces 
+          : ['default']
+      );
+      
+      // Set system prompt with a fallback
+      setGlobalSystemPrompt(cleanState.globalSystemPrompt || DEFAULT_SYSTEM_PROMPT);
+      
+      // Set flags
+      setUseCustomPrompts(cleanState.useCustomPrompts === true);
+      setUseCustomTemperatures(cleanState.useCustomTemperatures === true);
+      
+      // Set custom system prompts
+      if (cleanState.customSystemPrompts && Object.keys(cleanState.customSystemPrompts).length > 0) {
+        setCustomSystemPrompts(prevPrompts => ({
+          ...prevPrompts,
+          ...cleanState.customSystemPrompts
         }));
       }
-      if (initialState.globalTemperature !== undefined) setGlobalTemperature(initialState.globalTemperature);
-      if (initialState.useCustomTemperatures !== undefined) setUseCustomTemperatures(initialState.useCustomTemperatures);
-      if (initialState.customTemperatures && Object.keys(initialState.customTemperatures).length > 0) {
-        setCustomTemperatures(prev => ({
-          ...prev,
-          ...initialState.customTemperatures
+      
+      // Set temperature
+      if (cleanState.globalTemperature !== undefined) {
+        setGlobalTemperature(cleanState.globalTemperature);
+      }
+      
+      // Set custom temperatures
+      if (cleanState.customTemperatures && Object.keys(cleanState.customTemperatures).length > 0) {
+        setCustomTemperatures(prevTemps => ({
+          ...prevTemps,
+          ...cleanState.customTemperatures
         }));
+      }
+    } else {
+      // If no initialState, load from localStorage
+      try {
+        const savedState = localStorage.getItem('queryInterfaceState');
+        if (savedState) {
+          const parsedState = JSON.parse(savedState);
+          console.log("Loading state from localStorage:", parsedState);
+          
+          // Set values from localStorage
+          setQuery(parsedState.query || '');
+          setSelectedModels(parsedState.selectedModels || ['gpt-4o-mini', 'claude-3-5-sonnet-latest']);
+          setSelectedNamespaces(parsedState.selectedNamespaces || ['default']);
+          setGlobalSystemPrompt(parsedState.globalSystemPrompt || DEFAULT_SYSTEM_PROMPT);
+          setUseCustomPrompts(parsedState.useCustomPrompts || false);
+          setCustomSystemPrompts(prevPrompts => ({
+            ...prevPrompts,
+            ...(parsedState.customSystemPrompts || {})
+          }));
+          setGlobalTemperature(parsedState.globalTemperature !== undefined ? parsedState.globalTemperature : 0);
+          setUseCustomTemperatures(parsedState.useCustomTemperatures || false);
+          setCustomTemperatures(prevTemps => ({
+            ...prevTemps,
+            ...(parsedState.customTemperatures || {})
+          }));
+        }
+      } catch (error) {
+        console.error('Failed to load query state from localStorage:', error);
       }
     }
   }, [initialState]);
@@ -304,35 +372,46 @@ const QueryInterface = ({ vectorStore, namespaces, onQuerySubmitted, isProcessin
     return useCustomTemperatures ? customTemperatures[model] : globalTemperature;
   };
 
-  // Get current state to save when submitting
-  const getCurrentState = () => {
+  // Define getCurrentState with useCallback to avoid dependency issues
+  const getCurrentState = useCallback(() => {
     return {
       query,
       selectedModels,
       selectedNamespaces,
-      globalSystemPrompt: useCustomPrompts ? '' : globalSystemPrompt,
+      globalSystemPrompt,
       useCustomPrompts,
-      // Only include custom prompts if they're being used
-      customSystemPrompts: useCustomPrompts ? 
-        // Filter to only include prompts for selected models
-        Object.fromEntries(
-          Object.entries(customSystemPrompts)
-            .filter(([model]) => selectedModels.includes(model))
-        ) : 
-        {},
-      globalTemperature: useCustomTemperatures ? 0 : globalTemperature,
+      customSystemPrompts,
+      globalTemperature,
       useCustomTemperatures,
-      // Only include custom temperatures if they're being used
-      customTemperatures: useCustomTemperatures ? 
-        // Filter to only include temperatures for selected models
-        Object.fromEntries(
-          Object.entries(customTemperatures)
-            .filter(([model]) => selectedModels.includes(model))
-        ) : 
-        {}
+      customTemperatures
     };
-  };
-
+  }, [
+    query, 
+    selectedModels, 
+    selectedNamespaces, 
+    globalSystemPrompt, 
+    useCustomPrompts, 
+    customSystemPrompts, 
+    globalTemperature, 
+    useCustomTemperatures, 
+    customTemperatures
+  ]);
+  
+  // Always save state to localStorage when navigating away
+  useEffect(() => {
+    // This effect is used for cleanup when component unmounts
+    return () => {
+      // Save state when component unmounts to ensure it's available when we navigate back
+      const currentState = getCurrentState();
+      try {
+        localStorage.setItem('queryInterfaceState', JSON.stringify(currentState));
+        console.log("Saved state on unmount:", currentState);
+      } catch (error) {
+        console.error('Failed to save state on unmount:', error);
+      }
+    };
+  }, [getCurrentState]);
+  
   // Export query configuration to a JSON file
   const handleExportConfig = () => {
     const config = getCurrentState();
@@ -416,6 +495,15 @@ const QueryInterface = ({ vectorStore, namespaces, onQuerySubmitted, isProcessin
     
     const systemPromptsUsed = {};
     const temperaturesUsed = {};
+    
+    // Save the current state to localStorage explicitly before processing
+    const currentState = getCurrentState();
+    try {
+      localStorage.setItem('queryInterfaceState', JSON.stringify(currentState));
+      console.log("Saved current state to localStorage before submitting:", currentState);
+    } catch (error) {
+      console.error('Failed to save query state to localStorage:', error);
+    }
     
     try {
       // Filter vector store by selected namespaces if available
@@ -530,8 +618,28 @@ Given the context information and not prior knowledge, answer the question: ${qu
           query
         };
         
-        // Call onQuerySubmitted callback with results and metrics
-        onQuerySubmitted(parallelResponses, metrics, query);
+        // Get current state to pass to parent component
+        const queryState = getCurrentState();
+        
+        // Call the onQuerySubmitted callback with all results and state
+        onQuerySubmitted(
+          parallelResponses, 
+          {
+            systemPrompts: systemPromptsUsed,
+            temperatures: temperaturesUsed,
+            responseTime: metrics.retrievalTime + metrics.responseTime,
+            tokenUsage: {
+              estimated: true,
+              input: metrics.systemPrompts.input + metrics.temperatures.input,
+              output: metrics.systemPrompts.output + metrics.temperatures.output,
+              total: metrics.systemPrompts.input + metrics.systemPrompts.output + metrics.temperatures.input + metrics.temperatures.output
+            },
+            elapsedTime: metrics.retrievalTime + metrics.responseTime
+          }, 
+          query,
+          systemPromptsUsed,
+          queryState  // Pass complete state for when navigating back
+        );
       } else {
         // Process models sequentially (old method)
         const responses = {};
@@ -704,6 +812,35 @@ Format your response with clear headings for each section.
     }));
   };
 
+  // Save state when form values change
+  useEffect(() => {
+    // Don't save on initial load
+    if (!query && selectedModels.length === 2 && 
+        selectedModels.includes('gpt-4o-mini') && 
+        selectedModels.includes('claude-3-5-sonnet-latest')) {
+      return;
+    }
+    
+    const currentState = getCurrentState();
+    try {
+      localStorage.setItem('queryInterfaceState', JSON.stringify(currentState));
+      console.log("Saved state on field change");
+    } catch (error) {
+      console.error('Failed to save state on field change:', error);
+    }
+  }, [
+    query, 
+    selectedModels, 
+    selectedNamespaces, 
+    globalSystemPrompt, 
+    useCustomPrompts, 
+    customSystemPrompts, 
+    globalTemperature, 
+    useCustomTemperatures, 
+    customTemperatures,
+    getCurrentState
+  ]);
+
   return (
     <Box>
       <Box display="flex" alignItems="center" justifyContent="space-between" mb={1}>
@@ -821,6 +958,20 @@ Format your response with clear headings for each section.
             '& .MuiOutlinedInput-root': {
               fontSize: '0.95rem'
             }
+          }}
+          InputProps={{
+            endAdornment: query ? (
+              <Tooltip title="Clear question">
+                <IconButton
+                  edge="end"
+                  size="small"
+                  onClick={() => setQuery('')}
+                  sx={{ mr: 1 }}
+                >
+                  <CloseIcon />
+                </IconButton>
+              </Tooltip>
+            ) : null
           }}
         />
 

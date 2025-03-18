@@ -60,7 +60,14 @@ class OllamaEmbeddings {
   }
 }
 
-const VectorStoreConfig = ({ documents, namespaces, onVectorStoreCreated, isProcessing, setIsProcessing }) => {
+const VectorStoreConfig = ({ 
+  documents, 
+  namespaces, 
+  onVectorStoreCreated, 
+  isProcessing, 
+  setIsProcessing,
+  onChunkParametersChange 
+}) => {
   const [chunkSize, setChunkSize] = useState(1000);
   const [chunkOverlap, setChunkOverlap] = useState(200);
   const [embeddingModel, setEmbeddingModel] = useState('text-embedding-3-small');
@@ -71,10 +78,16 @@ const VectorStoreConfig = ({ documents, namespaces, onVectorStoreCreated, isProc
 
   const handleChunkSizeChange = (event, newValue) => {
     setChunkSize(newValue);
+    if (onChunkParametersChange) {
+      onChunkParametersChange(newValue, chunkOverlap);
+    }
   };
 
   const handleChunkOverlapChange = (event, newValue) => {
     setChunkOverlap(newValue);
+    if (onChunkParametersChange) {
+      onChunkParametersChange(chunkSize, newValue);
+    }
   };
 
   const handleEmbeddingModelChange = (event) => {
@@ -129,7 +142,7 @@ const VectorStoreConfig = ({ documents, namespaces, onVectorStoreCreated, isProc
         // Use Azure OpenAI embeddings
         const azureApiKey = process.env.REACT_APP_AZURE_OPENAI_API_KEY;
         const azureEndpoint = process.env.REACT_APP_AZURE_OPENAI_ENDPOINT;
-        const apiVersion = process.env.REACT_APP_AZURE_OPENAI_API_VERSION || '2023-12-01-preview';
+        const apiVersion = process.env.REACT_APP_AZURE_OPENAI_API_VERSION;
         
         if (!azureApiKey || !azureEndpoint) {
           throw new Error('Azure OpenAI requires REACT_APP_AZURE_OPENAI_API_KEY and REACT_APP_AZURE_OPENAI_ENDPOINT to be set in your .env file');

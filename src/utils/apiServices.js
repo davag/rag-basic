@@ -1,5 +1,13 @@
 import axios from 'axios';
 
+// Define a safe logger implementation inside src/ to avoid external imports
+const safeLogger = {
+  log: (...args) => typeof window !== 'undefined' && window.console && window.console.log ? window.console.log(...args) : null,
+  error: (...args) => typeof window !== 'undefined' && window.console && window.console.error ? window.console.error(...args) : null,
+  warn: (...args) => typeof window !== 'undefined' && window.console && window.console.warn ? window.console.warn(...args) : null,
+  info: (...args) => typeof window !== 'undefined' && window.console && window.console.info ? window.console.info(...args) : null
+};
+
 // Custom Ollama integration for local LLM inference
 class ChatOllama {
   constructor(options) {
@@ -13,8 +21,9 @@ class ChatOllama {
     this._llmType = () => 'ollama';
     this._identifying_params = { model_name: this.modelName };
     
-    window.console.log(`ChatOllama initialized with model: ${this.modelName}`);
-    window.console.log(`Temperature setting: ${this.temperature}`);
+    // Use safe logger
+    safeLogger.log(`ChatOllama initialized with model: ${this.modelName}`);
+    safeLogger.log(`Temperature setting: ${this.temperature}`);
   }
 
   async call(messages) {
@@ -31,7 +40,7 @@ class ChatOllama {
       
       return response.data.message.content;
     } catch (error) {
-      window.console.error('Error calling Ollama API:', error);
+      safeLogger.error('Error calling Ollama API:', error);
       throw new Error(`Ollama API error: ${error.message}`);
     }
   }
@@ -61,10 +70,11 @@ class CustomChatAnthropic {
     this._llmType = () => 'anthropic';
     this._identifying_params = { model_name: this.modelName };
     
-    window.console.log(`CustomChatAnthropic initialized with model: ${this.modelName}`);
-    window.console.log(`API key provided in constructor: ${this.apiKey ? 'Yes' : 'No'}`);
-    window.console.log(`Environment API key available: ${process.env.REACT_APP_ANTHROPIC_API_KEY ? 'Yes' : 'No'}`);
-    window.console.log(`Temperature setting: ${this.temperature}`);
+    // Use safe logger
+    safeLogger.log(`CustomChatAnthropic initialized with model: ${this.modelName}`);
+    safeLogger.log(`API key provided in constructor: ${this.apiKey ? 'Yes' : 'No'}`);
+    safeLogger.log(`Environment API key available: ${process.env.REACT_APP_ANTHROPIC_API_KEY ? 'Yes' : 'No'}`);
+    safeLogger.log(`Temperature setting: ${this.temperature}`);
   }
 
   async call(messages) {
@@ -82,8 +92,8 @@ class CustomChatAnthropic {
         throw new Error('Anthropic API key is required. Please set REACT_APP_ANTHROPIC_API_KEY in your environment variables.');
       }
       
-      // Use window.console for logging
-      window.console.log('Sending Anthropic request:', {
+      // Use safe logger
+      safeLogger.log('Sending Anthropic request:', {
         endpoint: `${this.proxyUrl}`,
         model: this.modelName,
         messageCount: formattedMessages.length,
@@ -111,11 +121,11 @@ class CustomChatAnthropic {
         }
       );
       
-      // Use window.console for logging
-      window.console.log('Anthropic response status:', response.status);
+      // Use safe logger
+      safeLogger.log('Anthropic response status:', response.status);
       
       if (response.data.error) {
-        window.console.error('Anthropic API returned an error:', response.data.error);
+        safeLogger.error('Anthropic API returned an error:', response.data.error);
         throw new Error(`Anthropic API error: ${response.data.error.message}`);
       }
       
@@ -127,15 +137,15 @@ class CustomChatAnthropic {
         // Legacy format
         return response.data.completion;
       } else {
-        window.console.error('Unexpected response format from Anthropic API:', response.data);
+        safeLogger.error('Unexpected response format from Anthropic API:', response.data);
         throw new Error('Unexpected response format from Anthropic API');
       }
     } catch (error) {
-      window.console.error('Error calling Anthropic API:', error);
+      safeLogger.error('Error calling Anthropic API:', error);
       if (error.response) {
-        window.console.error('Response data:', error.response.data);
-        window.console.error('Response status:', error.response.status);
-        window.console.error('Response headers:', error.response.headers);
+        safeLogger.error('Response data:', error.response.data);
+        safeLogger.error('Response status:', error.response.status);
+        safeLogger.error('Response headers:', error.response.headers);
       }
       throw new Error(`Anthropic API error: ${error.message || 'Unknown error'}`);
     }
@@ -166,14 +176,14 @@ class CustomChatOpenAI {
     this._llmType = () => 'openai';
     this._identifying_params = { model_name: this.modelName };
     
-    // Use window.console instead of console directly
-    window.console.log(`CustomChatOpenAI initialized with model: ${this.modelName}`);
-    window.console.log(`API key provided in constructor: ${this.apiKey ? 'Yes' : 'No'}`);
-    window.console.log(`Environment API key available: ${process.env.REACT_APP_OPENAI_API_KEY ? 'Yes' : 'No'}`);
+    // Use safe logger
+    safeLogger.log(`CustomChatOpenAI initialized with model: ${this.modelName}`);
+    safeLogger.log(`API key provided in constructor: ${this.apiKey ? 'Yes' : 'No'}`);
+    safeLogger.log(`Environment API key available: ${process.env.REACT_APP_OPENAI_API_KEY ? 'Yes' : 'No'}`);
     if (this.modelName.startsWith('o1')) {
-      window.console.log('Note: o1 models do not support temperature settings');
+      safeLogger.log('Note: o1 models do not support temperature settings');
     } else {
-      window.console.log(`Temperature setting: ${this.temperature}`);
+      safeLogger.log(`Temperature setting: ${this.temperature}`);
     }
   }
 
@@ -211,8 +221,8 @@ class CustomChatOpenAI {
         throw new Error('OpenAI API key is required. Please set REACT_APP_OPENAI_API_KEY in your environment variables.');
       }
       
-      // Use window.console for logging
-      window.console.log('Sending OpenAI request:', {
+      // Use safe logger
+      safeLogger.log('Sending OpenAI request:', {
         endpoint: `${this.proxyUrl}/chat/completions`,
         model: this.modelName,
         messageCount: allMessages.length,
@@ -252,21 +262,21 @@ class CustomChatOpenAI {
         }
       );
       
-      // Use window.console for logging
-      window.console.log('OpenAI response status:', response.status);
+      // Use safe logger
+      safeLogger.log('OpenAI response status:', response.status);
       
       if (response.data.error) {
-        window.console.error('OpenAI API returned an error:', response.data.error);
+        safeLogger.error('OpenAI API returned an error:', response.data.error);
         throw new Error(`OpenAI API error: ${response.data.error.message}`);
       }
       
       return response.data.choices[0].message.content;
     } catch (error) {
-      window.console.error('Error calling OpenAI API:', error);
+      safeLogger.error('Error calling OpenAI API:', error);
       if (error.response) {
-        window.console.error('Response data:', error.response.data);
-        window.console.error('Response status:', error.response.status);
-        window.console.error('Response headers:', error.response.headers);
+        safeLogger.error('Response data:', error.response.data);
+        safeLogger.error('Response status:', error.response.status);
+        safeLogger.error('Response headers:', error.response.headers);
       }
       throw new Error(`OpenAI API error: ${error.message || 'Unknown error'}`);
     }
@@ -289,7 +299,7 @@ class CustomAzureOpenAI {
     this.temperature = options.temperature;
     this.systemPrompt = options.systemPrompt || '';
     this.apiKey = options.azureApiKey;
-    this.apiVersion = options.apiVersion || '2023-12-01-preview';
+    this.apiVersion = options.apiVersion;
     this.endpoint = options.azureEndpoint || '';
     
     // Use a proxy server URL if available, otherwise use the default proxy
@@ -300,12 +310,13 @@ class CustomAzureOpenAI {
     this._llmType = () => 'azure-openai';
     this._identifying_params = { model_name: this.modelName, deployment_name: this.deploymentName };
     
-    window.console.log(`CustomAzureOpenAI initialized with model: ${this.modelName}`);
-    window.console.log(`Deployment name: ${this.deploymentName}`);
-    window.console.log(`API key provided in constructor: ${this.apiKey ? 'Yes' : 'No'}`);
-    window.console.log(`Environment API key available: ${process.env.REACT_APP_AZURE_OPENAI_API_KEY ? 'Yes' : 'No'}`);
-    window.console.log(`Azure endpoint: ${this.endpoint || 'Not provided'}`);
-    window.console.log(`Temperature setting: ${this.temperature}`);
+    // Use safe logger
+    safeLogger.log(`CustomAzureOpenAI initialized with model: ${this.modelName}`);
+    safeLogger.log(`Deployment name: ${this.deploymentName}`);
+    safeLogger.log(`API key provided in constructor: ${this.apiKey ? 'Yes' : 'No'}`);
+    safeLogger.log(`Environment API key available: ${process.env.REACT_APP_AZURE_OPENAI_API_KEY ? 'Yes' : 'No'}`);
+    safeLogger.log(`Azure endpoint: ${this.endpoint || 'Not provided'}`);
+    safeLogger.log(`Temperature setting: ${this.temperature}`);
   }
 
   async call(messages) {
@@ -333,9 +344,9 @@ class CustomAzureOpenAI {
         throw new Error('Azure OpenAI endpoint is required. Please set REACT_APP_AZURE_OPENAI_ENDPOINT in your environment variables.');
       }
       
-      // Use window.console for logging
-      window.console.log('Sending Azure OpenAI request:', {
-        endpoint: `${this.proxyUrl}/deployments/${this.deploymentName}/chat/completions`,
+      // Use safe logger and also log to console for debugging
+      safeLogger.log('Sending Azure OpenAI request:', {
+        endpoint: `${this.proxyUrl}/chat/completions`,
         modelName: this.modelName,
         deploymentName: this.deploymentName,
         messageCount: allMessages.length,
@@ -343,13 +354,20 @@ class CustomAzureOpenAI {
         temperature: this.temperature
       });
       
+      // Log detailed request info
+      console.log('[DEBUG] Azure API Request Details:');
+      console.log(`- Proxy URL: ${this.proxyUrl}/chat/completions`);
+      console.log(`- Deployment Name: ${this.deploymentName}`);
+      console.log(`- Message Count: ${allMessages.length}`);
+      console.log(`- First message role: ${allMessages[0]?.role}`);
+      
       // Use proxy endpoint to avoid CORS
       const requestData = {
         model: this.deploymentName,
         messages: allMessages,
         azureApiKey: apiKey,
         azureEndpoint: endpoint,
-        apiVersion: this.apiVersion,
+        apiVersion: process.env.REACT_APP_AZURE_OPENAI_API_VERSION || '2023-05-15',
         deploymentName: this.deploymentName
       };
       
@@ -361,6 +379,7 @@ class CustomAzureOpenAI {
       // Add max tokens
       requestData.max_tokens = 1024;
       
+      // Make the API call
       const response = await axios.post(
         `${this.proxyUrl}/chat/completions`,
         requestData,
@@ -371,23 +390,47 @@ class CustomAzureOpenAI {
         }
       );
       
-      // Use window.console for logging
-      window.console.log('Azure OpenAI response status:', response.status);
+      // Use safe logger and also log to console for debugging
+      safeLogger.log('Azure OpenAI response status:', response.status);
+      console.log('[DEBUG] Azure OpenAI response received with status:', response.status);
       
       if (response.data.error) {
-        window.console.error('Azure OpenAI API returned an error:', response.data.error);
+        safeLogger.error('Azure OpenAI API returned an error:', response.data.error);
+        console.error('[DEBUG] Azure OpenAI API Error:', response.data.error);
         throw new Error(`Azure OpenAI API error: ${response.data.error.message}`);
       }
       
       return response.data.choices[0].message.content;
     } catch (error) {
-      window.console.error('Error calling Azure OpenAI API:', error);
+      safeLogger.error('Error calling Azure OpenAI API:', error);
+      console.error('[DEBUG] Azure OpenAI API Call Failed:', error.message);
+      
+      // Log more detailed error information for debugging
       if (error.response) {
-        window.console.error('Response data:', error.response.data);
-        window.console.error('Response status:', error.response.status);
-        window.console.error('Response headers:', error.response.headers);
+        safeLogger.error('Response data:', error.response.data);
+        safeLogger.error('Response status:', error.response.status);
+        safeLogger.error('Response headers:', error.response.headers);
+        
+        console.error('[DEBUG] Response Status:', error.response.status);
+        console.error('[DEBUG] Response Data:', JSON.stringify(error.response.data, null, 2));
+        
+        // Provide a more specific error message based on the status code
+        const status = error.response.status;
+        if (status === 404) {
+          throw new Error(`Azure OpenAI API error: Deployment '${this.deploymentName}' not found. Please check your deployment name and endpoint URL.`);
+        } else if (status === 401) {
+          throw new Error(`Azure OpenAI API error: Authentication failed. Please check your API key.`);
+        } else if (status === 400) {
+          throw new Error(`Azure OpenAI API error: Bad request - ${error.response.data?.error?.message || 'check your request parameters.'}`);
+        } else {
+          throw new Error(`Azure OpenAI API error: Request failed with status code ${status} - ${error.response.data?.error?.message || error.message}`);
+        }
+      } else if (error.request) {
+        console.error('[DEBUG] No response received for request:', error.request);
+        throw new Error(`Azure OpenAI API error: No response received from server. Please check your network connection and Azure endpoint URL.`);
+      } else {
+        throw new Error(`Azure OpenAI API error: ${error.message}`);
       }
-      throw new Error(`Azure OpenAI API error: ${error.message}`);
     }
   }
 
@@ -416,18 +459,18 @@ export const createLlmInstance = (model, systemPrompt, options = {}) => {
       customModels = JSON.parse(savedModels);
     }
   } catch (err) {
-    window.console.error('Error loading custom models from localStorage:', err);
+    safeLogger.error('Error loading custom models from localStorage:', err);
   }
 
   // Get the vendor from custom models if available
   const vendor = customModels[model]?.vendor;
   
-  window.console.log(`Processing model: ${model}, vendor: ${vendor || 'not specified'}`);
+  safeLogger.log(`Processing model: ${model}, vendor: ${vendor || 'not specified'}`);
   
   // Detect Azure models ONLY by prefix or vendor
   const isAzureModel = vendor === 'AzureOpenAI' || model.startsWith('azure-');
   
-  window.console.log(`Model ${model} detected as Azure model: ${isAzureModel}`);
+  safeLogger.log(`Model ${model} detected as Azure model: ${isAzureModel}`);
 
   // Route to the appropriate implementation based on vendor or model prefix
   if (isAzureModel) {
@@ -436,20 +479,36 @@ export const createLlmInstance = (model, systemPrompt, options = {}) => {
     const azureEndpoint = process.env.REACT_APP_AZURE_OPENAI_ENDPOINT;
     
     if (!azureApiKey) {
-      window.console.error('REACT_APP_AZURE_OPENAI_API_KEY is not set in environment variables');
+      safeLogger.error('REACT_APP_AZURE_OPENAI_API_KEY is not set in environment variables');
       throw new Error('Azure OpenAI API key is required. Please set REACT_APP_AZURE_OPENAI_API_KEY in your .env file.');
     }
     
     if (!azureEndpoint) {
-      window.console.error('REACT_APP_AZURE_OPENAI_ENDPOINT is not set in environment variables');
+      safeLogger.error('REACT_APP_AZURE_OPENAI_ENDPOINT is not set in environment variables');
       throw new Error('Azure OpenAI endpoint is required. Please set REACT_APP_AZURE_OPENAI_ENDPOINT in your .env file.');
     }
     
     // Strip the "azure-" prefix for deployment name if it exists
-    const deploymentName = model.startsWith('azure-') ? model.substring(6) : model;
+    let deploymentName = model.startsWith('azure-') ? model.substring(6) : model;
     
-    window.console.log(`Using Azure OpenAI with model: ${model}, deployment: ${deploymentName}`);
-    window.console.log(`Azure endpoint: ${azureEndpoint}, API version: ${process.env.REACT_APP_AZURE_OPENAI_API_VERSION || '2023-12-01-preview'}`);
+    // Check if there's a custom deployment name specified in model settings
+    if (customModels[model]?.deploymentName) {
+      deploymentName = customModels[model].deploymentName;
+      safeLogger.log(`Using custom deployment name from settings: ${deploymentName}`);
+    }
+    
+    safeLogger.log(`Using Azure OpenAI with model: ${model}, deployment: ${deploymentName}`);
+    safeLogger.log(`Azure endpoint: ${azureEndpoint}, API version: ${process.env.REACT_APP_AZURE_OPENAI_API_VERSION}`);
+    
+    // Log detailed info about the Azure configuration for debugging
+    console.log('[DEBUG] Azure OpenAI Configuration:');
+    console.log(`- Model: ${model}`);
+    console.log(`- Deployment Name: ${deploymentName}`);
+    console.log(`- Endpoint: ${azureEndpoint}`);
+    console.log(`- API Version: ${process.env.REACT_APP_AZURE_OPENAI_API_VERSION}`);
+    console.log(`- Temperature: ${options.temperature !== undefined ? options.temperature : 0}`);
+    console.log(`- API Key provided: ${azureApiKey ? 'Yes (length: ' + azureApiKey.length + ')' : 'No'}`);
+    console.log(`- Using custom deployment name: ${customModels[model]?.deploymentName ? 'Yes' : 'No'}`);
     
     return new CustomAzureOpenAI({
       azureApiKey: azureApiKey,
@@ -458,14 +517,14 @@ export const createLlmInstance = (model, systemPrompt, options = {}) => {
       deploymentName: deploymentName,
       temperature: options.temperature !== undefined ? options.temperature : 0,
       systemPrompt: systemPrompt,
-      apiVersion: process.env.REACT_APP_AZURE_OPENAI_API_VERSION || '2023-12-01-preview'
+      apiVersion: process.env.REACT_APP_AZURE_OPENAI_API_VERSION
     });
   } else if ((vendor === 'OpenAI') || (!vendor && (model.startsWith('gpt') || model.startsWith('o1') || model.startsWith('o3')))) {
     // Get the API key from environment variables
     const openAIApiKey = process.env.REACT_APP_OPENAI_API_KEY;
     
     if (!openAIApiKey) {
-      window.console.error('REACT_APP_OPENAI_API_KEY is not set in environment variables');
+      safeLogger.error('REACT_APP_OPENAI_API_KEY is not set in environment variables');
       throw new Error('OpenAI API key is required. Please set REACT_APP_OPENAI_API_KEY in your .env file.');
     }
     
@@ -482,12 +541,12 @@ export const createLlmInstance = (model, systemPrompt, options = {}) => {
       const azureEndpoint = process.env.REACT_APP_AZURE_OPENAI_ENDPOINT;
       
       if (!azureApiKey) {
-        window.console.error('REACT_APP_AZURE_OPENAI_API_KEY is not set in environment variables');
+        safeLogger.error('REACT_APP_AZURE_OPENAI_API_KEY is not set in environment variables');
         throw new Error('Azure OpenAI API key is required. Please set REACT_APP_AZURE_OPENAI_API_KEY in your .env file.');
       }
       
       if (!azureEndpoint) {
-        window.console.error('REACT_APP_AZURE_OPENAI_ENDPOINT is not set in environment variables');
+        safeLogger.error('REACT_APP_AZURE_OPENAI_ENDPOINT is not set in environment variables');
         throw new Error('Azure OpenAI endpoint is required. Please set REACT_APP_AZURE_OPENAI_ENDPOINT in your .env file.');
       }
       
@@ -499,7 +558,7 @@ export const createLlmInstance = (model, systemPrompt, options = {}) => {
         invoke: async (text) => {
           // Implement Azure OpenAI embedding API call
           // This is a stub that returns a fake embedding
-          window.console.log(`[STUB] Using Azure OpenAI embedding model ${deploymentName} for text: ${text.substring(0, 50)}...`);
+          safeLogger.log(`[STUB] Using Azure OpenAI embedding model ${deploymentName} for text: ${text.substring(0, 50)}...`);
           return {
             text: `Embedding generated with ${deploymentName}`,
             embedding: Array(model.includes('large') ? 3072 : 1536).fill(0).map(() => Math.random())
@@ -511,7 +570,7 @@ export const createLlmInstance = (model, systemPrompt, options = {}) => {
       const openAIApiKey = process.env.REACT_APP_OPENAI_API_KEY;
       
       if (!openAIApiKey) {
-        window.console.error('REACT_APP_OPENAI_API_KEY is not set in environment variables');
+        safeLogger.error('REACT_APP_OPENAI_API_KEY is not set in environment variables');
         throw new Error('OpenAI API key is required. Please set REACT_APP_OPENAI_API_KEY in your .env file.');
       }
       
@@ -520,7 +579,7 @@ export const createLlmInstance = (model, systemPrompt, options = {}) => {
         invoke: async (text) => {
           // Implement OpenAI embedding API call
           // This is a stub that returns a fake embedding
-          window.console.log(`[STUB] Using OpenAI embedding model ${model} for text: ${text.substring(0, 50)}...`);
+          safeLogger.log(`[STUB] Using OpenAI embedding model ${model} for text: ${text.substring(0, 50)}...`);
           return {
             text: `Embedding generated with ${model}`,
             embedding: Array(model.includes('large') ? 3072 : 1536).fill(0).map(() => Math.random())
@@ -533,7 +592,7 @@ export const createLlmInstance = (model, systemPrompt, options = {}) => {
     const anthropicApiKey = process.env.REACT_APP_ANTHROPIC_API_KEY;
     
     if (!anthropicApiKey) {
-      window.console.error('REACT_APP_ANTHROPIC_API_KEY is not set in environment variables');
+      safeLogger.error('REACT_APP_ANTHROPIC_API_KEY is not set in environment variables');
       throw new Error('Anthropic API key is required. Please set REACT_APP_ANTHROPIC_API_KEY in your .env file.');
     }
     
@@ -594,7 +653,7 @@ Given the context information and not prior knowledge, answer the question: ${qu
           sourceDocuments: docs
         };
       } catch (error) {
-        window.console.error('Error in QA chain:', error);
+        safeLogger.error('Error in QA chain:', error);
         throw new Error(`Error in QA chain: ${error.message}`);
       }
     }
@@ -630,7 +689,7 @@ export const executeQuery = async (chain, query) => {
       }
     };
   } catch (error) {
-    window.console.error('Error executing query:', error);
+    safeLogger.error('Error executing query:', error);
     throw new Error(`Error executing query: ${error.message}`);
   }
 };
@@ -655,7 +714,7 @@ export const calculateCost = (model, tokenCount) => {
       customModels = JSON.parse(savedModels);
     }
   } catch (err) {
-    window.console.error('Error loading custom models from localStorage:', err);
+    safeLogger.error('Error loading custom models from localStorage:', err);
   }
 
   // If the model exists in custom models and is active, use its pricing

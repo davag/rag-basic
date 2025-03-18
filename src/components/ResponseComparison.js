@@ -40,7 +40,6 @@ import jsPDF from 'jspdf';
 import 'jspdf-autotable';
 import { calculateCost } from '../utils/apiServices';
 import TokenUsageAnalyzer from './TokenUsageAnalyzer';
-import ErrorPatternRecognition from './ErrorPatternRecognition';
 import ContextWindowVisualizer from './ContextWindowVisualizer';
 
 const ResponseComparison = ({ responses, metrics, currentQuery, systemPrompts, onBackToQuery, onImportResults }) => {
@@ -221,7 +220,6 @@ const ResponseComparison = ({ responses, metrics, currentQuery, systemPrompts, o
           setSnackbarMessage('Results imported successfully. Note: In a full implementation, these results would replace the current view.');
           setSnackbarSeverity('info');
           setSnackbarOpen(true);
-          window.console.log('Imported results:', importedResults);
         }
         
         // Reset file input
@@ -230,7 +228,6 @@ const ResponseComparison = ({ responses, metrics, currentQuery, systemPrompts, o
         }
         
       } catch (error) {
-        window.console.error('Error importing results:', error);
         setSnackbarMessage('Failed to import results. The file may be invalid or corrupted.');
         setSnackbarSeverity('error');
         setSnackbarOpen(true);
@@ -316,12 +313,12 @@ const ResponseComparison = ({ responses, metrics, currentQuery, systemPrompts, o
     Object.keys(metrics)
       .filter(key => !['systemPrompts', 'temperatures', 'retrievalTime', 'query'].includes(key))
       .forEach((model, index) => {
-        const metric = metrics[model];
-        const cost = calculateCost(model, metric.tokenUsage?.total || 0);
+        const cost = calculateCost(model, metrics[model]?.tokenUsage?.total || 0);
         const costText = formatCost(cost);
         
         doc.text(model, margin, yPos);
-        doc.text(formatElapsedTime(metric.elapsedTime) || formatResponseTime(metric.responseTime), margin + 60, yPos);
+        const metric = metrics[model] || {};
+        doc.text(metrics[model] ? (metrics[model].elapsedTime ? formatElapsedTime(metrics[model].elapsedTime) : metrics[model].responseTime ? formatResponseTime(metrics[model].responseTime) : 'N/A') : 'N/A', margin + 60, yPos);
         doc.text(`${metric.tokenUsage?.estimated ? '~' : ''}${metric.tokenUsage?.total || 'Unknown'} tokens`, margin + 120, yPos);
         doc.text(costText, margin + 180, yPos);
         yPos += 7;
@@ -501,10 +498,8 @@ const ResponseComparison = ({ responses, metrics, currentQuery, systemPrompts, o
                       <TableCell>
                         <Box display="flex" alignItems="center">
                           <AccessTimeIcon fontSize="small" sx={{ mr: 1 }} />
-                          {metrics[model].elapsedTime 
-                            ? formatElapsedTime(metrics[model].elapsedTime) 
-                            : formatResponseTime(metrics[model].responseTime)}
-                          {metrics[model].elapsedTime && metrics[model].responseTime && 
+                          {metrics[model] ? (metrics[model].elapsedTime ? formatElapsedTime(metrics[model].elapsedTime) : metrics[model].responseTime ? formatResponseTime(metrics[model].responseTime) : 'N/A') : 'N/A'}
+                          {metrics[model] && metrics[model].elapsedTime && metrics[model].responseTime && 
                             <Tooltip title={`API Response Time: ${formatResponseTime(metrics[model].responseTime)}`}>
                               <InfoIcon fontSize="small" sx={{ ml: 1, color: 'text.secondary' }} />
                             </Tooltip>
@@ -555,15 +550,6 @@ const ResponseComparison = ({ responses, metrics, currentQuery, systemPrompts, o
         />
       </Box>
 
-      {/* Error Pattern Recognition */}
-      <Box mb={4}>
-        <ErrorPatternRecognition 
-          responses={responses}
-          currentQuery={currentQuery}
-          systemPrompts={systemPrompts}
-        />
-      </Box>
-
       <Typography variant="h6" gutterBottom>
         Model Responses
       </Typography>
@@ -603,7 +589,7 @@ const ResponseComparison = ({ responses, metrics, currentQuery, systemPrompts, o
                 <Box>
                   <Chip 
                     icon={<AccessTimeIcon />} 
-                    label={formatElapsedTime(metrics[model].elapsedTime) || formatResponseTime(metrics[model].responseTime)} 
+                    label={metrics[model] ? (metrics[model].elapsedTime ? formatElapsedTime(metrics[model].elapsedTime) : metrics[model].responseTime ? formatResponseTime(metrics[model].responseTime) : 'N/A') : 'N/A'} 
                     size="small"
                     className="metrics-chip"
                   />

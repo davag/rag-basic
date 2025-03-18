@@ -135,3 +135,47 @@ If Ollama integration is not working:
 1. Ensure Ollama is running locally: `ollama serve`
 2. Verify that you've pulled the models you want to use
 3. Check that the Ollama endpoint is correctly configured in the application
+
+# Using Azure OpenAI Models
+
+To use Azure OpenAI models in this application, you need to properly configure your Azure OpenAI service and set the required environment variables.
+
+## Azure OpenAI Setup
+
+1. Create an Azure OpenAI service in your Azure portal if you haven't already.
+2. Deploy the models you want to use in your Azure OpenAI service.
+3. Note down your deployment names - these will be used to reference your models.
+4. Obtain your Azure OpenAI API key and endpoint URL from the Azure portal.
+
+## Configuration
+
+Add the following variables to your `.env` file:
+
+```
+REACT_APP_AZURE_OPENAI_API_KEY=your_azure_openai_api_key_here
+REACT_APP_AZURE_OPENAI_ENDPOINT=https://your-resource-name.openai.azure.com
+REACT_APP_AZURE_OPENAI_API_VERSION=2023-12-01-preview
+```
+
+## Using Azure Models
+
+To use an Azure model in the application:
+
+1. In the LLM Settings menu, add a new model with the format: `azure-YOUR_DEPLOYMENT_NAME`.
+   - For example, if your deployment is named `gpt-4o`, enter `azure-gpt-4o`.
+   - Make sure to set the vendor to "AzureOpenAI"
+   
+2. The application will then route requests for this model to your Azure OpenAI service.
+
+3. Note that the deployment name must exactly match what you've configured in your Azure OpenAI service.
+
+## Troubleshooting
+
+If you encounter a 404 error when using Azure models, check that:
+
+1. Your deployment name is correctly specified in the model name (with the `azure-` prefix)
+2. The deployment actually exists in your Azure OpenAI service
+3. Your API key has access to the specified deployment
+4. Your endpoint URL is correctly formatted (should end with `.openai.azure.com`)
+
+Debug logs will be visible in the browser console for troubleshooting.

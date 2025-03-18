@@ -72,28 +72,32 @@ const LlmSettings = ({ showAppSettingsOnly = false }) => {
       input: 5.0,
       output: 15.0,
       active: true,
-      description: 'Azure-hosted GPT-4o - most capable GPT-4 model optimized for chat.'
+      description: 'Azure-hosted GPT-4o - most capable GPT-4 model optimized for chat.',
+      deploymentName: 'gpt-4o'
     },
     'azure-gpt-4o-mini': {
       vendor: 'AzureOpenAI',
       input: 0.15,
-      output: 0.6,
+      output: 0.60,
       active: true,
-      description: 'Azure-hosted GPT-4o-mini - affordable, faster version of GPT-4o.'
+      description: 'Azure-hosted GPT-4o-mini - affordable, faster version of GPT-4o.',
+      deploymentName: 'gpt4o-mini'
     },
     'azure-o1-mini': {
       vendor: 'AzureOpenAI',
       input: 0.15,
-      output: 0.6,
+      output: 0.60,
       active: true,
-      description: 'Azure-hosted o1-mini - affordable compact O1 model with strong reasoning.'
+      description: 'Azure-hosted o1-mini - affordable compact O1 model with strong reasoning.',
+      deploymentName: 'o1-mini'
     },
     'azure-o3-mini': {
       vendor: 'AzureOpenAI',
       input: 0.5,
       output: 1.5,
       active: true,
-      description: 'Azure-hosted o3-mini - newest model with improved reasoning capabilities.'
+      description: 'Azure-hosted o3-mini - newest model with improved reasoning capabilities.',
+      deploymentName: 'o3-mini'
     },
     
     // Anthropic models
@@ -230,28 +234,32 @@ const LlmSettings = ({ showAppSettingsOnly = false }) => {
         input: 5.0,
         output: 15.0,
         active: true,
-        description: 'Azure-hosted GPT-4o - most capable GPT-4 model optimized for chat.'
+        description: 'Azure-hosted GPT-4o - most capable GPT-4 model optimized for chat.',
+        deploymentName: 'gpt-4o'
       },
       'azure-gpt-4o-mini': {
         vendor: 'AzureOpenAI',
         input: 0.15,
         output: 0.60,
         active: true,
-        description: 'Azure-hosted GPT-4o-mini - affordable, faster version of GPT-4o.'
+        description: 'Azure-hosted GPT-4o-mini - affordable, faster version of GPT-4o.',
+        deploymentName: 'gpt4o-mini'
       },
       'azure-o1-mini': {
         vendor: 'AzureOpenAI',
         input: 0.15,
         output: 0.60,
         active: true,
-        description: 'Azure-hosted o1-mini - affordable compact O1 model with strong reasoning.'
+        description: 'Azure-hosted o1-mini - affordable compact O1 model with strong reasoning.',
+        deploymentName: 'o1-mini'
       },
       'azure-o3-mini': {
         vendor: 'AzureOpenAI',
         input: 0.5,
         output: 1.5,
         active: true,
-        description: 'Azure-hosted o3-mini - newest model with improved reasoning capabilities.'
+        description: 'Azure-hosted o3-mini - newest model with improved reasoning capabilities.',
+        deploymentName: 'o3-mini'
       },
       
       // Anthropic models

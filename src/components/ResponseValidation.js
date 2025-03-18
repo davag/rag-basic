@@ -170,6 +170,7 @@ const ResponseValidation = ({
   }, [isProcessing, setIsProcessing, validationResults]); // Include the missing dependencies
 
   const validateResponses = async () => {
+    console.log("Starting validation process with criteria:", customCriteria);
     setIsProcessing(true);
     
     const results = {};
@@ -177,6 +178,7 @@ const ResponseValidation = ({
     try {
       // Get validator model from localStorage (or use current state as fallback)
       const validatorModelToUse = localStorage.getItem('responseValidatorModel') || validatorModel;
+      console.log("Using validator model:", validatorModelToUse);
       
       // Create LLM instance for validation
       const llm = createLlmInstance(validatorModelToUse, '', {
@@ -188,8 +190,11 @@ const ResponseValidation = ({
         `Source: ${source.source}\nContent: ${source.content}`
       ).join('\n\n');
       
+      console.log(`Processing ${Object.keys(responses).length} model responses for validation`);
+      
       // Process each model response
       for (const model of Object.keys(responses)) {
+        console.log(`Validating model: ${model}`);
         setCurrentValidatingModel(model);
         
         const response = responses[model];
@@ -258,12 +263,19 @@ For example, use "Accuracy" not "accuracy" or "ACCURACY".
       setCurrentValidatingModel(null);
       // Update the validation results
       onValidationComplete(results);
+      console.log("Validation completed successfully with results:", Object.keys(results));
       
     } catch (err) {
-      window.console.error('Error validating responses:', err);
+      console.error('Error validating responses:', err);
+      console.log("Error details:", {
+        message: err.message,
+        stack: err.stack,
+        name: err.name
+      });
     } finally {
       setIsProcessing(false);
       setCurrentValidatingModel(null);
+      console.log("Validation process finished (in finally block)");
     }
   };
 
@@ -332,21 +344,22 @@ For example, use "Accuracy" not "accuracy" or "ACCURACY".
     // Table rows
     doc.setFontSize(10);
     Object.keys(metrics).forEach((model, index) => {
-      const metric = metrics[model];
-      const cost = calculateCost(model, metric.tokenUsage.total);
-      const costText = formatCost(cost);
-      
-      doc.text(model, margin, yPos);
-      doc.text(formatResponseTime(metric.responseTime), margin + 60, yPos);
-      doc.text(`${metric.tokenUsage.estimated ? '~' : ''}${metric.tokenUsage.total} tokens`, margin + 120, yPos);
-      doc.text(costText, margin + 180, yPos);
-      yPos += 7;
-      
-      // Draw a light line between rows
-      if (index < Object.keys(metrics).length - 1) {
-        doc.setDrawColor(230, 230, 230);
-        doc.line(margin, yPos, pageWidth - margin, yPos);
-        yPos += 3;
+      if (metrics[model]) {
+        const cost = calculateCost(model, metrics[model]?.tokenUsage?.total || 0);
+        const costText = formatCost(cost);
+        
+        doc.text(model, margin, yPos);
+        doc.text(formatResponseTime(metrics[model]?.responseTime || 0), margin + 60, yPos);
+        doc.text(`${metrics[model]?.tokenUsage?.estimated ? '~' : ''}${metrics[model]?.tokenUsage?.total || 0} tokens`, margin + 120, yPos);
+        doc.text(costText, margin + 180, yPos);
+        yPos += 7;
+        
+        // Draw a light line between rows
+        if (index < Object.keys(metrics).length - 1) {
+          doc.setDrawColor(230, 230, 230);
+          doc.line(margin, yPos, pageWidth - margin, yPos);
+          yPos += 3;
+        }
       }
     });
     
@@ -468,13 +481,13 @@ For example, use "Accuracy" not "accuracy" or "ACCURACY".
       
       // Add cost information
       if (metrics[model]) {
-        const cost = calculateCost(model, metrics[model].tokenUsage.total);
+        const cost = calculateCost(model, metrics[model]?.tokenUsage?.total || 0);
         doc.setFontSize(11);
         doc.text(`Estimated Cost: ${formatCost(cost)}`, margin, yPos);
         yPos += 7;
         
         doc.setFontSize(9);
-        doc.text(`(Based on ${metrics[model].tokenUsage.total} tokens)`, margin + 5, yPos);
+        doc.text(`(Based on ${metrics[model]?.tokenUsage?.total || 0} tokens)`, margin + 5, yPos);
         yPos += 7;
       }
     });
@@ -555,11 +568,11 @@ For example, use "Accuracy" not "accuracy" or "ACCURACY".
       if (!metrics[model]) return;
       
       // Get the cost
-      const cost = calculateCost(model, metrics[model].tokenUsage.total);
+      const cost = calculateCost(model, metrics[model]?.tokenUsage?.total || 0);
       modelCosts[model] = cost;
       
       // Get the response time
-      const responseTime = metrics[model].responseTime || 0;
+      const responseTime = metrics[model]?.responseTime || 0;
       modelResponseTimes[model] = responseTime;
       
       // Get the overall score
@@ -1074,7 +1087,7 @@ For example, use "Accuracy" not "accuracy" or "ACCURACY".
                       const modelCosts = {};
                       Object.keys(validationResults).forEach(model => {
                         if (metrics[model]) {
-                          modelCosts[model] = calculateCost(model, metrics[model].tokenUsage.total);
+                          modelCosts[model] = calculateCost(model, metrics[model]?.tokenUsage?.total || 0);
                         }
                       });
                       
@@ -1120,7 +1133,7 @@ For example, use "Accuracy" not "accuracy" or "ACCURACY".
                         const result = validationResults[model];
                         const cost = modelCosts[model] || 0;
                         const efficiencyScore = effectivenessData.effectivenessScores[model];
-                        const responseTime = metrics[model].responseTime || 0;
+                        const responseTime = metrics[model]?.responseTime || 0;
                         const overallScore = result.overall ? result.overall.score : 0;
                         
                         // Build a data object with all needed values
@@ -1203,7 +1216,7 @@ For example, use "Accuracy" not "accuracy" or "ACCURACY".
                               );
                             })}
                             <td style={{ textAlign: 'right', padding: '8px', borderBottom: '1px solid #ddd' }}>
-                              {formatResponseTime(metrics[model].responseTime)}
+                              {formatResponseTime(metrics[model]?.responseTime || 0)}
                             </td>
                             <td style={{ textAlign: 'right', padding: '8px', borderBottom: '1px solid #ddd' }}>
                               {formatCost(cost)}
@@ -1339,15 +1352,29 @@ For example, use "Accuracy" not "accuracy" or "ACCURACY".
           <Button 
             variant="contained" 
             color="primary"
-            onClick={() => {
+            onClick={async () => {
               setEditCriteriaOpen(false);
               // Save to localStorage
               localStorage.setItem('defaultEvaluationCriteria', customCriteria);
               localStorage.setItem('responseValidatorModel', validatorModel);
+              
+              // Check if we have responses to validate
+              if (!responses || Object.keys(responses).length === 0) {
+                console.error("No responses available to validate");
+                alert("No responses available to validate. Please run a query first.");
+                return;
+              }
+              
               // Clear validation results and run validation again
               setIsProcessing(true);
               onValidationComplete({});
-              validateResponses();
+              try {
+                console.log("Re-validating with new criteria:", customCriteria);
+                await validateResponses();
+              } catch (error) {
+                console.error("Error during revalidation:", error);
+                setIsProcessing(false);
+              }
             }}
             startIcon={<AssessmentIcon />}
           >
