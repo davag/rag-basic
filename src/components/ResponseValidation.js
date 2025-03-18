@@ -572,8 +572,8 @@ For example, use "Accuracy" not "accuracy" or "ACCURACY".
         const scoreRatio = modelScores[model] / bestScore;
         const costRatio = modelCosts[model] / lowestCost;
         const timeRatio = modelResponseTimes[model] / fastestTime;
-        // Combined metric that weights cost and speed equally
-        const efficiencyRatio = (costRatio * 0.5) + (timeRatio * 0.5);
+        // Combined metric that weights speed more heavily than cost (75% speed, 25% cost)
+        const efficiencyRatio = (costRatio * 0.25) + (timeRatio * 0.75);
         rawEffectivenessScores[model] = (scoreRatio / efficiencyRatio) * 100;
       }
     });
@@ -666,7 +666,7 @@ For example, use "Accuracy" not "accuracy" or "ACCURACY".
                       Efficiency Score: {formatEffectivenessScore(effectivenessData.effectivenessScores[effectivenessData.mostEffectiveModel])}
                     </Typography>
                     <Typography variant="body2" color="text.secondary" sx={{ mt: 1, fontStyle: 'italic' }}>
-                      Best balance of quality, cost, and speed (with equal weight on cost and speed)
+                      Best balance of quality, cost, and speed (with higher weight on speed)
                     </Typography>
                   </>
                 ) : (

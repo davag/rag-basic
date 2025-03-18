@@ -25,6 +25,40 @@ import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import { RecursiveCharacterTextSplitter } from 'langchain/text_splitter';
 import { OpenAIEmbeddings } from 'langchain/embeddings/openai';
 import { MemoryVectorStore } from 'langchain/vectorstores/memory';
+import axios from 'axios';
+
+// Custom class for Ollama embeddings
+class OllamaEmbeddings {
+  constructor(options = {}) {
+    this.model = options.modelName || 'nomic-embed-text';
+    this.ollamaEndpoint = options.ollamaEndpoint || process.env.REACT_APP_OLLAMA_API_URL || 'http://localhost:11434';
+    this.dimensions = 768; // nomic-embed-text embeddings are 768-dimensional
+  }
+
+  // Method to embed single text
+  async embedQuery(text) {
+    try {
+      const response = await axios.post(`${this.ollamaEndpoint}/api/embeddings`, {
+        model: this.model,
+        prompt: text
+      });
+      return response.data.embedding;
+    } catch (error) {
+      window.console.error('Error generating embedding from Ollama:', error);
+      throw new Error(`Ollama embeddings error: ${error.message}`);
+    }
+  }
+
+  // Method to embed documents
+  async embedDocuments(documents) {
+    const embeddings = [];
+    for (const doc of documents) {
+      const embedding = await this.embedQuery(doc);
+      embeddings.push(embedding);
+    }
+    return embeddings;
+  }
+}
 
 const VectorStoreConfig = ({ documents, namespaces, onVectorStoreCreated, isProcessing, setIsProcessing }) => {
   const [chunkSize, setChunkSize] = useState(1000);
@@ -82,11 +116,22 @@ const VectorStoreConfig = ({ documents, namespaces, onVectorStoreCreated, isProc
       // Split documents
       const splitDocs = await textSplitter.splitDocuments(documents);
       
-      // Create embeddings
-      const embeddings = new OpenAIEmbeddings({
-        openAIApiKey: process.env.REACT_APP_OPENAI_API_KEY,
-        modelName: embeddingModel
-      });
+      // Create embeddings based on selected model
+      let embeddings;
+      if (embeddingModel === 'nomic-embed-text') {
+        // Get Ollama endpoint from localStorage or use default
+        const ollamaEndpoint = localStorage.getItem('ollamaEndpoint') || process.env.REACT_APP_OLLAMA_API_URL || 'http://localhost:11434';
+        embeddings = new OllamaEmbeddings({
+          modelName: embeddingModel,
+          ollamaEndpoint: ollamaEndpoint
+        });
+      } else {
+        // Use OpenAI embeddings for OpenAI models
+        embeddings = new OpenAIEmbeddings({
+          openAIApiKey: process.env.REACT_APP_OPENAI_API_KEY,
+          modelName: embeddingModel
+        });
+      }
 
       // Create vector store - using MemoryVectorStore instead of FAISS for browser compatibility
       const vectorStore = await MemoryVectorStore.fromDocuments(splitDocs, embeddings);
@@ -230,10 +275,10 @@ const VectorStoreConfig = ({ documents, namespaces, onVectorStoreCreated, isProc
               >
                 <MenuItem value="text-embedding-3-small">text-embedding-3-small (OpenAI)</MenuItem>
                 <MenuItem value="text-embedding-3-large">text-embedding-3-large (OpenAI)</MenuItem>
-                <MenuItem value="text-embedding-ada-002">text-embedding-ada-002 (OpenAI Legacy)</MenuItem>
+                <MenuItem value="nomic-embed-text">nomic-embed-text (Ollama)</MenuItem>
               </Select>
               <Typography variant="body2" color="textSecondary" sx={{ mt: 1 }}>
-                The model used to create embeddings for your documents.
+                The model used to create embeddings for your documents. OpenAI models require an API key, while the Ollama option requires a local Ollama server with the nomic-embed-text model installed.
               </Typography>
             </FormControl>
           </Grid>
