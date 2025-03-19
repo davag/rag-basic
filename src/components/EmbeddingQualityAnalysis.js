@@ -42,7 +42,7 @@ import LightbulbIcon from '@mui/icons-material/Lightbulb';
 import CompareIcon from '@mui/icons-material/Compare';
 import { createLlmInstance } from '../utils/apiServices';
 import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip as ChartTooltip, Legend } from 'chart.js';
-import { Bar, Scatter } from 'react-chartjs-2';
+import { Scatter } from 'react-chartjs-2';
 import * as d3 from 'd3';
 
 ChartJS.register(
@@ -542,72 +542,23 @@ const EmbeddingQualityAnalysis = ({
   };
 
   // Fix unsafe loop reference
-  const calculatePairwiseSimilarities = (vectors) => {
-    return vectors.reduce((similarities, vector1, i) => {
-      const remainingVectors = vectors.slice(i + 1);
-      const newSimilarities = remainingVectors.map(vector2 => 
-        cosineSimilarity(vector1, vector2)
-      );
-      return [...similarities, ...newSimilarities];
-    }, []);
-  };
-
-  // Add visualization components
-  const renderDimensionImportance = (dimensionStats) => {
-    const data = {
-      labels: dimensionStats.map((_, i) => `Dim ${i + 1}`),
-      datasets: [{
-        label: 'Variance (Importance)',
-        data: dimensionStats.map(stat => stat.variance),
-        backgroundColor: 'rgba(54, 162, 235, 0.5)',
-        borderColor: 'rgba(54, 162, 235, 1)',
-        borderWidth: 1
-      }]
-    };
-
-    const options = {
-      responsive: true,
-      plugins: {
-        title: {
-          display: true,
-          text: 'Dimension Importance Distribution'
-        },
-        tooltip: {
-          callbacks: {
-            label: (context) => `Variance: ${context.raw.toFixed(4)}`
-          }
-        }
-      },
-      scales: {
-        y: {
-          beginAtZero: true,
-          title: {
-            display: true,
-            text: 'Variance'
-          }
-        }
-      }
-    };
-
-    return (
-      <Box sx={{ height: 300, mb: 3 }}>
-        <Bar data={data} options={options} />
-      </Box>
-    );
-  };
-
   const renderClusterVisualization = (embeddings, clusters) => {
     if (!embeddings || !clusters) {
       return <Typography color="error">No cluster data available</Typography>;
     }
 
-    // Create a copy of the vector for safe reference
-    const projectedData = calculatePCA(embeddings.map(v => Array.isArray(v) ? [...v] : 
-      v && typeof v === 'object' ? 
-        (Array.isArray(v.vector) ? [...v.vector] : 
-         Array.isArray(v.embedding) ? [...v.embedding] : 
-         Array.isArray(v.values) ? [...v.values] : null) 
-      : null).filter(Boolean), 2);
+    // Create a copy of the vectors for safe reference
+    const processedVectors = embeddings.map(v => {
+      if (Array.isArray(v)) return [...v];
+      if (v && typeof v === 'object') {
+        if (Array.isArray(v.vector)) return [...v.vector];
+        if (Array.isArray(v.embedding)) return [...v.embedding];
+        if (Array.isArray(v.values)) return [...v.values];
+      }
+      return null;
+    }).filter(Boolean);
+
+    const projectedData = calculatePCA(processedVectors, 2);
     
     const data = {
       datasets: clusters.map((cluster, i) => ({
@@ -659,11 +610,11 @@ const EmbeddingQualityAnalysis = ({
     );
   };
 
-  // Add calculateEigen function
+  // Add calculateEigen function with safe vector handling
   const calculateEigen = (matrix) => {
-    // Simple power iteration method for dominant eigenvalue/vector
     const n = matrix.length;
-    let vector = Array(n).fill(1);
+    const initialVector = Array(n).fill(1);
+    let vector = [...initialVector];
     let eigenvalue = 0;
     
     // Normalize vector
@@ -672,18 +623,23 @@ const EmbeddingQualityAnalysis = ({
       return v.map(x => x / norm);
     };
     
-    // Power iteration
+    // Power iteration with safe vector handling
     for (let iter = 0; iter < 50; iter++) {
-      // Matrix-vector multiplication
+      // Create new vector for this iteration
       const newVector = Array(n).fill(0);
+      
+      // Matrix-vector multiplication
       for (let i = 0; i < n; i++) {
+        let sum = 0;
         for (let j = 0; j < n; j++) {
-          newVector[i] += matrix[i][j] * vector[j];
+          sum += matrix[i][j] * vector[j];
         }
+        newVector[i] = sum;
       }
       
       // Update eigenvalue and normalize vector
-      vector = normalize(newVector);
+      const normalizedVector = normalize(newVector);
+      vector = normalizedVector;
       eigenvalue = newVector.reduce((sum, x, i) => sum + x * vector[i], 0);
     }
     
@@ -691,6 +647,60 @@ const EmbeddingQualityAnalysis = ({
       eigenvalues: [eigenvalue],
       eigenvectors: [vector]
     };
+  };
+
+  // Add renderDimensionImportance function
+  const renderDimensionImportance = (dimensionStats) => {
+    if (!dimensionStats || dimensionStats.length === 0) {
+      return <Typography color="error">No dimension data available</Typography>;
+    }
+
+    const data = {
+      labels: dimensionStats.map((_, i) => `Dimension ${i + 1}`),
+      datasets: [{
+        label: 'Variance',
+        data: dimensionStats.map(stat => stat.variance),
+        backgroundColor: 'rgba(54, 162, 235, 0.5)',
+        borderColor: 'rgba(54, 162, 235, 1)',
+        borderWidth: 1
+      }]
+    };
+
+    const options = {
+      responsive: true,
+      plugins: {
+        legend: {
+          display: true
+        },
+        title: {
+          display: true,
+          text: 'Dimension Importance Distribution'
+        },
+        tooltip: {
+          callbacks: {
+            label: (context) => `Variance: ${context.raw.toFixed(4)}`
+          }
+        }
+      },
+      scales: {
+        y: {
+          beginAtZero: true,
+          title: {
+            display: true,
+            text: 'Variance'
+          }
+        }
+      }
+    };
+
+    return (
+      <Box sx={{ height: 300, mb: 3 }}>
+        <Typography variant="body2" color="textSecondary" gutterBottom>
+          This chart shows the distribution of variance across dimensions.
+          Higher variance indicates more important dimensions.
+        </Typography>
+      </Box>
+    );
   };
 
   return (

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Typography, 
   Box, 
@@ -22,9 +22,11 @@ import {
 } from '@mui/material';
 import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import RecommendIcon from '@mui/icons-material/Recommend';
 import { RecursiveCharacterTextSplitter } from 'langchain/text_splitter';
 import { OpenAIEmbeddings } from 'langchain/embeddings/openai';
 import { MemoryVectorStore } from 'langchain/vectorstores/memory';
+import { recommendEmbeddingModel } from '../utils/embeddingRecommender';
 import axios from 'axios';
 
 // Custom class for Ollama embeddings
@@ -71,10 +73,24 @@ const VectorStoreConfig = ({
   const [chunkSize, setChunkSize] = useState(1000);
   const [chunkOverlap, setChunkOverlap] = useState(200);
   const [embeddingModel, setEmbeddingModel] = useState('text-embedding-3-small');
+  const [recommendation, setRecommendation] = useState(null);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(false);
   const [namespaceSummary, setNamespaceSummary] = useState({});
   const [helpExpanded, setHelpExpanded] = useState(false);
+
+  // Get model recommendation when documents change
+  useEffect(() => {
+    if (documents && documents.length > 0) {
+      const modelRec = recommendEmbeddingModel(documents);
+      setRecommendation(modelRec);
+      
+      // Automatically set the recommended model if confidence is high
+      if (modelRec.confidence > 0.8) {
+        setEmbeddingModel(modelRec.model);
+      }
+    }
+  }, [documents]);
 
   const handleChunkSizeChange = (event, newValue) => {
     setChunkSize(newValue);
@@ -205,6 +221,28 @@ const VectorStoreConfig = ({
         In this step, your documents will be split into smaller chunks, converted into vector embeddings, and organized into a searchable database. This process is crucial for efficient retrieval of relevant information when you ask questions.
       </Typography>
       
+      {recommendation && (
+        <Alert 
+          severity="info" 
+          sx={{ mb: 3 }}
+          icon={<RecommendIcon />}
+          action={
+            <Button 
+              color="inherit" 
+              size="small"
+              onClick={() => setEmbeddingModel(recommendation.model)}
+            >
+              Use Recommendation
+            </Button>
+          }
+        >
+          <Typography variant="subtitle2" gutterBottom>
+            Model Recommendation
+          </Typography>
+          {recommendation.reason}
+        </Alert>
+      )}
+
       <Accordion 
         expanded={helpExpanded} 
         onChange={() => setHelpExpanded(!helpExpanded)}
@@ -307,8 +345,12 @@ const VectorStoreConfig = ({
                 onChange={handleEmbeddingModelChange}
                 disabled={isProcessing}
               >
-                <MenuItem value="text-embedding-3-small">text-embedding-3-small (OpenAI)</MenuItem>
-                <MenuItem value="text-embedding-3-large">text-embedding-3-large (OpenAI)</MenuItem>
+                <MenuItem value="text-embedding-3-small">
+                  text-embedding-3-small (OpenAI) - Fast, efficient, good for most use cases
+                </MenuItem>
+                <MenuItem value="text-embedding-3-large">
+                  text-embedding-3-large (OpenAI) - Higher accuracy, better for technical/complex content
+                </MenuItem>
                 <MenuItem disabled>────── Azure OpenAI Models ──────</MenuItem>
                 <MenuItem value="azure-text-embedding-3-small">azure-text-embedding-3-small (Azure)</MenuItem>
                 <MenuItem value="azure-text-embedding-3-large">azure-text-embedding-3-large (Azure)</MenuItem>
