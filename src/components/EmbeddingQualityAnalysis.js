@@ -91,6 +91,16 @@ const EmbeddingQualityAnalysis = ({
   // Analyze semantic coherence of embeddings
   const analyzeSemanticCoherence = async (embeddings) => {
     try {
+      if (!documents || documents.length === 0) {
+        console.error('No documents available for semantic coherence analysis');
+        return {
+          coherenceScore: 0,
+          strengths: ['Unable to analyze semantic coherence: No documents available'],
+          weaknesses: ['Document data is missing or empty'],
+          recommendations: ['Load documents before analyzing embeddings']
+        };
+      }
+      
       const llm = createLlmInstance(analysisModel, 'You are an expert at analyzing semantic relationships in embeddings. Evaluate how well the embeddings capture semantic meaning.');
       
       // Create pairs of related and unrelated content
@@ -102,8 +112,8 @@ const EmbeddingQualityAnalysis = ({
             i,
             j,
             similarity,
-            content1: documents[i].pageContent.substring(0, 200),
-            content2: documents[j].pageContent.substring(0, 200)
+            content1: documents[i]?.pageContent?.substring(0, 200) || 'No content available',
+            content2: documents[j]?.pageContent?.substring(0, 200) || 'No content available'
           });
         }
       }
@@ -226,6 +236,16 @@ const EmbeddingQualityAnalysis = ({
   // Analyze clustering quality
   const analyzeClustering = async (embeddings) => {
     try {
+      if (!documents || documents.length === 0) {
+        console.error('No documents available for clustering analysis');
+        return {
+          clusterQualityScore: 0,
+          clusterSizes: [0, 0, 0, 0, 0],
+          coherence: [0, 0, 0, 0, 0],
+          recommendations: ['Load documents before analyzing clusters']
+        };
+      }
+      
       const llm = createLlmInstance(analysisModel, 'You are an expert at analyzing clustering quality in embeddings. Evaluate how well the embeddings group related content.');
       
       // Perform simple k-means clustering
@@ -251,7 +271,12 @@ const EmbeddingQualityAnalysis = ({
       
       // Get sample content from each cluster
       const clusterSamples = clusters.map(cluster => 
-        cluster.slice(0, 3).map(i => documents[i].pageContent.substring(0, 200))
+        cluster.slice(0, 3).map(i => {
+          if (!documents[i] || !documents[i].pageContent) {
+            return "No content available";
+          }
+          return documents[i].pageContent.substring(0, 200);
+        })
       );
       
       const prompt = `Analyze these clusters of content:
@@ -298,39 +323,101 @@ const EmbeddingQualityAnalysis = ({
 
   // Generate actionable insights
   const generateInsights = (results) => {
-    const { metrics, weaknesses, coherence } = results;
-    let insights = [];
-
-    if (metrics) {
-      // Add insights based on metrics
-      if (metrics.accuracy < 0.8) {
-        insights.push("Model accuracy is below target threshold of 80%");
+    if (!results) {
+      return {
+        optimization: [{ title: 'No data', description: 'No analysis results available', action: 'Run an analysis first', impact: 'high' }],
+        quality: [{ title: 'No data', description: 'No analysis results available', action: 'Run an analysis first', impact: 'high' }],
+        performance: [{ title: 'No data', description: 'No analysis results available', action: 'Run an analysis first', impact: 'high' }]
+      };
+    }
+    
+    const insights = {
+      optimization: [],
+      quality: [],
+      performance: []
+    };
+    
+    // Process semantic analysis results
+    if (results.semantic) {
+      // Add quality insights based on semantic coherence score
+      if (results.semantic.coherenceScore < 6) {
+        insights.quality.push({
+          title: 'Low Semantic Coherence',
+          description: 'Embeddings are not capturing semantic relationships effectively',
+          action: 'Consider using a more advanced embedding model or fine-tuning',
+          impact: 'high'
+        });
       }
-      if (metrics.latency > 200) {
-        insights.push("Response times are higher than expected");
+      
+      // Add weaknesses as optimization insights
+      if (results.semantic.weaknesses && results.semantic.weaknesses.length > 0) {
+        results.semantic.weaknesses.forEach(weakness => {
+          insights.optimization.push({
+            title: 'Semantic Weakness',
+            description: weakness,
+            action: 'Address this specific weakness in your embeddings',
+            impact: 'medium'
+          });
+        });
+      }
+      
+      // Add recommendations as performance insights
+      if (results.semantic.recommendations && results.semantic.recommendations.length > 0) {
+        results.semantic.recommendations.forEach(rec => {
+          insights.performance.push({
+            title: 'Recommendation',
+            description: rec,
+            action: 'Follow this recommendation to improve embedding quality',
+            impact: 'medium'
+          });
+        });
       }
     }
-
-    if (weaknesses && weaknesses.length > 0) {
-      // Add insights from identified weaknesses
-      insights.push(...weaknesses.map(w => `Identified weakness: ${w}`));
+    
+    // Add default insights if categories are empty
+    if (insights.optimization.length === 0) {
+      insights.optimization.push({
+        title: 'No optimization insights',
+        description: 'No specific optimization issues were identified',
+        action: 'Continue monitoring embedding quality',
+        impact: 'low'
+      });
     }
-
-    if (coherence) {
-      // Add insights about semantic coherence
-      if (coherence < 0.7) {
-        insights.push("Low semantic coherence detected in embeddings");
-      } else if (coherence > 0.9) {
-        insights.push("High semantic coherence observed");
-      }
+    
+    if (insights.quality.length === 0) {
+      insights.quality.push({
+        title: 'No quality issues',
+        description: 'Embeddings appear to be of acceptable quality',
+        action: 'Consider fine-tuning for domain-specific improvements',
+        impact: 'low'
+      });
     }
-
+    
+    if (insights.performance.length === 0) {
+      insights.performance.push({
+        title: 'No performance insights',
+        description: 'No specific performance issues were identified',
+        action: 'Continue monitoring embedding performance',
+        impact: 'low'
+      });
+    }
+    
     return insights;
   };
 
   // Compare with previous results
   const compareResults = (current, previous) => {
-    if (!current || !previous) return null;
+    if (!current || !previous) {
+      return {
+        summary: [
+          {
+            metric: 'No Comparison Available',
+            change: 'N/A',
+            impact: 'low'
+          }
+        ]
+      };
+    }
 
     const comparison = {
       semantic: null,
@@ -340,50 +427,80 @@ const EmbeddingQualityAnalysis = ({
     };
 
     // Compare semantic coherence
-    if (current.semantic && previous.semantic) {
+    if (current.semantic && previous.semantic && 
+        typeof current.semantic.coherenceScore === 'number' && 
+        typeof previous.semantic.coherenceScore === 'number') {
+      
       const diff = current.semantic.coherenceScore - previous.semantic.coherenceScore;
+      const percentChange = previous.semantic.coherenceScore !== 0 
+        ? (diff / previous.semantic.coherenceScore) * 100 
+        : 0;
+        
       comparison.semantic = {
         scoreDiff: diff,
         improved: diff > 0,
-        percentChange: (diff / previous.semantic.coherenceScore) * 100
+        percentChange: percentChange
       };
+      
       comparison.summary.push({
         metric: 'Semantic Coherence',
-        change: `${diff > 0 ? '+' : ''}${diff.toFixed(2)} (${comparison.semantic.percentChange.toFixed(1)}%)`,
+        change: `${diff > 0 ? '+' : ''}${diff.toFixed(2)} (${percentChange.toFixed(1)}%)`,
         impact: Math.abs(diff) > 1 ? 'high' : 'low'
       });
     }
 
     // Compare dimensionality
-    if (current.dimensionality && previous.dimensionality) {
+    if (current.dimensionality?.metrics?.avgVariance !== undefined && 
+        previous.dimensionality?.metrics?.avgVariance !== undefined) {
+        
       const currentAvgVar = current.dimensionality.metrics.avgVariance;
       const previousAvgVar = previous.dimensionality.metrics.avgVariance;
       const diff = currentAvgVar - previousAvgVar;
+      const percentChange = previousAvgVar !== 0 
+        ? (diff / previousAvgVar) * 100 
+        : 0;
       
       comparison.dimensionality = {
         varianceDiff: diff,
         improved: diff > 0,
-        percentChange: (diff / previousAvgVar) * 100
+        percentChange: percentChange
       };
+      
       comparison.summary.push({
         metric: 'Information Distribution',
-        change: `${diff > 0 ? '+' : ''}${diff.toFixed(4)} (${comparison.dimensionality.percentChange.toFixed(1)}%)`,
-        impact: Math.abs(comparison.dimensionality.percentChange) > 10 ? 'high' : 'low'
+        change: `${diff > 0 ? '+' : ''}${diff.toFixed(4)} (${percentChange.toFixed(1)}%)`,
+        impact: Math.abs(percentChange) > 10 ? 'high' : 'low'
       });
     }
 
     // Compare clustering
-    if (current.clustering && previous.clustering) {
+    if (current.clustering?.clusterQualityScore !== undefined && 
+        previous.clustering?.clusterQualityScore !== undefined) {
+        
       const diff = current.clustering.clusterQualityScore - previous.clustering.clusterQualityScore;
+      const percentChange = previous.clustering.clusterQualityScore !== 0 
+        ? (diff / previous.clustering.clusterQualityScore) * 100 
+        : 0;
+        
       comparison.clustering = {
         scoreDiff: diff,
         improved: diff > 0,
-        percentChange: (diff / previous.clustering.clusterQualityScore) * 100
+        percentChange: percentChange
       };
+      
       comparison.summary.push({
         metric: 'Clustering Quality',
-        change: `${diff > 0 ? '+' : ''}${diff.toFixed(2)} (${comparison.clustering.percentChange.toFixed(1)}%)`,
+        change: `${diff > 0 ? '+' : ''}${diff.toFixed(2)} (${percentChange.toFixed(1)}%)`,
         impact: Math.abs(diff) > 1 ? 'high' : 'low'
+      });
+    }
+    
+    // If no comparisons were made, add a default summary item
+    if (comparison.summary.length === 0) {
+      comparison.summary.push({
+        metric: 'No Comparable Metrics',
+        change: 'N/A',
+        impact: 'low'
       });
     }
 
@@ -438,16 +555,45 @@ const EmbeddingQualityAnalysis = ({
       };
       
       // Run selected analyses
-      if (selectedMetric === 'semantic') {
-        results.semantic = await analyzeSemanticCoherence(embeddings);
+      try {
+        if (selectedMetric === 'semantic') {
+          results.semantic = await analyzeSemanticCoherence(embeddings);
+        }
+      } catch (error) {
+        console.error('Error in semantic analysis:', error);
+        results.semantic = { 
+          coherenceScore: 0,
+          strengths: ['Error during analysis'],
+          weaknesses: [error.message],
+          recommendations: ['Try with fewer documents or a different analysis approach']
+        };
       }
       
-      if (selectedMetric === 'dimensionality') {
-        results.dimensionality = analyzeDimensionality(embeddings);
+      try {
+        if (selectedMetric === 'dimensionality') {
+          results.dimensionality = analyzeDimensionality(embeddings);
+        }
+      } catch (error) {
+        console.error('Error in dimensionality analysis:', error);
+        results.dimensionality = {
+          metrics: { avgVariance: 0, varianceRatio: 0, dimensions: embeddings[0].length },
+          dimensionStats: []
+        };
       }
       
-      if (selectedMetric === 'clustering') {
-        results.clustering = await analyzeClustering(embeddings);
+      try {
+        if (selectedMetric === 'clustering') {
+          results.clustering = await analyzeClustering(embeddings);
+        }
+      } catch (error) {
+        console.error('Error in clustering analysis:', error);
+        results.clustering = {
+          clusterQualityScore: 0,
+          clusterSizes: [0, 0, 0, 0, 0],
+          coherence: [0, 0, 0, 0, 0],
+          recommendations: ['Error during analysis: ' + error.message],
+          clusters: []
+        };
       }
       
       // Generate insights and comparison
@@ -703,14 +849,16 @@ const EmbeddingQualityAnalysis = ({
                 label="Analysis Model"
                 onChange={(e) => setAnalysisModel(e.target.value)}
               >
-                {Object.keys(availableModels || {}).filter(model => 
-                  availableModels[model].active && 
-                  (model.includes('gpt-4') || model.includes('claude'))
-                ).map(model => (
-                  <MenuItem key={model} value={model}>
-                    {model}
-                  </MenuItem>
-                ))}
+                {availableModels && typeof availableModels === 'object' ? 
+                  Object.keys(availableModels).filter(model => 
+                    availableModels[model]?.active && 
+                    (model.includes('gpt-4') || model.includes('claude'))
+                  ).map(model => (
+                    <MenuItem key={model} value={model}>
+                      {model}
+                    </MenuItem>
+                  ))
+                : null}
                 <MenuItem value="gpt-4o-mini">gpt-4o-mini</MenuItem>
                 <MenuItem value="gpt-4o">gpt-4o</MenuItem>
               </Select>
@@ -799,12 +947,12 @@ const EmbeddingQualityAnalysis = ({
                           Strengths
                         </Typography>
                         <List>
-                          {analysisResults.semantic.strengths.map((strength, i) => (
+                          {analysisResults.semantic?.strengths?.map((strength, i) => (
                             <ListItem key={i}>
                               <CheckCircleIcon color="success" sx={{ mr: 1 }} />
                               <ListItemText primary={strength} />
                             </ListItem>
-                          ))}
+                          )) || <ListItem><ListItemText primary="No strengths data available" /></ListItem>}
                         </List>
                       </CardContent>
                     </Card>
@@ -817,12 +965,12 @@ const EmbeddingQualityAnalysis = ({
                           Weaknesses
                         </Typography>
                         <List>
-                          {analysisResults.semantic.weaknesses.map((weakness, i) => (
+                          {analysisResults.semantic?.weaknesses?.map((weakness, i) => (
                             <ListItem key={i}>
                               <ErrorIcon color="error" sx={{ mr: 1 }} />
                               <ListItemText primary={weakness} />
                             </ListItem>
-                          ))}
+                          )) || <ListItem><ListItemText primary="No weaknesses data available" /></ListItem>}
                         </List>
                       </CardContent>
                     </Card>
@@ -835,12 +983,12 @@ const EmbeddingQualityAnalysis = ({
                           Recommendations
                         </Typography>
                         <List>
-                          {analysisResults.semantic.recommendations.map((rec, i) => (
+                          {analysisResults.semantic?.recommendations?.map((rec, i) => (
                             <ListItem key={i}>
                               <LoopIcon sx={{ mr: 1, color: 'primary.main' }} />
                               <ListItemText primary={rec} />
                             </ListItem>
-                          ))}
+                          )) || <ListItem><ListItemText primary="No recommendations available" /></ListItem>}
                         </List>
                       </CardContent>
                     </Card>
@@ -1038,19 +1186,19 @@ const EmbeddingQualityAnalysis = ({
                               </TableRow>
                             </TableHead>
                             <TableBody>
-                              {analysisResults.clustering.clusterSizes.map((size, i) => (
+                              {analysisResults.clustering?.clusterSizes?.map((size, i) => (
                                 <TableRow key={i}>
                                   <TableCell>{i + 1}</TableCell>
                                   <TableCell align="right">{size}</TableCell>
                                   <TableCell>
                                     <Chip 
                                       size="small"
-                                      label={getQualityLevel(analysisResults.clustering.coherence[i]).text} 
-                                      sx={{ bgcolor: getQualityLevel(analysisResults.clustering.coherence[i]).color, color: 'white' }}
+                                      label={getQualityLevel(analysisResults.clustering?.coherence?.[i] || 0).text} 
+                                      sx={{ bgcolor: getQualityLevel(analysisResults.clustering?.coherence?.[i] || 0).color, color: 'white' }}
                                     />
                                   </TableCell>
                                 </TableRow>
-                              ))}
+                              )) || <TableRow><TableCell colSpan={3}>No cluster size data available</TableCell></TableRow>}
                             </TableBody>
                           </Table>
                         </TableContainer>
@@ -1065,12 +1213,12 @@ const EmbeddingQualityAnalysis = ({
                           Recommendations
                         </Typography>
                         <List>
-                          {analysisResults.clustering.recommendations.map((rec, i) => (
+                          {analysisResults.clustering?.recommendations?.map((rec, i) => (
                             <ListItem key={i}>
                               <LoopIcon sx={{ mr: 1, color: 'primary.main' }} />
                               <ListItemText primary={rec} />
                             </ListItem>
-                          ))}
+                          )) || <ListItem><ListItemText primary="No recommendations available" /></ListItem>}
                         </List>
                       </CardContent>
                     </Card>
@@ -1083,7 +1231,7 @@ const EmbeddingQualityAnalysis = ({
                           <Typography variant="subtitle1" gutterBottom>
                             Cluster Visualization
                           </Typography>
-                          {renderClusterVisualization(
+                          {vectorStore?.memoryVectors && documents ? renderClusterVisualization(
                             vectorStore.memoryVectors
                               .slice(0, sampleSize)
                               .map(vector => {
@@ -1097,6 +1245,10 @@ const EmbeddingQualityAnalysis = ({
                               })
                               .filter(Boolean),
                             analysisResults.clustering.clusters
+                          ) : (
+                            <Alert severity="info">
+                              Unable to render cluster visualization. Vector data or documents not available.
+                            </Alert>
                           )}
                         </CardContent>
                       </Card>
@@ -1116,13 +1268,13 @@ const EmbeddingQualityAnalysis = ({
               </Typography>
               
               <Grid container spacing={2}>
-                {['optimization', 'quality', 'performance'].map(category => (
+                {analysisResults.insights && ['optimization', 'quality', 'performance'].map(category => (
                   <Grid item xs={12} md={4} key={category}>
                     <Typography variant="subtitle1" gutterBottom sx={{ textTransform: 'capitalize' }}>
                       {category} Insights
                     </Typography>
                     <List dense>
-                      {analysisResults.insights[category].map((insight, idx) => (
+                      {analysisResults.insights[category]?.map((insight, idx) => (
                         <ListItem key={idx}>
                           <ListItemText
                             primary={insight.title}
@@ -1143,7 +1295,7 @@ const EmbeddingQualityAnalysis = ({
                             color={insight.impact === 'high' ? 'error' : insight.impact === 'medium' ? 'warning' : 'info'}
                           />
                         </ListItem>
-                      ))}
+                      )) || <ListItem><ListItemText primary={`No ${category} insights available`} /></ListItem>}
                     </List>
                   </Grid>
                 ))}
@@ -1170,7 +1322,7 @@ const EmbeddingQualityAnalysis = ({
                       </TableRow>
                     </TableHead>
                     <TableBody>
-                      {analysisResults.comparison.summary.map((item, idx) => (
+                      {analysisResults.comparison?.summary?.map((item, idx) => (
                         <TableRow key={idx}>
                           <TableCell>{item.metric}</TableCell>
                           <TableCell align="right">
@@ -1188,7 +1340,7 @@ const EmbeddingQualityAnalysis = ({
                             />
                           </TableCell>
                         </TableRow>
-                      ))}
+                      )) || <TableRow><TableCell colSpan={3}>No comparison data available</TableCell></TableRow>}
                     </TableBody>
                   </Table>
                 </TableContainer>

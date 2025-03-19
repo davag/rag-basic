@@ -33,6 +33,87 @@ import { createLlmInstance, calculateCost } from '../utils/apiServices';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
 
+// Helper function to find metrics for any model regardless of storage pattern
+const findMetrics = (metrics, modelKey) => {
+  if (!metrics || !modelKey) return null;
+  
+  // Direct hit - metrics stored directly under the model key
+  if (metrics[modelKey]) {
+    console.log(`Found direct metrics for ${modelKey}`);
+    return metrics[modelKey];
+  }
+  
+  // Check if this is a composite key like "Set 1-gpt-4o-mini"
+  if (modelKey.includes('-')) {
+    // Try to extract set name and model name
+    const setMatch = modelKey.match(/^(Set \d+)-(.+)$/);
+    
+    if (setMatch) {
+      const setName = setMatch[1]; // e.g., "Set 2"
+      const modelName = setMatch[2]; // e.g., "gpt-4o-mini"
+      
+      // Case 1: Nested structure - metrics[setName][modelName]
+      if (metrics[setName] && metrics[setName][modelName]) {
+        console.log(`Found nested metrics for ${modelName} in ${setName}`);
+        return metrics[setName][modelName];
+      }
+      
+      // Case 2: Just the model name
+      if (metrics[modelName]) {
+        console.log(`Found metrics by model name ${modelName}`);
+        return metrics[modelName];
+      }
+      
+      // Case 3: Just the set name
+      if (metrics[setName]) {
+        console.log(`Found metrics by set name ${setName}`);
+        return metrics[setName];
+      }
+      
+      // Case 4: Dot notation - metrics["Set 1.gpt-4o-mini"]
+      const dotKey = `${setName}.${modelName}`;
+      if (metrics[dotKey]) {
+        console.log(`Found metrics with dot notation ${dotKey}`);
+        return metrics[dotKey];
+      }
+      
+      // Case 5: Check special sets that might contain this model
+      const commonSets = ["Set 1", "Set 2", "Set 3", "Set 4", "Set 5"];
+      for (const set of commonSets) {
+        if (metrics[set] && metrics[set][modelName]) {
+          console.log(`Found metrics in ${set} for ${modelName}`);
+          return metrics[set][modelName];
+        }
+      }
+      
+      // Case 6: For hyphenated model names like "gpt-4o-mini", try base model
+      if (modelName.includes('-')) {
+        const baseParts = modelName.split('-');
+        // Try various combinations of the base model name
+        for (let i = 1; i < baseParts.length; i++) {
+          const baseModel = baseParts.slice(0, i+1).join('-');
+          
+          // Try base model in the set
+          if (metrics[setName] && metrics[setName][baseModel]) {
+            console.log(`Found metrics for base model ${baseModel} in ${setName}`);
+            return metrics[setName][baseModel];
+          }
+          
+          // Try base model directly
+          if (metrics[baseModel]) {
+            console.log(`Found metrics for base model ${baseModel}`);
+            return metrics[baseModel];
+          }
+        }
+      }
+    }
+  }
+  
+  // If all else fails, log but return null
+  console.warn(`Could not find metrics for ${modelKey} in any expected location`);
+  return null;
+};
+
 // Reusable model dropdown component to avoid duplication
 const ModelDropdown = ({ value, onChange, sx = {} }) => (
   <Select
@@ -188,10 +269,31 @@ const ResponseValidation = ({
     }
   }, []);
 
+  // Get the vendor name of a model, or use Set 1, Set 2, etc. for unknown models
+  const getModelVendor = (model) => {
+    if (model.includes('azure-')) return 'AzureOpenAI';
+    if (model.startsWith('gpt') || model.startsWith('o1') || model.startsWith('o3')) return 'OpenAI';
+    if (model.startsWith('claude')) return 'Anthropic';
+    if (model.includes('llama') || model.includes('mistral') || model.includes('gemma')) return 'Ollama';
+    
+    // Check if the model name already contains "Set X" pattern
+    if (/Set \d+/i.test(model)) {
+      return model;
+    }
+    
+    // For unknown models, extract number if it ends with a number like "model1" or "set1"
+    const numMatch = model.match(/(\d+)$/);
+    if (numMatch) {
+      return `Set ${numMatch[1]}`;
+    }
+    
+    return 'Set 1'; // Default to Set 1 for completely unknown models
+  };
+
   // Reset validation state only when component is first mounted, not on re-renders
   useEffect(() => {
     // Only reset if there are no validation results yet
-    if (Object.keys(validationResults).length === 0) {
+    if (!validationResults || Object.keys(validationResults || {}).length === 0) {
       setCurrentValidatingModel(null);
       
       // If we're not processing, make sure isProcessing is false
@@ -204,9 +306,14 @@ const ResponseValidation = ({
     return () => {
       // Clean up any ongoing processes if needed
     };
-  }, [isProcessing, setIsProcessing, validationResults]); // Include the missing dependencies
+  }, [isProcessing, setIsProcessing, validationResults]);
 
   const validateResponses = async () => {
+    if (!responses || Object.keys(responses || {}).length === 0) {
+      console.error("No responses to validate");
+      return;
+    }
+    
     console.log("Starting validation process with criteria:", customCriteria);
     setIsProcessing(true);
     
@@ -245,10 +352,214 @@ const ResponseValidation = ({
       // Process each model response
       for (const model of Object.keys(responses)) {
         console.log(`Validating model: ${model}`);
+        
+        // Handle models inside Sets differently so we can display them better
+        if (model.startsWith('Set ') && 
+            typeof responses[model] === 'object' && 
+            !Array.isArray(responses[model])) {
+          
+          const setContent = responses[model];
+          
+          // Check if this set contains model keys
+          const modelKeys = Object.keys(setContent).filter(key => 
+            typeof setContent[key] === 'object' || 
+            typeof setContent[key] === 'string'
+          );
+          
+          if (modelKeys.length > 0) {
+            // We have nested models inside this set
+            console.log(`Set ${model} contains models: ${modelKeys.join(', ')}`);
+            
+            // For each model in the set, validate it
+            for (const modelKey of modelKeys) {
+              const nestedModel = setContent[modelKey];
+              const displayKey = `${modelKey} / ${model}`;
+              setCurrentValidatingModel(displayKey);
+              
+              // Create result key in the format the rest of the app expects
+              const resultKey = `${model}-${modelKey}`;
+              
+              console.log(`Validating nested model: ${displayKey} (result key: ${resultKey})`);
+              
+              // Extract the response content for this nested model
+              let answer = '';
+              if (typeof nestedModel === 'string') {
+                answer = nestedModel;
+              } else if (nestedModel) {
+                if (nestedModel.answer) {
+                  answer = typeof nestedModel.answer === 'object' ? nestedModel.answer.text : nestedModel.answer;
+                } else if (nestedModel.response) {
+                  answer = nestedModel.response;
+                } else if (nestedModel.text) {
+                  answer = nestedModel.text;
+                } else {
+                  answer = JSON.stringify(nestedModel);
+                }
+              }
+              
+              // Create evaluation prompt for this nested model
+              const prompt = `
+You are an expert evaluator of RAG (Retrieval-Augmented Generation) systems. Your task is to evaluate the quality of an AI assistant's response to a user query.
+
+USER QUERY:
+${currentQuery}
+
+CONTEXT PROVIDED TO THE AI ASSISTANT:
+${contextText}
+
+AI ASSISTANT RESPONSE (from ${modelKey} - ${getModelVendor(modelKey)}):
+${answer}
+
+EVALUATION CRITERIA:
+${customCriteria}
+
+Please evaluate the response on a scale of 1-100 for each criterion, and provide a brief explanation for each score.
+Then, calculate an overall score (1-100) that represents the overall quality of the response.
+
+Format your response as a JSON object with the following structure:
+{
+  "criteria": {
+    "Criterion1": {
+      "score": number,
+      "explanation": "string"
+    },
+    ...
+  },
+  "overall": {
+    "score": number,
+    "explanation": "string"
+  }
+}
+
+IMPORTANT: Use consistent Title Case for all criteria names (first letter capitalized, rest lowercase).
+IMPORTANT: Your response MUST be valid JSON. Do not include any text before or after the JSON object.
+For example, use "Accuracy" not "accuracy" or "ACCURACY".
+`;
+              
+              try {
+                console.log(`Sending evaluation request to ${validatorModelToUse} for nested model: ${modelKey} in ${model}`);
+                
+                // Call the LLM for evaluation
+                const evaluationResult = await llm.invoke(prompt);
+                
+                // Log raw result for debugging
+                console.log(`Raw evaluation result for ${modelKey} in ${model} (first 100 chars):`, 
+                  evaluationResult.substring(0, 100) + (evaluationResult.length > 100 ? '...' : ''));
+                
+                // Parse the JSON response with multiple attempts and cleaning
+                try {
+                  // First attempt: direct JSON parse
+                  try {
+                    const parsedResult = JSON.parse(evaluationResult);
+                    results[resultKey] = parsedResult;
+                    console.log(`Successfully parsed result for ${modelKey} in ${model} on first attempt`);
+                    continue; // Skip to next model
+                  } catch (directParseError) {
+                    console.log(`Direct JSON parse failed for ${modelKey} in ${model}, trying to extract JSON`);
+                  }
+                  
+                  // Second attempt: Extract JSON from the response with regex
+                  const jsonMatch = evaluationResult.match(/\{[\s\S]*\}/);
+                  if (jsonMatch) {
+                    console.log("Extracted JSON (first 100 chars):", 
+                      jsonMatch[0].substring(0, 100) + (jsonMatch[0].length > 100 ? '...' : ''));
+                    
+                    try {
+                      const parsedResult = JSON.parse(jsonMatch[0]);
+                      results[resultKey] = parsedResult;
+                      console.log(`Successfully parsed extracted JSON for ${modelKey} in ${model}`);
+                      continue; // Skip to next model if successful
+                    } catch (jsonError) {
+                      console.error(`JSON parse error for extracted content from ${modelKey} in ${model}:`, jsonError);
+                    }
+                    
+                    // Third attempt: Clean up the JSON before parsing
+                    console.log(`Attempting to clean and parse JSON for ${modelKey} in ${model}`);
+                    const cleanedJson = jsonMatch[0]
+                      .replace(/\\'/g, "'")
+                      .replace(/\\"/g, '"')
+                      .replace(/\\n/g, ' ')
+                      .replace(/\s+/g, ' ')
+                      .replace(/,\s*}/g, '}')  // Remove trailing commas in objects
+                      .replace(/,\s*]/g, ']'); // Remove trailing commas in arrays
+                    
+                    try {
+                      const parsedResult = JSON.parse(cleanedJson);
+                      results[resultKey] = parsedResult;
+                      console.log(`Successfully parsed cleaned JSON for ${modelKey} in ${model}`);
+                      continue; // Skip to next model if successful
+                    } catch (cleanJsonError) {
+                      console.error(`Cleaned JSON parse error for ${modelKey} in ${model}:`, cleanJsonError);
+                    }
+                  }
+                  
+                  // If we reach here, all parsing attempts failed
+                  console.error(`All parsing attempts failed for ${modelKey} in ${model}`);
+                  results[resultKey] = {
+                    error: 'Failed to parse evaluation result JSON',
+                    rawResponse: evaluationResult.substring(0, 500) // Truncate very long responses
+                  };
+                  
+                } catch (parseError) {
+                  console.error(`Error in JSON parsing process for ${modelKey} in ${model}:`, parseError);
+                  results[resultKey] = {
+                    error: `Failed to parse evaluation result: ${parseError.message}`,
+                    rawResponse: evaluationResult.substring(0, 500) // Truncate very long responses
+                  };
+                }
+              } catch (modelError) {
+                console.error(`Error calling validator model for ${modelKey} in ${model}:`, modelError);
+                results[resultKey] = {
+                  error: `Validator model error: ${modelError.message}`,
+                  rawResponse: null
+                };
+              }
+            }
+            
+            // Skip the normal processing for this set since we've handled all nested models
+            continue;
+          }
+        }
+        
+        // Handle regular models and sets without nested models
         setCurrentValidatingModel(model);
         
         const response = responses[model];
-        const answer = typeof response.answer === 'object' ? response.answer.text : response.answer;
+        // Add a debug log to inspect response structure
+        console.log(`Response structure for ${model}:`, response);
+        
+        // Get answer content regardless of response format
+        let answer = '';
+        if (typeof response === 'object') {
+          if (response.answer && typeof response.answer === 'object' && response.answer.text) {
+            answer = response.answer.text;
+          } else if (response.answer) {
+            answer = response.answer;
+          } else if (response.response) {
+            answer = response.response;
+          } else if (response.text) {
+            answer = response.text;
+          } else {
+            // Try to extract content from any property that might contain the response
+            const possibleFields = ['content', 'result', 'output', 'message', 'value'];
+            for (const field of possibleFields) {
+              if (response[field]) {
+                answer = typeof response[field] === 'object' ? JSON.stringify(response[field]) : response[field];
+                break;
+              }
+            }
+            
+            // If still no content, stringify the entire object
+            if (!answer) {
+              answer = JSON.stringify(response);
+            }
+          }
+        } else if (typeof response === 'string') {
+          answer = response;
+        } else {
+          answer = "Unable to extract response content";
+          console.error(`Could not extract answer from response for ${model}:`, response);
+        }
         
         // Create the evaluation prompt
         const prompt = `
@@ -260,7 +571,7 @@ ${currentQuery}
 CONTEXT PROVIDED TO THE AI ASSISTANT:
 ${contextText}
 
-AI ASSISTANT RESPONSE (from ${model}):
+AI ASSISTANT RESPONSE (from ${model} - ${getModelVendor(model)}):
 ${answer}
 
 EVALUATION CRITERIA:
@@ -394,7 +705,9 @@ For example, use "Accuracy" not "accuracy" or "ACCURACY".
   };
 
   const formatResponseTime = (ms) => {
-    if (!ms) return 'N/A';
+    if (ms === undefined || ms === null || isNaN(ms)) {
+      return 'Unknown';
+    }
     if (ms < 1000) {
       return `${ms}ms`;
     }
@@ -704,64 +1017,69 @@ For example, use "Accuracy" not "accuracy" or "ACCURACY".
     );
   };
 
-  // Calculate performance efficiency score (cost and response time)
+  // Calculate effectiveness score for the model
   const calculateEffectivenessScore = (validationResults, metrics) => {
+    if (!validationResults || !metrics) {
+      return { error: "Missing validation results or metrics" };
+    }
+    
     try {
       // Make sure we have validation results
-      if (!validationResults || Object.keys(validationResults).length === 0) {
-        console.error('No validation results to calculate effectiveness');
-        return { error: 'No validation results available to calculate effectiveness' };
-      }
-      
-      // Check if all validation results have errors
-      const allHaveErrors = Object.values(validationResults).every(result => result.error);
-      if (allHaveErrors) {
-        console.error('All validation results contain errors, cannot calculate effectiveness');
-        return { error: 'All model validations failed. Please try again.' };
+      if (Object.keys(validationResults || {}).length === 0) {
+        return { error: "No validation results available" };
       }
       
       const results = {};
       
-      // Calculate metrics for each model
-      Object.entries(validationResults).forEach(([model, validation]) => {
+      Object.entries(validationResults || {}).forEach(([model, validation]) => {
         // Skip if there's an error with this validation
-        if (validation.error) {
-          console.log(`Skipping ${model} due to validation error`);
+        if (!validation || validation.error || !validation.overall) {
+          console.warn(`Skipping model ${model} due to missing or errored validation`);
           return;
         }
         
-        // Skip if the validation doesn't have overall score
-        if (!validation.overall || !validation.overall.score) {
-          console.log(`Skipping ${model} due to missing overall score`);
-          return;
-        }
+        const score = validation.overall.score;
         
-        // Get the validation score
-        const score = parseFloat(validation.overall.score);
-        
-        // Get response time 
+        // Get response time and token usage from metrics
         let responseTime = 0;
-        if (metrics && metrics[model] && typeof metrics[model].responseTime === 'number') {
-          responseTime = metrics[model].responseTime;
+        let tokenUsage = 0;
+        
+        // Find metrics using our robust lookup helper
+        const modelMetrics = findMetrics(metrics, model);
+        
+        if (modelMetrics) {
+          responseTime = modelMetrics.responseTime || 0;
+          tokenUsage = modelMetrics.tokenUsage?.total || 0;
+          console.log(`Found metrics for ${model}: responseTime=${responseTime}, tokenUsage=${tokenUsage}`);
         } else {
-          console.warn(`No response time metric found for ${model}, using 0`);
+          console.warn(`No metrics found for ${model}`);
         }
         
-        // Calculate cost based on token usage
-        let cost = 0;
-        if (metrics && metrics[model] && metrics[model].tokenUsage && metrics[model].tokenUsage.total) {
-          const tokenCount = metrics[model].tokenUsage.total;
-          cost = calculateCost(model, tokenCount);
+        // Extract the base model name for cost calculation
+        let modelForCost = model;
+        if (model.includes('-')) {
+          const match = model.match(/^(?:Set \d+-)?(.+)$/);
+          if (match) {
+            modelForCost = match[1]; // Extract the base model name without the Set prefix
+          }
         }
         
-        // Calculate efficiency score (value for money)
-        // Higher score is better, lower cost is better, and lower response time is better
-        const speedFactor = responseTime > 0 ? 5000 / responseTime : 100; // 5000ms is reference point
-        const costFactor = cost > 0 ? 0.01 / cost : 100; // $0.01 is reference point
+        // Calculate cost
+        const cost = calculateCost(modelForCost, tokenUsage);
+        console.log(`Calculated cost for ${model} (${modelForCost}): ${cost} based on ${tokenUsage} tokens`);
         
-        // Total effectiveness combines all factors
-        // Weight: 70% quality, 20% speed, 10% cost
-        const efficiencyScore = score * 0.7 + (speedFactor * 20) * 0.2 + (costFactor * 10) * 0.1;
+        // Calculate a speed factor (inverse of response time, normalized)
+        // The faster, the higher the factor - with a maximum value
+        const speedFactor = responseTime > 0 ? Math.min(10000 / responseTime, 10) : 10;
+        
+        // Calculate a cost factor (inverse of cost, normalized)
+        // The cheaper, the higher the factor - with a maximum value
+        // Cost-free models (like Ollama) get a fixed bonus value
+        const costFactor = cost > 0 ? Math.min(0.01 / cost, 10) : 10;
+        
+        // Calculate an efficiency score that balances quality, speed, and cost
+        // Quality is the primary factor, multiplied by speed and cost bonuses
+        const efficiencyScore = score * (1 + (speedFactor / 20) + (costFactor / 20));
         
         results[model] = {
           qualityScore: score,
@@ -774,7 +1092,7 @@ For example, use "Accuracy" not "accuracy" or "ACCURACY".
       });
       
       // Check if we have any valid results
-      if (Object.keys(results).length === 0) {
+      if (Object.keys(results || {}).length === 0) {
         console.error('No valid results after processing validations');
         return { error: 'Could not calculate valid effectiveness scores from validations' };
       }
@@ -793,23 +1111,25 @@ For example, use "Accuracy" not "accuracy" or "ACCURACY".
       let fastestResponseTime = Infinity;
       let fastestScore = 0;
       
-      Object.entries(results).forEach(([model, data]) => {
+      Object.entries(results || {}).forEach(([model, data]) => {
         // Most effective model
-        if (data.efficiencyScore > mostEffectiveScore) {
+        if (data && data.efficiencyScore > mostEffectiveScore) {
           mostEffectiveModel = model;
           mostEffectiveScore = data.efficiencyScore;
           mostEffectiveResponseTime = data.responseTime;
         }
         
         // Best value model (consider efficiency with cost)
-        const valueMetric = data.efficiencyScore * data.costFactor;
-        if (valueMetric > bestValueEfficiency) {
-          bestValueModel = model;
-          bestValueEfficiency = valueMetric;
+        if (data) {
+          const valueMetric = data.efficiencyScore * data.costFactor;
+          if (valueMetric > bestValueEfficiency) {
+            bestValueModel = model;
+            bestValueEfficiency = valueMetric;
+          }
         }
         
         // Fastest model
-        if (data.responseTime < fastestResponseTime) {
+        if (data && data.responseTime < fastestResponseTime) {
           fastestModel = model;
           fastestResponseTime = data.responseTime;
           fastestScore = data.qualityScore;
@@ -877,7 +1197,10 @@ For example, use "Accuracy" not "accuracy" or "ACCURACY".
                 Most Effective Model
               </Typography>
               <Typography variant="h5" component="div" gutterBottom align="center" color="primary">
-                {effectivenessData.mostEffectiveModel}
+                {effectivenessData.mostEffectiveModel} 
+                <Typography variant="body2" color="text.secondary" component="div">
+                  {getModelVendor(effectivenessData.mostEffectiveModel)}
+                </Typography>
               </Typography>
               <Typography variant="body1" align="center">
                 Score: <strong>{formatEffectivenessScore(effectivenessData.mostEffectiveScore)}</strong>
@@ -907,6 +1230,9 @@ For example, use "Accuracy" not "accuracy" or "ACCURACY".
               </Typography>
               <Typography variant="h5" component="div" gutterBottom align="center" color="primary">
                 {effectivenessData.bestValueModel}
+                <Typography variant="body2" color="text.secondary" component="div">
+                  {getModelVendor(effectivenessData.bestValueModel)}
+                </Typography>
               </Typography>
               <Typography variant="body1" align="center">
                 Efficiency: <strong>{formatEffectivenessScore(effectivenessData.bestValueEfficiency)}</strong>
@@ -936,6 +1262,9 @@ For example, use "Accuracy" not "accuracy" or "ACCURACY".
               </Typography>
               <Typography variant="h5" component="div" gutterBottom align="center" color="primary">
                 {effectivenessData.fastestModel}
+                <Typography variant="body2" color="text.secondary" component="div">
+                  {getModelVendor(effectivenessData.fastestModel)}
+                </Typography>
               </Typography>
               <Typography variant="body1" align="center">
                 Response time: <strong>{formatResponseTime(effectivenessData.fastestResponseTime)}</strong>
@@ -951,7 +1280,7 @@ For example, use "Accuracy" not "accuracy" or "ACCURACY".
   };
 
   // Calculate effectiveness when validation results or metrics change
-  const effectivenessData = Object.keys(validationResults).length > 0 && metrics ? 
+  const effectivenessData = (validationResults && Object.keys(validationResults || {}).length > 0 && metrics) ? 
     calculateEffectivenessScore(validationResults, metrics) : 
     { error: "No validation results available yet" };
 
@@ -962,6 +1291,26 @@ For example, use "Accuracy" not "accuracy" or "ACCURACY".
       direction = 'descending';
     }
     setSortConfig({ key, direction });
+  };
+
+  const formatModelDisplay = (model) => {
+    if (!model) return "";
+    
+    // Check if this is a Set model
+    if (model.startsWith('Set ')) {
+      return `(Processing ${model})`;
+    }
+    
+    // For Set-Model format (from ResponseComparison) 
+    if (model.includes('-') && model.split('-')[0].startsWith('Set ')) {
+      const parts = model.split('-');
+      const modelName = parts.pop(); // Get the model name
+      const setName = parts.join('-'); // Rejoin any remaining parts as the set name
+      return `(Processing ${modelName} / ${setName})`;
+    }
+    
+    // Normal model
+    return `(Processing ${model})`;
   };
 
   return (
@@ -985,7 +1334,7 @@ For example, use "Accuracy" not "accuracy" or "ACCURACY".
         <Box textAlign="center" py={4}>
           <CircularProgress />
           <Typography variant="h6" sx={{ mt: 2 }}>
-            Validating Responses... {currentValidatingModel && `(Processing ${currentValidatingModel})`}
+            Validating Responses... {currentValidatingModel && formatModelDisplay(currentValidatingModel)}
           </Typography>
         </Box>
       ) : !Object.keys(validationResults).length ? (
@@ -1262,12 +1611,40 @@ For example, use "Accuracy" not "accuracy" or "ACCURACY".
                   </thead>
                   <tbody>
                     {(() => {
+                      // Log the metrics structure for debugging
+                      console.log("METRICS STRUCTURE:", {
+                        keys: Object.keys(metrics || {}),
+                        fullObject: metrics,
+                        setKeys: Object.keys(metrics || {}).filter(k => k.startsWith('Set ')),
+                        modelKeys: Object.keys(metrics || {}).filter(k => !k.startsWith('Set '))
+                      });
+                      
                       // Calculate the cheapest model cost for comparison
                       const modelCosts = {};
                       Object.keys(validationResults).forEach(model => {
-                        if (metrics[model]) {
-                          modelCosts[model] = calculateCost(model, metrics[model]?.tokenUsage?.total || 0);
+                        // Find metrics using our robust lookup helper
+                        const modelMetrics = findMetrics(metrics, model);
+                        let tokenUsage = 0;
+                        
+                        if (modelMetrics) {
+                          tokenUsage = modelMetrics.tokenUsage?.total || 0;
+                          console.log(`Found token usage for ${model}: ${tokenUsage}`);
+                        } else {
+                          console.warn(`No metrics found for ${model}, using default token usage`);
                         }
+                        
+                        // Extract the base model name for cost calculation
+                        let modelForCost = model;
+                        if (model.includes('-')) {
+                          const match = model.match(/^(?:Set \d+-)?(.+)$/);
+                          if (match) {
+                            modelForCost = match[1]; // Extract the base model name without Set prefix
+                          }
+                        }
+                        
+                        // Calculate cost
+                        modelCosts[model] = calculateCost(modelForCost, tokenUsage);
+                        console.log(`Cost for ${model} (${modelForCost}): ${modelCosts[model]} based on ${tokenUsage} tokens`);
                       });
                       
                       // Get all unique criteria
@@ -1312,10 +1689,23 @@ For example, use "Accuracy" not "accuracy" or "ACCURACY".
                       // Build table data array for sorting
                       const tableData = Object.keys(validationResults).map(model => {
                         const result = validationResults[model];
+                        
+                        // Get the cost we calculated earlier
                         const cost = modelCosts[model] || 0;
-                        // Get efficiency score from the new structure
+                        
+                        // Find metrics using our robust lookup helper
+                        const modelMetrics = findMetrics(metrics, model);
+                        let responseTime = 0;
+                        
+                        if (modelMetrics) {
+                          responseTime = modelMetrics.responseTime || 0;
+                          console.log(`Found response time for ${model}: ${responseTime}`);
+                        } else {
+                          console.warn(`No metrics found for ${model}, response time will be 0`);
+                        }
+                        
+                        // Get efficiency score from the effectiveness data
                         const efficiencyScore = effectivenessData?.modelData?.[model]?.efficiencyScore ?? 0;
-                        const responseTime = metrics[model]?.responseTime || 0;
                         const overallScore = result.overall ? result.overall.score : 0;
                         
                         // Build a data object with all needed values
@@ -1367,23 +1757,29 @@ For example, use "Accuracy" not "accuracy" or "ACCURACY".
                         }
                       });
                       
-                      return sortedData.map(rowData => {
-                        const { model, result, cost, efficiencyScore } = rowData;
+                      return sortedData.map((rowData, index) => {
+                        const cellStyle = { padding: '8px', borderBottom: '1px solid #ddd' };
                         
                         return (
-                          <tr key={model}>
-                            <td style={{ padding: '8px', borderBottom: '1px solid #ddd' }}>{model}</td>
-                            <td style={{ 
-                              textAlign: 'center', 
-                              padding: '8px', 
-                              borderBottom: '1px solid #ddd',
-                              color: result.overall ? getScoreColor(result.overall.score) : 'inherit',
-                              fontWeight: 'bold'
-                            }}>
-                              {result.overall ? `${result.overall.score}/100` : 'N/A'}
+                          <tr key={rowData.model} style={{ 
+                            backgroundColor: index % 2 === 0 ? '#f9f9f9' : 'transparent',
+                            border: '1px solid #ddd',
+                          }}>
+                            <td style={cellStyle}>
+                              <div style={{fontWeight: 'bold'}}>{rowData.model}</div>
+                              <div style={{fontSize: '0.8rem', color: '#666'}}>{getModelVendor(rowData.model)}</div>
+                            </td>
+                            <td style={{...cellStyle, textAlign: 'center'}}>
+                              <div style={{
+                                fontWeight: 'bold', 
+                                fontSize: '1.1rem', 
+                                color: getScoreColor(rowData.overallScore)
+                              }}>
+                                {rowData.overallScore}
+                              </div>
                             </td>
                             {criteriaArray.map(normalizedCriterion => {
-                              const criterionValue = findCriterionValue(result.criteria, normalizedCriterion);
+                              const criterionValue = findCriterionValue(rowData.result.criteria, normalizedCriterion);
                               return (
                                 <td key={normalizedCriterion} style={{ 
                                   textAlign: 'center', 
@@ -1398,19 +1794,19 @@ For example, use "Accuracy" not "accuracy" or "ACCURACY".
                               );
                             })}
                             <td style={{ textAlign: 'right', padding: '8px', borderBottom: '1px solid #ddd' }}>
-                              {metrics[model] && typeof metrics[model].responseTime === 'number' ? formatResponseTime(metrics[model].responseTime) : 'Unknown'}
+                              {formatResponseTime(rowData.responseTime)}
                             </td>
                             <td style={{ textAlign: 'right', padding: '8px', borderBottom: '1px solid #ddd' }}>
-                              {formatCost(cost)}
+                              {formatCost(rowData.cost)}
                             </td>
                             <td style={{ 
                               textAlign: 'right', 
                               padding: '8px', 
                               borderBottom: '1px solid #ddd',
-                              color: model === effectivenessData.mostEffectiveModel ? '#4caf50' : (efficiencyScore >= 80 ? '#8bc34a' : (efficiencyScore >= 50 ? '#ffc107' : '#f44336')),
-                              fontWeight: model === effectivenessData.mostEffectiveModel ? 'bold' : 'normal'
+                              color: rowData.model === effectivenessData.mostEffectiveModel ? '#4caf50' : (rowData.efficiencyScore >= 80 ? '#8bc34a' : (rowData.efficiencyScore >= 50 ? '#ffc107' : '#f44336')),
+                              fontWeight: rowData.model === effectivenessData.mostEffectiveModel ? 'bold' : 'normal'
                             }}>
-                              {formatEffectivenessScore(efficiencyScore)}
+                              {formatEffectivenessScore(rowData.efficiencyScore)}
                             </td>
                           </tr>
                         );
@@ -1444,8 +1840,8 @@ For example, use "Accuracy" not "accuracy" or "ACCURACY".
                       title={model}
                       subheader={
                         result.overall ? 
-                          `Overall Score: ${result.overall.score}/100` : 
-                          'Validation Complete'
+                          `${getModelVendor(model)} - Overall Score: ${result.overall.score}/100` : 
+                          `${getModelVendor(model)} - Validation Complete`
                       }
                       action={
                         <Chip 
@@ -1471,6 +1867,83 @@ For example, use "Accuracy" not "accuracy" or "ACCURACY".
                           {renderScore(result.overall.score)}
                         </Box>
                       )}
+                      
+                      {/* Display the model response */}
+                      <Box mb={3}>
+                        <Accordion>
+                          <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+                            <Typography>View Model Response</Typography>
+                          </AccordionSummary>
+                          <AccordionDetails>
+                            <Box 
+                              sx={{ 
+                                p: 2, 
+                                bgcolor: 'grey.50', 
+                                borderRadius: 1,
+                                maxHeight: '300px',
+                                overflow: 'auto'
+                              }}
+                            >
+                              {(() => {
+                                // Get answer content from response
+                                let answer = '';
+                                const response = responses[model];
+                                
+                                if (typeof response === 'object') {
+                                  if (response?.answer?.text) {
+                                    answer = response.answer.text;
+                                  } else if (response?.answer) {
+                                    answer = response.answer;
+                                  } else if (response?.response) {
+                                    answer = response.response;
+                                  } else if (response?.text) {
+                                    answer = response.text;
+                                  } else {
+                                    // Try to stringify the object
+                                    try {
+                                      answer = JSON.stringify(response, null, 2);
+                                    } catch (e) {
+                                      answer = "Could not display response";
+                                    }
+                                  }
+                                } else if (typeof response === 'string') {
+                                  answer = response;
+                                } else {
+                                  answer = "No response available";
+                                }
+                                
+                                // Check if it looks like code
+                                const isCode = answer.includes('import ') || 
+                                              answer.includes('function ') || 
+                                              answer.includes('def ') ||
+                                              answer.includes('class ');
+                                
+                                // Check if it's JSON
+                                const isJson = answer.trim().startsWith('{') && answer.trim().endsWith('}');
+                                
+                                if (isCode || isJson) {
+                                  return (
+                                    <pre style={{ 
+                                      margin: 0, 
+                                      fontFamily: 'monospace',
+                                      fontSize: '0.85rem',
+                                      whiteSpace: 'pre-wrap'
+                                    }}>
+                                      {answer}
+                                    </pre>
+                                  );
+                                }
+                                
+                                return (
+                                  <Typography variant="body2" component="div" sx={{ whiteSpace: 'pre-wrap' }}>
+                                    {answer}
+                                  </Typography>
+                                );
+                              })()}
+                            </Box>
+                          </AccordionDetails>
+                        </Accordion>
+                      </Box>
                       
                       {result.criteria && (
                         <Box>

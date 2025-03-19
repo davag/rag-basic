@@ -34,16 +34,23 @@ import FullscreenIcon from '@mui/icons-material/Fullscreen';
 import FullscreenExitIcon from '@mui/icons-material/FullscreenExit';
 import { createLlmInstance } from '../utils/apiServices';
 import { processModelsInParallel } from '../utils/parallelLLMProcessor';
+import AddIcon from '@mui/icons-material/Add';
+import DeleteIcon from '@mui/icons-material/Delete';
 
 const DEFAULT_SYSTEM_PROMPT = `You are a helpful assistant that answers questions based on the provided context. 
 If the answer is not in the context, say that you don't know. 
 Do not make up information that is not in the context.`;
 
-const QueryInterface = ({ vectorStore, namespaces, onQuerySubmitted, isProcessing, setIsProcessing, initialState }) => {
+const QueryInterface = ({ vectorStore, namespaces = [], onQuerySubmitted, isProcessing, setIsProcessing, initialState }) => {
   const [query, setQuery] = useState('');
   const [selectedModels, setSelectedModels] = useState(['gpt-4o-mini', 'claude-3-5-sonnet-latest']);
-  const [globalSystemPrompt, setGlobalSystemPrompt] = useState(DEFAULT_SYSTEM_PROMPT);
-  const [globalTemperature, setGlobalTemperature] = useState(0);
+  const [promptSets, setPromptSets] = useState([
+    {
+      id: 1,
+      systemPrompt: DEFAULT_SYSTEM_PROMPT,
+      temperature: 0
+    }
+  ]);
   const [error, setError] = useState(null);
   const [helpExpanded, setHelpExpanded] = useState(false);
   const [currentProcessingModel, setCurrentProcessingModel] = useState(null);
@@ -83,10 +90,12 @@ const QueryInterface = ({ vectorStore, namespaces, onQuerySubmitted, isProcessin
 
   // Initialize state from initialState or localStorage (with priority for initialState)
   useEffect(() => {
+    if (!initialState) return;
+    
     console.log("QueryInterface initializing with initialState:", initialState);
     
     // Reset all state to defaults first to avoid mixing old state
-    if (initialState && Object.keys(initialState).length > 0) {
+    if (Object.keys(initialState).length > 0) {
       const cleanState = { ...initialState };
       
       // Log the state we're loading
@@ -116,7 +125,13 @@ const QueryInterface = ({ vectorStore, namespaces, onQuerySubmitted, isProcessin
       );
       
       // Set system prompt with a fallback
-      setGlobalSystemPrompt(cleanState.globalSystemPrompt || DEFAULT_SYSTEM_PROMPT);
+      setPromptSets(cleanState.promptSets || [
+        {
+          id: 1,
+          systemPrompt: DEFAULT_SYSTEM_PROMPT,
+          temperature: 0
+        }
+      ]);
     }
   }, [initialState]);
 
@@ -125,7 +140,7 @@ const QueryInterface = ({ vectorStore, namespaces, onQuerySubmitted, isProcessin
     const now = Date.now();
     const updated = {};
     
-    Object.entries(processingStartTimes).forEach(([model, startTime]) => {
+    Object.entries(processingStartTimes || {}).forEach(([model, startTime]) => {
       if (startTime) {
         const elapsed = now - startTime;
         updated[model] = elapsed;
@@ -179,12 +194,10 @@ const QueryInterface = ({ vectorStore, namespaces, onQuerySubmitted, isProcessin
     setSelectedModels(event.target.value);
   };
 
-  const handleGlobalSystemPromptChange = (event) => {
-    setGlobalSystemPrompt(event.target.value);
-  };
-
-  const handleGlobalTemperatureChange = (event, newValue) => {
-    setGlobalTemperature(newValue);
+  const handlePromptSetChange = (id, field, value) => {
+    setPromptSets(prev => prev.map(set => 
+      set.id === id ? { ...set, [field]: value } : set
+    ));
   };
 
   const handleNamespaceChange = (event) => {
@@ -192,7 +205,7 @@ const QueryInterface = ({ vectorStore, namespaces, onQuerySubmitted, isProcessin
   };
 
   const handleGetGlobalPromptIdeas = async () => {
-    if (!globalSystemPrompt.trim()) return;
+    if (!promptSets[0].systemPrompt.trim()) return;
     
     setIsGettingPromptIdeas(true);
     try {
@@ -200,7 +213,7 @@ const QueryInterface = ({ vectorStore, namespaces, onQuerySubmitted, isProcessin
       
       const prompt = `Please analyze this system prompt and provide specific suggestions for improvement:
 
-${globalSystemPrompt}
+${promptSets[0].systemPrompt}
 
 Provide feedback in these areas:
 1. Clarity and specificity
@@ -218,6 +231,23 @@ Format your response in a clear, structured way.`;
       setError('Failed to get prompt improvement suggestions. Please try again.');
     } finally {
       setIsGettingPromptIdeas(false);
+    }
+  };
+
+  const handleAddPromptSet = () => {
+    setPromptSets(prev => [
+      ...prev,
+      {
+        id: prev.length + 1,
+        systemPrompt: DEFAULT_SYSTEM_PROMPT,
+        temperature: 0
+      }
+    ]);
+  };
+
+  const handleRemovePromptSet = (id) => {
+    if (promptSets.length > 1) {
+      setPromptSets(prev => prev.filter(set => set.id !== id));
     }
   };
 
@@ -270,150 +300,129 @@ Given the context information and not prior knowledge, answer the question: ${qu
         });
         setProcessingStartTimes(startTimes);
         
-        // Process all models in parallel
-        const { responses: parallelResponses, metrics: parallelMetrics } = await processModelsInParallel(
-          selectedModels,
-          prompt,
-          {
-            getSystemPromptForModel: () => globalSystemPrompt,
-            getTemperatureForModel: () => globalTemperature,
-            sources: filteredDocs
-          }
-        );
+        // Process all models in parallel for each prompt set
+        const allResponses = {};
+        const allMetrics = {};
+        
+        for (const promptSet of promptSets) {
+          const { responses: parallelResponses, metrics: parallelMetrics } = await processModelsInParallel(
+            selectedModels,
+            prompt,
+            {
+              getSystemPromptForModel: () => promptSet.systemPrompt,
+              getTemperatureForModel: () => promptSet.temperature,
+              sources: filteredDocs
+            }
+          );
+          
+          // Add set identifier to responses and metrics
+          const setKey = `Set ${promptSet.id}`;
+          allResponses[setKey] = parallelResponses || {};
+          allMetrics[setKey] = parallelMetrics || {};
+        }
         
         // Update state with results
-        setResponses(parallelResponses);
-        
-        // Extract the specific metrics for each model to prepare the full metrics object
-        const metricsMap = {};
-        selectedModels.forEach(model => {
-          // For each model, extract its token usage and response time from parallelMetrics
-          if (parallelMetrics[model]) {
-            // Store response time and token usage
-            metricsMap[model] = {
-              responseTime: parallelMetrics[model].responseTime || 0,
-              elapsedTime: parallelMetrics[model].elapsedTime || 0,
-              tokenUsage: parallelMetrics[model].tokenUsage || {
-                estimated: true,
-                input: 0,
-                output: 0,
-                total: 0
-              }
-            };
-            
-            // For error responses, mark the metrics accordingly
-            if (parallelResponses[model] && parallelResponses[model].error) {
-              metricsMap[model].error = true;
-              metricsMap[model].errorMessage = parallelResponses[model].errorMessage;
-            }
-          } else {
-            // Handle case where metrics are missing for a model
-            metricsMap[model] = {
-              responseTime: 0,
-              elapsedTime: 0,
-              error: true,
-              errorMessage: `No metrics returned for model ${model}`,
-              tokenUsage: {
-                estimated: true,
-                input: 0,
-                output: 0,
-                total: 0
-              }
-            };
-          }
-        });
-        
-        // Merge metrics with system prompts and retrieval time
-        const metrics = {
-          ...metricsMap,
-          systemPrompts: { [globalSystemPrompt]: selectedModels },
-          retrievalTime: parallelMetrics.retrievalTime,
-          query
-        };
+        setResponses(allResponses);
         
         // Get current state to pass to parent component
         const queryState = getCurrentState();
         
         // Call the onQuerySubmitted callback with all results and state
         onQuerySubmitted(
-          parallelResponses, 
-          metrics,
+          allResponses, 
+          allMetrics,
           query,
-          { [globalSystemPrompt]: selectedModels },
+          promptSets.reduce((acc, set) => ({
+            ...acc,
+            [`Set ${set.id}`]: {
+              systemPrompt: set.systemPrompt,
+              temperature: set.temperature,
+              models: selectedModels
+            }
+          }), {}),
           queryState
         );
       } else {
-        // Process models sequentially
-        const responses = {};
-        const metrics = {};
+        // Process models sequentially for each prompt set
+        const allResponses = {};
+        const allMetrics = {};
         
-        // Process each model with the same retrieved documents
-        for (const model of selectedModels) {
-          setCurrentProcessingModel(model);
-          setProcessingStep(`Processing with ${model}`);
+        for (const promptSet of promptSets) {
+          const responses = {};
+          const metrics = {};
           
-          // Start timer for current model
-          setProcessingStartTimes(prev => ({
-            ...prev,
-            [model]: Date.now()
-          }));
+          // Process each model with the same retrieved documents
+          for (const model of selectedModels) {
+            setCurrentProcessingModel(model);
+            setProcessingStep(`Processing with ${model} (Set ${promptSet.id})`);
+            
+            // Start timer for current model
+            setProcessingStartTimes(prev => ({
+              ...prev,
+              [model]: Date.now()
+            }));
+            
+            // Get Ollama endpoint from localStorage
+            const ollamaEndpoint = localStorage.getItem('ollamaEndpoint') || 'http://localhost:11434';
+            
+            // Create LLM instance with appropriate configuration
+            const llm = createLlmInstance(model, promptSet.systemPrompt, {
+              ollamaEndpoint: ollamaEndpoint,
+              temperature: promptSet.temperature
+            });
+            
+            const startTime = Date.now();
+            
+            // Call the LLM directly with the prompt
+            const answer = await llm.invoke(prompt);
+            
+            const endTime = Date.now();
+            const responseTime = endTime - startTime;
+            
+            // Get the answer text
+            const answerText = typeof answer === 'object' ? answer.text : answer;
+            
+            // Store the response
+            responses[model] = {
+              text: answerText,
+              sources: filteredDocs
+            };
+            
+            // Store metrics for this model
+            metrics[model] = {
+              responseTime,
+              elapsedTime: endTime - startTime,
+              tokenUsage: {
+                estimated: true,
+                input: inputTokenEstimate,
+                output: Math.round(answerText.length / 4),
+                total: inputTokenEstimate + Math.round(answerText.length / 4)
+              }
+            };
+          }
           
-          // Get Ollama endpoint from localStorage
-          const ollamaEndpoint = localStorage.getItem('ollamaEndpoint') || 'http://localhost:11434';
-          
-          // Create LLM instance with appropriate configuration
-          const llm = createLlmInstance(model, globalSystemPrompt, {
-            ollamaEndpoint: ollamaEndpoint,
-            temperature: globalTemperature
-          });
-          
-          const startTime = Date.now();
-          
-          // Call the LLM directly with the prompt
-          const answer = await llm.invoke(prompt);
-          
-          const endTime = Date.now();
-          const responseTime = endTime - startTime;
-          
-          // Get the answer text
-          const answerText = typeof answer === 'object' ? answer.text : answer;
-          
-          // Store the response
-          responses[model] = {
-            text: answerText,
-            sources: filteredDocs
-          };
-          
-          // Store metrics for this model
-          metrics[model] = {
-            responseTime,
-            elapsedTime: endTime - startTime,
-            tokenUsage: {
-              estimated: true,
-              input: inputTokenEstimate,
-              output: Math.round(answerText.length / 4),
-              total: inputTokenEstimate + Math.round(answerText.length / 4)
-            }
-          };
+          // Store responses and metrics for this set
+          const setKey = `Set ${promptSet.id}`;
+          allResponses[setKey] = responses;
+          allMetrics[setKey] = metrics;
         }
-        
-        // Merge metrics with system prompts and retrieval time
-        const finalMetrics = {
-          ...metrics,
-          systemPrompts: { [globalSystemPrompt]: selectedModels },
-          retrievalTime: 0, // We don't track retrieval time separately in sequential mode
-          query
-        };
         
         // Get current state to pass to parent component
         const queryState = getCurrentState();
         
         // Call the onQuerySubmitted callback with all results and state
         onQuerySubmitted(
-          responses,
-          finalMetrics,
+          allResponses,
+          allMetrics,
           query,
-          { [globalSystemPrompt]: selectedModels },
+          promptSets.reduce((acc, set) => ({
+            ...acc,
+            [`Set ${set.id}`]: {
+              systemPrompt: set.systemPrompt,
+              temperature: set.temperature,
+              models: selectedModels
+            }
+          }), {}),
           queryState
         );
       }
@@ -440,15 +449,19 @@ Given the context information and not prior knowledge, answer the question: ${qu
     }
   };
 
-  const getCurrentState = () => {
+  // Function to get current state
+  const getCurrentState = useCallback(() => {
     return {
       query,
-      selectedModels,
-      selectedNamespaces,
-      globalSystemPrompt,
-      globalTemperature
+      selectedModels: selectedModels || [],
+      selectedNamespaces: selectedNamespaces || [],
+      promptSets: promptSets || [{
+        id: 1,
+        systemPrompt: DEFAULT_SYSTEM_PROMPT,
+        temperature: 0
+      }]
     };
-  };
+  }, [query, selectedModels, selectedNamespaces, promptSets]);
 
   // Export query configuration to a JSON file
   const handleExportConfig = () => {
@@ -490,8 +503,7 @@ Given the context information and not prior knowledge, answer the question: ${qu
         if (config.query) setQuery(config.query);
         if (config.selectedModels) setSelectedModels(config.selectedModels);
         if (config.selectedNamespaces) setSelectedNamespaces(config.selectedNamespaces);
-        if (config.globalSystemPrompt) setGlobalSystemPrompt(config.globalSystemPrompt);
-        if (config.globalTemperature !== undefined) setGlobalTemperature(config.globalTemperature);
+        if (config.promptSets) setPromptSets(config.promptSets);
         
         // Reset file input
         if (fileInputRef.current) {
@@ -644,7 +656,7 @@ Given the context information and not prior knowledge, answer the question: ${qu
             )}
             disabled={isProcessing}
           >
-            {namespaces.map((namespace) => (
+            {(namespaces || []).map((namespace) => (
               <MenuItem key={namespace} value={namespace}>
                 {namespace}
               </MenuItem>
@@ -665,40 +677,74 @@ Given the context information and not prior knowledge, answer the question: ${qu
         />
 
         <Box sx={{ mb: 3 }}>
-          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
-            <Typography variant="subtitle1">System Prompt</Typography>
-            <Box>
-              <Tooltip title={expandedQuery ? "Collapse prompt field" : "Expand prompt field"}>
-                <IconButton 
-                  size="small" 
-                  onClick={() => setExpandedQuery(!expandedQuery)}
-                >
-                  {expandedQuery ? <FullscreenExitIcon /> : <FullscreenIcon />}
-                </IconButton>
-              </Tooltip>
-            </Box>
+          <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
+            <Typography variant="h6">Prompt Sets</Typography>
+            <Button
+              variant="outlined"
+              onClick={handleAddPromptSet}
+              disabled={isProcessing}
+              startIcon={<AddIcon />}
+            >
+              Add Set
+            </Button>
           </Box>
-          <TextField
-            fullWidth
-            multiline
-            minRows={expandedQuery ? 8 : 6}
-            maxRows={expandedQuery ? 20 : 12}
-            variant="outlined"
-            value={globalSystemPrompt}
-            onChange={handleGlobalSystemPromptChange}
-            disabled={isProcessing}
-            sx={{ 
-              mb: 2,
-              '& .MuiOutlinedInput-root': {
-                fontSize: '0.95rem'
-              }
-            }}
-          />
+          
+          {promptSets.map((set) => (
+            <Paper key={set.id} sx={{ p: 2, mb: 2 }}>
+              <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
+                <Typography variant="subtitle1">Set {set.id}</Typography>
+                {promptSets.length > 1 && (
+                  <IconButton
+                    onClick={() => handleRemovePromptSet(set.id)}
+                    disabled={isProcessing}
+                    size="small"
+                  >
+                    <DeleteIcon />
+                  </IconButton>
+                )}
+              </Box>
+              
+              <TextField
+                fullWidth
+                multiline
+                rows={3}
+                label="System Prompt"
+                value={set.systemPrompt}
+                onChange={(e) => handlePromptSetChange(set.id, 'systemPrompt', e.target.value)}
+                disabled={isProcessing}
+                sx={{ mb: 2 }}
+              />
+              
+              <Box>
+                <Typography id={`temperature-slider-${set.id}`} gutterBottom>
+                  Temperature: {set.temperature}
+                </Typography>
+                <Slider
+                  aria-labelledby={`temperature-slider-${set.id}`}
+                  value={set.temperature}
+                  onChange={(e, newValue) => handlePromptSetChange(set.id, 'temperature', newValue)}
+                  step={0.1}
+                  marks
+                  min={0}
+                  max={1}
+                  valueLabelDisplay="auto"
+                  disabled={isProcessing}
+                />
+                <Box display="flex" justifyContent="space-between" mt={1}>
+                  <Typography variant="caption" color="textSecondary">Deterministic (0)</Typography>
+                  <Typography variant="caption" color="textSecondary">Creative (1)</Typography>
+                </Box>
+              </Box>
+            </Paper>
+          ))}
+        </Box>
+
+        <Box sx={{ mb: 3 }}>
           <Box sx={{ display: 'flex', justifyContent: 'flex-end' }}>
             <Button
               startIcon={<LightbulbIcon />}
               onClick={handleGetGlobalPromptIdeas}
-              disabled={isProcessing || isGettingPromptIdeas || !globalSystemPrompt.trim()}
+              disabled={isProcessing || isGettingPromptIdeas || !promptSets[0].systemPrompt.trim()}
               sx={{ mr: 1 }}
             >
               {isGettingPromptIdeas ? (
@@ -708,35 +754,6 @@ Given the context information and not prior knowledge, answer the question: ${qu
                 </>
               ) : 'Get Prompt Feedback'}
             </Button>
-          </Box>
-        </Box>
-
-        <Box sx={{ mb: 3 }}>
-          <Typography variant="subtitle1" gutterBottom>
-            Temperature
-          </Typography>
-          <Typography variant="body2" color="textSecondary" sx={{ mb: 2 }}>
-            Controls how creative or deterministic the model responses are. Higher values (0.7-1.0) make output more random and creative, while lower values (0-0.3) make output more focused and deterministic.
-          </Typography>
-          <Box sx={{ px: 2 }}>
-            <Typography id="temperature-slider" gutterBottom>
-              Temperature: {globalTemperature}
-            </Typography>
-            <Slider
-              aria-labelledby="temperature-slider"
-              value={globalTemperature}
-              onChange={handleGlobalTemperatureChange}
-              step={0.1}
-              marks
-              min={0}
-              max={1}
-              valueLabelDisplay="auto"
-              disabled={isProcessing}
-            />
-            <Box display="flex" justifyContent="space-between" mt={1}>
-              <Typography variant="caption" color="textSecondary">Deterministic (0)</Typography>
-              <Typography variant="caption" color="textSecondary">Creative (1)</Typography>
-            </Box>
           </Box>
         </Box>
 
@@ -794,13 +811,13 @@ Given the context information and not prior knowledge, answer the question: ${qu
               </Typography>
               <Typography variant="body2" color="textSecondary" sx={{ mt: 1 }}>
                 {currentProcessingModel === 'all models' 
-                  ? `Querying ${selectedModels.length} models in parallel...` 
+                  ? `Querying ${(selectedModels || []).length} models in parallel...` 
                   : 'Processing...'}
               </Typography>
             </Box>
             
             <Box sx={{ mt: 2 }}>
-              {selectedModels.map(model => (
+              {(selectedModels || []).map(model => (
                 <Box key={model} sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
                   <Box 
                     sx={{ 
@@ -811,22 +828,22 @@ Given the context information and not prior knowledge, answer the question: ${qu
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center',
-                      bgcolor: currentProcessingModel === model ? 'primary.main' : (Object.keys(responses).includes(model) ? 'success.main' : 'grey.300')
+                      bgcolor: currentProcessingModel === model ? 'primary.main' : (Object.keys(responses || {}).includes(model) ? 'success.main' : 'grey.300')
                     }}
                   >
                     {currentProcessingModel === model && <CircularProgress size={16} color="inherit" />}
                   </Box>
                   <Typography 
                     variant="body2" 
-                    color={currentProcessingModel === model ? 'primary' : (Object.keys(responses).includes(model) ? 'success.main' : 'textSecondary')}
+                    color={currentProcessingModel === model ? 'primary' : (Object.keys(responses || {}).includes(model) ? 'success.main' : 'textSecondary')}
                     sx={{ fontWeight: currentProcessingModel === model ? 'bold' : 'normal' }}
                   >
                     {model}
                     {currentProcessingModel === model && ' (processing...'}
-                    {(currentProcessingModel === model || Object.keys(responses).includes(model)) && 
+                    {(currentProcessingModel === model || Object.keys(responses || {}).includes(model)) && 
                       ` ${formatElapsedTime(elapsedTimes[model] || 0)}`}
                     {currentProcessingModel === model && ')'}
-                    {Object.keys(responses).includes(model) && ` (completed in ${formatElapsedTime(elapsedTimes[model] || 0)})`}
+                    {Object.keys(responses || {}).includes(model) && ` (completed in ${formatElapsedTime(elapsedTimes[model] || 0)})`}
                   </Typography>
                 </Box>
               ))}

@@ -708,15 +708,15 @@ function App() {
 
           <TabPanel value={tabValue} index={3}>
             <ResponseComparison 
-              responses={llmResponses}
-              metrics={metrics}
-              currentQuery={currentQuery}
-              systemPrompts={systemPrompts}
+              responses={llmResponses || {}}
+              metrics={metrics || {}}
+              currentQuery={currentQuery || ''}
+              systemPrompts={systemPrompts || {}}
               onBackToQuery={handleBackToQuery}
               onImportResults={handleImportResults}
-              documents={documents}
+              documents={documents || []}
               vectorStore={vectorStore}
-              availableModels={Object.keys(llmResponses)}
+              availableModels={llmResponses ? Object.keys(llmResponses) : []}
             />
             <Box sx={{ display: 'flex', justifyContent: 'space-between', mt: 2 }}>
               <Button
@@ -729,7 +729,7 @@ function App() {
                 variant="contained"
                 color="primary"
                 onClick={() => setTabValue(4)}
-                disabled={Object.keys(llmResponses).length === 0}
+                disabled={!llmResponses || Object.keys(llmResponses || {}).length === 0}
               >
                 Next: Validate Responses
               </Button>
@@ -738,13 +738,13 @@ function App() {
 
           <TabPanel value={tabValue} index={4}>
             <ResponseValidation 
-              responses={llmResponses}
-              metrics={metrics}
-              currentQuery={currentQuery}
-              systemPrompts={systemPrompts}
-              sources={Object.values(llmResponses)[0]?.sources || []}
+              responses={llmResponses || {}}
+              metrics={metrics || {}}
+              currentQuery={currentQuery || ''}
+              systemPrompts={systemPrompts || {}}
+              sources={(llmResponses && Object.values(llmResponses)[0]?.sources) || []}
               onValidationComplete={handleValidationComplete}
-              validationResults={validationResults}
+              validationResults={validationResults || {}}
               isProcessing={isProcessing}
               setIsProcessing={setIsProcessing}
             />

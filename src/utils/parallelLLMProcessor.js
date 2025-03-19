@@ -17,169 +17,107 @@ export const processModelsInParallel = async (
   models, 
   prompt, 
   {
-    getSystemPromptForModel, 
-    getTemperatureForModel,
+    getSystemPromptForModel = () => '',
+    getTemperatureForModel = () => 0,
     sources = []
   }
 ) => {
-  // Create an array of query promises for all models
-  const modelQueries = models.map(model => {
-    // Get the appropriate system prompt for this model
-    const systemPrompt = getSystemPromptForModel(model);
-    
-    // Get the appropriate temperature for this model
-    const temperature = getTemperatureForModel(model);
-    
-    // Get Ollama endpoint from localStorage
-    const ollamaEndpoint = localStorage.getItem('ollamaEndpoint') || 'http://localhost:11434';
-    
-    // Create LLM instance with appropriate configuration
-    const createLlmWithRetry = async () => {
-      try {
-        window.console.log(`Creating LLM instance for model: ${model}`);
-        return createLlmInstance(model, systemPrompt, {
-          ollamaEndpoint: ollamaEndpoint,
-          temperature: temperature
-        });
-      } catch (error) {
-        window.console.error(`Failed to create LLM for model ${model}:`, error);
-        throw error;
-      }
-    };
-    
-    // Return a promise that will resolve with model name and result
-    return (async () => {
-      try {
-        const startTime = Date.now();
-        
-        // Create the LLM instance
-        const llm = await createLlmWithRetry();
-        
-        // Call the LLM directly with the prompt
-        window.console.log(`Invoking model ${model} with prompt (length: ${prompt.length})`);
-        const answer = await llm.invoke(prompt);
-        
-        const endTime = Date.now();
-        const responseTime = endTime - startTime;
-        const elapsedTime = endTime - startTime; // Track actual elapsed time
-        
-        // Get the answer text
-        const answerText = typeof answer === 'object' ? answer.text : answer;
-        
-        // Simple token estimation: 4 characters per token is a rough approximation
-        const inputTokenEstimate = Math.ceil(prompt.length / 4);
-        const outputTokenEstimate = Math.ceil(answerText.length / 4);
-        const totalTokenEstimate = inputTokenEstimate + outputTokenEstimate;
-        
-        // Return the result
-        return {
-          model,
-          answer: answerText,
-          metrics: {
-            responseTime,
-            elapsedTime,
-            tokenUsage: {
-              estimated: true,
-              input: inputTokenEstimate,
-              output: outputTokenEstimate,
-              total: totalTokenEstimate
-            }
-          },
-          sources
-        };
-      } catch (error) {
-        window.console.error(`Error processing model ${model}:`, error);
-        
-        // Include the error details in the result
-        return {
-          model,
-          error: true,
-          errorMessage: `Error processing model ${model}: ${error.message}`,
-          answer: `Error: ${error.message}`,
-          metrics: {
-            responseTime: 0,
-            elapsedTime: 0,
-            tokenUsage: {
-              estimated: true,
-              input: 0,
-              output: 0,
-              total: 0
-            }
-          },
-          sources
-        };
-      }
-    })();
-  });
-  
-  // Execute all model queries in parallel
-  const results = await Promise.all(modelQueries);
-  
-  // Process the results into a map of model -> result
-  const responsesMap = {};
-  const systemPromptsUsed = {};
-  const temperaturesUsed = {};
-  const metricsMap = {};
-  
-  for (const result of results) {
-    systemPromptsUsed[result.model] = getSystemPromptForModel(result.model);
-    temperaturesUsed[result.model] = getTemperatureForModel(result.model);
-    
-    if (result.error) {
-      // Handle error for this model
-      responsesMap[result.model] = {
-        answer: `Error: ${result.errorMessage}`,
-        error: result.error,
-        sources: sources.map(doc => ({
-          content: doc.pageContent,
-          source: doc.metadata.source,
-          metadata: doc.metadata,
-          namespace: doc.metadata.namespace || 'default'
-        }))
-      };
+  // Create an array of promises for querying multiple models in parallel
+  const promises = (models || []).map(async (modelName) => {
+    const startTime = Date.now();
+    try {
+      // Get Ollama endpoint from localStorage
+      const ollamaEndpoint = localStorage.getItem('ollamaEndpoint') || 'http://localhost:11434';
       
-      // Add empty metrics for error case
-      metricsMap[result.model] = {
-        responseTime: 0,
-        elapsedTime: 0, // Add elapsedTime
-        tokenUsage: {
-          estimated: true,
-          input: 0,
-          output: 0,
-          total: 0
+      // Create LLM instance with appropriate configuration
+      const llm = createLlmInstance(modelName, getSystemPromptForModel(modelName), {
+        ollamaEndpoint: ollamaEndpoint,
+        temperature: getTemperatureForModel(modelName)
+      });
+      
+      // Call the LLM with the prompt
+      const answer = await llm.invoke(prompt);
+      
+      const endTime = Date.now();
+      const responseTime = endTime - startTime;
+      
+      // Get the answer text, handling both object and string responses
+      const answerText = answer && typeof answer === 'object' ? answer.text : (answer || '');
+      
+      return {
+        modelName,
+        success: true,
+        response: {
+          text: answerText,
+          sources: sources || []
+        },
+        metrics: {
+          responseTime,
+          elapsedTime: endTime - startTime,
+          tokenUsage: {
+            estimated: true,
+            input: Math.round(prompt.length / 4),
+            output: Math.round(answerText.length / 4),
+            total: Math.round(prompt.length / 4) + Math.round(answerText.length / 4)
+          }
         }
       };
+    } catch (error) {
+      console.error(`Error processing model ${modelName}:`, error);
+      
+      // Handle specific API errors
+      let errorMessage = 'Unknown error occurred';
+      if (error.message?.includes('overloaded') || error.message?.includes('529')) {
+        errorMessage = 'Service is currently overloaded. Please try again later.';
+      } else if (error.message?.includes('rate limit')) {
+        errorMessage = 'Rate limit exceeded. Please wait a moment before trying again.';
+      } else if (error.message?.includes('timeout')) {
+        errorMessage = 'Request timed out. Please try again.';
+      } else if (error.message?.includes('unauthorized') || error.message?.includes('401')) {
+        errorMessage = 'Authentication error. Please check your API keys.';
+      }
+      
+      return {
+        modelName,
+        success: false,
+        error: errorMessage,
+        response: {
+          text: `Error: ${errorMessage}`,
+          sources: sources || []
+        },
+        metrics: {
+          responseTime: Date.now() - startTime,
+          elapsedTime: Date.now() - startTime,
+          tokenUsage: {
+            estimated: true,
+            input: Math.round(prompt.length / 4),
+            output: 0,
+            total: Math.round(prompt.length / 4)
+          }
+        }
+      };
+    }
+  });
+
+  // Wait for all promises to resolve
+  const results = await Promise.all(promises);
+
+  // Separate successful responses and errors
+  const responses = {};
+  const metricsMap = {};
+
+  results.forEach(result => {
+    if (result.success) {
+      responses[result.modelName] = result.response;
+      metricsMap[result.modelName] = result.metrics;
     } else {
-      // Store successful response
-      responsesMap[result.model] = {
-        answer: result.answer,
-        responseTime: result.metrics.responseTime,
-        sources: sources.map(doc => ({
-          content: doc.pageContent,
-          source: doc.metadata.source,
-          metadata: doc.metadata,
-          namespace: doc.metadata.namespace || 'default'
-        }))
-      };
-      
-      // Store metrics
-      metricsMap[result.model] = {
-        responseTime: result.metrics.responseTime,
-        elapsedTime: result.metrics.elapsedTime, // Include elapsed time
-        tokenUsage: result.metrics.tokenUsage
-      };
-      
-      // Log response time for this model
-      window.console.log(`${result.model} responded in ${result.metrics.responseTime}ms`);
+      responses[result.modelName] = result.response;
+      metricsMap[result.modelName] = result.metrics;
     }
-  }
-  
+  });
+
   return {
-    responses: responsesMap,
-    metrics: {
-      ...metricsMap,
-      systemPrompts: systemPromptsUsed,
-      temperatures: temperaturesUsed,
-    }
+    responses: responses || {},
+    metrics: metricsMap || {}
   };
 }; 

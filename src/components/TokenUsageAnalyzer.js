@@ -98,15 +98,19 @@ const TokenUsageAnalyzer = ({ metrics, responses, systemPrompts, currentQuery })
     const modelWarnings = {};
     
     // For each model response, estimate the token breakdown
-    Object.entries(responses).forEach(([model, response]) => {
+    Object.entries(responses || {}).forEach(([model, response]) => {
+      if (!response || !response.sources) {
+        return; // Skip this model if response or sources is undefined
+      }
+      
       // Reconstruct the full prompt that was sent (similar to what's in QueryInterface submitQuery)
-      const context = response.sources.map(s => s.content).join('\n\n');
+      const context = (response.sources || []).map(s => s?.content || '').join('\n\n');
       const prompt = `
 Context information is below.
 ---------------------
 ${context}
 ---------------------
-Given the context information and not prior knowledge, answer the question: ${currentQuery}
+Given the context information and not prior knowledge, answer the question: ${currentQuery || ''}
 `;
       
       // Get the system prompt used for this model - safely access system prompts
@@ -175,9 +179,9 @@ Given the context information and not prior knowledge, answer the question: ${cu
           </Typography>
           
           <Grid container spacing={3}>
-            {Object.entries(responses).map(([model, response]) => {
+            {Object.entries(responses || {}).map(([model, response]) => {
               // Skip if model key is not an actual model in metrics
-              if (!metrics[model] || ['systemPrompts', 'temperatures', 'retrievalTime', 'query'].includes(model)) {
+              if (!metrics || !metrics[model] || ['systemPrompts', 'temperatures', 'retrievalTime', 'query'].includes(model)) {
                 return null;
               }
               
@@ -254,7 +258,7 @@ Given the context information and not prior knowledge, answer the question: ${cu
                             </TableRow>
                           </TableHead>
                           <TableBody>
-                            {Object.entries(breakdown.breakdown).map(([part, tokens]) => {
+                            {breakdown && breakdown.breakdown && Object.entries(breakdown.breakdown || {}).map(([part, tokens]) => {
                               const percentage = calculatePercentage(tokens, tokenUsage.input);
                               return (
                                 <TableRow key={part}>
@@ -279,7 +283,7 @@ Given the context information and not prior knowledge, answer the question: ${cu
                       </TableContainer>
                       
                       {/* Optimization Warnings */}
-                      {modelWarnings.length > 0 && (
+                      {modelWarnings && modelWarnings.length > 0 && (
                         <Box sx={{ mb: 2 }}>
                           <Typography variant="subtitle2" gutterBottom>
                             <Box component="span" sx={{ display: 'flex', alignItems: 'center' }}>

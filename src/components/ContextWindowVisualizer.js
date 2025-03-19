@@ -64,16 +64,20 @@ const ContextWindowVisualizer = ({ responses, systemPrompts, currentQuery }) => 
   const estimateTokenCount = useCallback((text) => {
     // Simple estimation: ~4 chars per token is a common approximation
     // This is a rough estimate and could be replaced with a more accurate tokenizer
+    // Add null check for text
+    if (!text) return 0;
     return Math.ceil(text.length / 4);
   }, []);
   
   // Calculate context window usage
   const calculateContextUsage = useCallback(() => {
+    if (!responses) return {}; // Add early return if responses is undefined
+    
     const usage = {};
     
-    Object.entries(responses).forEach(([model, modelResponse]) => {
-      // Skip if model key is a reserved system property
-      if (['systemPrompts', 'temperatures', 'retrievalTime', 'query'].includes(model)) {
+    Object.entries(responses || {}).forEach(([model, modelResponse]) => {
+      // Skip if model isn't valid or modelResponse is undefined
+      if (!modelResponse || ['systemPrompts', 'temperatures', 'retrievalTime', 'query'].includes(model)) {
         return;
       }
       
@@ -86,16 +90,21 @@ const ContextWindowVisualizer = ({ responses, systemPrompts, currentQuery }) => 
       
       // Calculate tokens in context (retrieval chunks)
       const contextSources = modelResponse.sources || [];
-      const contextText = contextSources.map(source => source.content).join('\n\n');
+      const contextText = contextSources.map(source => source?.content || '').join('\n\n');
       const contextTokens = estimateTokenCount(contextText);
       
       // Calculate tokens in query
-      const queryTokens = estimateTokenCount(currentQuery);
+      const queryTokens = estimateTokenCount(currentQuery || '');
       
       // Calculate tokens in response
-      const responseText = typeof modelResponse.answer === 'object' ? 
-        modelResponse.answer.text : 
-        modelResponse.answer;
+      let responseText = '';
+      if (modelResponse.answer) {
+        responseText = typeof modelResponse.answer === 'object' ? 
+          (modelResponse.answer.text || '') : 
+          (modelResponse.answer || '');
+      } else if (modelResponse.text) {
+        responseText = modelResponse.text;
+      }
       const responseTokens = estimateTokenCount(responseText);
       
       // Format instructions and overhead estimation (prompt formatting, JSON structures, etc.)
@@ -108,65 +117,33 @@ const ContextWindowVisualizer = ({ responses, systemPrompts, currentQuery }) => 
       const totalTokensUsed = systemPromptTokens + contextTokens + queryTokens + responseTokens + instructionsTokens + overheadTokens;
       
       // Calculate percentage of context window used
-      const percentageUsed = Math.min(100, Math.round((totalTokensUsed / windowSize) * 100));
+      const percentageUsed = Math.round((totalTokensUsed / windowSize) * 100);
       
-      // Determine warning level
-      let warningLevel = 'none';
-      if (percentageUsed >= WARNING_THRESHOLDS.critical) {
-        warningLevel = 'critical';
-      } else if (percentageUsed >= WARNING_THRESHOLDS.moderate) {
-        warningLevel = 'moderate';
-      }
-      
-      // Build the usage object
+      // Store results
       usage[model] = {
         windowSize,
-        systemPromptTokens,
-        contextTokens,
-        queryTokens,
-        responseTokens,
-        instructionsTokens,
-        overheadTokens,
         totalTokensUsed,
         percentageUsed,
-        warningLevel,
         breakdown: {
-          systemPrompt: {
-            tokens: systemPromptTokens,
-            percentage: Math.round((systemPromptTokens / totalTokensUsed) * 100)
-          },
-          context: {
-            tokens: contextTokens,
-            percentage: Math.round((contextTokens / totalTokensUsed) * 100)
-          },
-          query: {
-            tokens: queryTokens,
-            percentage: Math.round((queryTokens / totalTokensUsed) * 100)
-          },
-          instructions: {
-            tokens: instructionsTokens,
-            percentage: Math.round((instructionsTokens / totalTokensUsed) * 100)
-          },
-          overhead: {
-            tokens: overheadTokens,
-            percentage: Math.round((overheadTokens / totalTokensUsed) * 100)
-          },
-          response: {
-            tokens: responseTokens,
-            percentage: Math.round((responseTokens / totalTokensUsed) * 100)
-          }
+          system: systemPromptTokens,
+          context: contextTokens,
+          query: queryTokens,
+          response: responseTokens,
+          instructions: instructionsTokens,
+          overhead: overheadTokens
         }
       };
     });
     
-    setContextUsage(usage);
+    return usage;
   }, [responses, systemPrompts, currentQuery, estimateTokenCount]);
   
-  // Calculate context usage when responses, systemPrompts, or currentQuery changes
+  // Update context usage whenever relevant props change
   useEffect(() => {
-    if (Object.keys(responses).length > 0) {
-      calculateContextUsage();
-    }
+    if (!responses) return; // Add early return if responses is undefined
+    
+    const usage = calculateContextUsage();
+    setContextUsage(usage);
   }, [responses, systemPrompts, currentQuery, calculateContextUsage]);
   
   // Format large numbers with commas
@@ -174,225 +151,238 @@ const ContextWindowVisualizer = ({ responses, systemPrompts, currentQuery }) => 
     return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
   };
   
-  // Get progress color
+  // Helper to get color for a percentage value
   const getProgressColor = (percentage) => {
-    if (percentage >= WARNING_THRESHOLDS.critical) return 'error';
-    if (percentage >= WARNING_THRESHOLDS.moderate) return 'warning';
-    return 'primary';
+    if (percentage < WARNING_THRESHOLDS.moderate) return "success";
+    if (percentage < WARNING_THRESHOLDS.critical) return "warning";
+    return "error";
   };
   
-  // Check if any models have warning or critical usage levels
+  // Check if any model has warnings
   const hasWarnings = () => {
-    return Object.values(contextUsage).some(usage => 
-      usage.warningLevel === 'moderate' || usage.warningLevel === 'critical'
+    return Object.values(contextUsage || {}).some(
+      usage => usage && usage.percentageUsed >= WARNING_THRESHOLDS.moderate
     );
   };
   
-  // Get message for warning chip
+  // Get appropriate warning message based on context usage
   const getWarningMessage = () => {
-    const criticalCount = Object.values(contextUsage).filter(u => u.warningLevel === 'critical').length;
-    const warningCount = Object.values(contextUsage).filter(u => u.warningLevel === 'moderate').length;
-    
-    if (criticalCount > 0) {
-      return `${criticalCount} critical, ${warningCount} warning`;
-    } else if (warningCount > 0) {
-      return `${warningCount} warnings`;
-    } else {
-      return 'All good';
+    const criticalModels = Object.entries(contextUsage || {})
+      .filter(([_, usage]) => usage && usage.percentageUsed >= WARNING_THRESHOLDS.critical)
+      .map(([model]) => model);
+      
+    if (criticalModels.length > 0) {
+      return `${criticalModels.join(', ')} ${criticalModels.length === 1 ? 'is' : 'are'} near context window limits.`;
     }
+    
+    return 'Some models are approaching their context window limits.';
   };
   
-  // Get segment colors for the stacked progress bar
+  // Get color for different segments of the breakdown
   const getSegmentColor = (segmentType) => {
     const colors = {
-      systemPrompt: '#4caf50', // green
-      context: '#2196f3',      // blue
-      query: '#9c27b0',        // purple
-      instructions: '#ff9800', // orange
-      overhead: '#795548',     // brown
-      response: '#f44336'      // red
+      system: '#8884d8',
+      context: '#82ca9d',
+      query: '#ffc658',
+      response: '#ff8042',
+      instructions: '#0088fe',
+      overhead: '#a4a4a4'
     };
     
-    return colors[segmentType] || '#888888';
+    return colors[segmentType] || colors.overhead;
   };
   
-  // Get readable segment name
+  // Get display name for segment types
   const getSegmentName = (segmentType) => {
     const names = {
-      systemPrompt: 'System Prompt',
-      context: 'Context Chunks',
-      query: 'User Query',
+      system: 'System Prompt',
+      context: 'Context',
+      query: 'Query',
+      response: 'Response',
       instructions: 'Instructions',
-      overhead: 'Formatting Overhead',
-      response: 'Model Response'
+      overhead: 'Overhead'
     };
     
     return names[segmentType] || segmentType;
   };
 
   return (
-    <Accordion 
-      expanded={expanded} 
-      onChange={() => setExpanded(!expanded)}
-      sx={{ 
-        backgroundColor: hasWarnings() ? '#fff8e1' : 'inherit',
-        '&.Mui-expanded': {
-          backgroundColor: hasWarnings() ? '#fff8e1' : 'inherit'
-        }
-      }}
-    >
-      <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+    <Accordion expanded={expanded} onChange={() => setExpanded(!expanded)}>
+      <AccordionSummary 
+        expandIcon={<ExpandMoreIcon />}
+        aria-controls="context-window-content"
+        id="context-window-header"
+      >
         <Box display="flex" alignItems="center">
-          <WindowIcon sx={{ mr: 1, color: hasWarnings() ? 'warning.main' : 'text.secondary' }} />
-          <Typography variant="h6">
-            Context Window Analysis
-            {hasWarnings() && (
-              <Chip 
-                size="small" 
-                icon={<WarningIcon />} 
-                label={getWarningMessage()} 
-                color="warning"
-                sx={{ ml: 2, fontWeight: 'bold' }}
-              />
-            )}
-          </Typography>
+          <WindowIcon sx={{ mr: 1 }} />
+          <Typography variant="h6">Context Window Usage Analysis</Typography>
         </Box>
       </AccordionSummary>
       <AccordionDetails>
-        <Typography variant="body2" color="text.secondary" paragraph>
-          This visualization shows how much of each model's context window is being utilized. 
-          The context window is the maximum number of tokens a model can process, including system prompts, 
-          retrieved context, user query, and the generated response.
-        </Typography>
-        
-        {hasWarnings() && (
-          <Alert severity="warning" sx={{ mb: 3 }}>
-            <Typography variant="body2">
-              <strong>Warning:</strong> Some models are approaching their context window limits. 
-              Consider reducing the number of retrieved chunks, simplifying your system prompt, 
-              or using models with larger context windows.
-            </Typography>
-          </Alert>
-        )}
-        
-        <Grid container spacing={3}>
-          {Object.entries(contextUsage).map(([model, usage]) => (
-            <Grid item xs={12} md={6} key={model}>
-              <Card variant="outlined" sx={{ height: '100%' }}>
-                <CardHeader
-                  title={
-                    <Box display="flex" alignItems="center" justifyContent="space-between">
-                      <Typography variant="h6">{model}</Typography>
-                      <Chip 
-                        size="small" 
-                        label={`${usage.percentageUsed}% Used`} 
-                        color={getProgressColor(usage.percentageUsed)}
-                        sx={{ fontWeight: 'bold' }}
-                      />
-                    </Box>
-                  }
-                  subheader={
-                    <Typography variant="body2" color="text.secondary">
-                      {formatNumber(usage.totalTokensUsed)} / {formatNumber(usage.windowSize)} tokens
-                    </Typography>
-                  }
-                />
-                <Divider />
-                <CardContent>
-                  {/* Main progress bar */}
-                  <Box sx={{ mb: 2 }}>
-                    <LinearProgress 
-                      variant="determinate" 
-                      value={usage.percentageUsed}
-                      color={getProgressColor(usage.percentageUsed)}
-                      sx={{ 
-                        height: 20, 
-                        borderRadius: 1,
-                        mb: 1
-                      }}
-                    />
-                    <Typography variant="caption" color="text.secondary">
-                      Context window: {formatNumber(usage.windowSize)} tokens total
-                    </Typography>
-                  </Box>
-                  
-                  {/* Stacked usage breakdown */}
-                  <Typography variant="subtitle2" gutterBottom>Token Breakdown</Typography>
-                  <Box sx={{ mb: 2, display: 'flex', flexDirection: 'column' }}>
-                    <Box sx={{ height: 30, display: 'flex', width: '100%', borderRadius: 1, overflow: 'hidden' }}>
-                      {Object.entries(usage.breakdown).map(([segment, data]) => (
-                        <Tooltip 
-                          key={segment} 
-                          title={`${getSegmentName(segment)}: ${formatNumber(data.tokens)} tokens (${data.percentage}%)`}
-                          arrow
-                        >
-                          <Box 
-                            sx={{ 
-                              width: `${data.percentage}%`, 
-                              bgcolor: getSegmentColor(segment),
-                              height: '100%',
-                              minWidth: data.percentage > 0 ? '4px' : '0px'
-                            }} 
+        <Box>
+          <Typography variant="body2" color="text.secondary" paragraph>
+            This visualization shows how much of each model's context window is being used by your current query, context, and system prompts.
+          </Typography>
+          
+          {hasWarnings() && (
+            <Alert severity="warning" sx={{ mb: 2 }}>
+              <Typography variant="body2">
+                {getWarningMessage()} Try reducing the number of retrieved documents, simplifying system prompts, 
+                or using models with larger context windows.
+              </Typography>
+            </Alert>
+          )}
+          
+          <Grid container spacing={3}>
+            {Object.entries(contextUsage || {}).map(([model, usage]) => {
+              if (!usage) return null;
+              
+              const breakdownEntries = [];
+              let totalPercentage = 0;
+              
+              // Calculate percentages for each segment based on totalTokensUsed
+              if (usage.breakdown) {
+                Object.entries(usage.breakdown).forEach(([segment, tokens]) => {
+                  const percentage = Math.round((tokens / usage.totalTokensUsed) * 100) || 0;
+                  totalPercentage += percentage;
+                  breakdownEntries.push({
+                    segment,
+                    tokens,
+                    percentage
+                  });
+                });
+              }
+              
+              // Adjust percentages to ensure they sum to 100%
+              if (totalPercentage !== 100 && breakdownEntries.length > 0) {
+                // Find the largest segment to adjust
+                const largestSegment = breakdownEntries.reduce((prev, current) => 
+                  (current.percentage > prev.percentage) ? current : prev
+                );
+                
+                // Adjust the largest segment to make total 100%
+                largestSegment.percentage += (100 - totalPercentage);
+              }
+              
+              return (
+                <Grid item xs={12} md={6} key={model}>
+                  <Card variant="outlined" sx={{ height: '100%' }}>
+                    <CardHeader
+                      title={
+                        <Box display="flex" alignItems="center" justifyContent="space-between">
+                          <Typography variant="h6">{model}</Typography>
+                          <Chip 
+                            size="small" 
+                            label={`${usage.percentageUsed}% Used`} 
+                            color={getProgressColor(usage.percentageUsed)}
+                            sx={{ fontWeight: 'bold' }}
                           />
-                        </Tooltip>
-                      ))}
-                    </Box>
-                    <Stack direction="row" spacing={1} sx={{ mt: 1, flexWrap: 'wrap', gap: 1 }}>
-                      {Object.entries(usage.breakdown).map(([segment, data]) => (
-                        <Chip
-                          key={segment}
-                          size="small"
-                          label={`${getSegmentName(segment)}: ${data.percentage}%`}
+                        </Box>
+                      }
+                      subheader={
+                        <Typography variant="body2" color="text.secondary">
+                          {formatNumber(usage.totalTokensUsed)} / {formatNumber(usage.windowSize)} tokens
+                        </Typography>
+                      }
+                    />
+                    <Divider />
+                    <CardContent>
+                      {/* Main progress bar */}
+                      <Box sx={{ mb: 2 }}>
+                        <LinearProgress 
+                          variant="determinate" 
+                          value={Math.min(100, usage.percentageUsed)}
+                          color={getProgressColor(usage.percentageUsed)}
                           sx={{ 
-                            bgcolor: getSegmentColor(segment),
-                            color: 'white',
-                            fontSize: '0.7rem'
+                            height: 20, 
+                            borderRadius: 1,
+                            mb: 1
                           }}
                         />
-                      ))}
-                    </Stack>
-                  </Box>
-                  
-                  {/* Warnings and recommendations */}
-                  {usage.warningLevel !== 'none' && (
-                    <Alert 
-                      severity={usage.warningLevel === 'critical' ? 'error' : 'warning'}
-                      sx={{ mt: 2 }}
-                    >
-                      <Typography variant="body2">
-                        {usage.warningLevel === 'critical' ? (
-                          <>
-                            <strong>Critical:</strong> This model is near its context window limit. 
-                            Consider reducing context chunks or using a model with a larger context window.
-                          </>
-                        ) : (
-                          <>
-                            <strong>Warning:</strong> This model is using {usage.percentageUsed}% of its context window.
-                            Monitor usage if adding more content.
-                          </>
-                        )}
-                      </Typography>
-                    </Alert>
-                  )}
-                  
-                  {/* Usage statistics */}
-                  <Box sx={{ mt: 2, display: 'flex', justifyContent: 'space-between' }}>
-                    <Typography variant="body2" color="text.secondary">
-                      <MemoryIcon sx={{ fontSize: '1rem', verticalAlign: 'middle', mr: 0.5 }} />
-                      Total: {formatNumber(usage.totalTokensUsed)} tokens
-                    </Typography>
-                    <Typography variant="body2" color="text.secondary">
-                      <InfoIcon sx={{ fontSize: '1rem', verticalAlign: 'middle', mr: 0.5 }} />
-                      {usage.windowSize - usage.totalTokensUsed > 0 ? 
-                        `${formatNumber(usage.windowSize - usage.totalTokensUsed)} tokens remaining` : 
-                        'Window exceeded'}
-                    </Typography>
-                  </Box>
-                </CardContent>
-              </Card>
-            </Grid>
-          ))}
-        </Grid>
+                        <Typography variant="caption" color="text.secondary">
+                          Context window: {formatNumber(usage.windowSize)} tokens total
+                        </Typography>
+                      </Box>
+                      
+                      {/* Stacked usage breakdown */}
+                      <Typography variant="subtitle2" gutterBottom>Token Breakdown</Typography>
+                      <Box sx={{ mb: 2, display: 'flex', flexDirection: 'column' }}>
+                        <Box sx={{ height: 30, display: 'flex', width: '100%', borderRadius: 1, overflow: 'hidden' }}>
+                          {breakdownEntries.map(({ segment, percentage }) => (
+                            <Tooltip 
+                              key={segment} 
+                              title={`${getSegmentName(segment)}: ${formatNumber(usage.breakdown[segment])} tokens (${percentage}%)`}
+                              arrow
+                            >
+                              <Box 
+                                sx={{ 
+                                  width: `${percentage}%`, 
+                                  bgcolor: getSegmentColor(segment),
+                                  height: '100%',
+                                  minWidth: percentage > 0 ? '4px' : '0px'
+                                }} 
+                              />
+                            </Tooltip>
+                          ))}
+                        </Box>
+                        <Stack direction="row" spacing={1} sx={{ mt: 1, flexWrap: 'wrap', gap: 1 }}>
+                          {breakdownEntries.map(({ segment, percentage }) => (
+                            <Chip
+                              key={segment}
+                              size="small"
+                              label={`${getSegmentName(segment)}: ${percentage}%`}
+                              sx={{ 
+                                bgcolor: getSegmentColor(segment),
+                                color: 'white',
+                                fontSize: '0.7rem'
+                              }}
+                            />
+                          ))}
+                        </Stack>
+                      </Box>
+                      
+                      {/* Warnings and recommendations */}
+                      {usage.percentageUsed >= WARNING_THRESHOLDS.moderate && (
+                        <Alert 
+                          severity={usage.percentageUsed >= WARNING_THRESHOLDS.critical ? 'error' : 'warning'}
+                          sx={{ mt: 2 }}
+                        >
+                          <Typography variant="body2">
+                            {usage.percentageUsed >= WARNING_THRESHOLDS.critical ? (
+                              <>
+                                <strong>Critical:</strong> This model is near its context window limit. 
+                                Consider reducing context chunks or using a model with a larger context window.
+                              </>
+                            ) : (
+                              <>
+                                <strong>Warning:</strong> This model is using {usage.percentageUsed}% of its context window.
+                                Monitor usage if adding more content.
+                              </>
+                            )}
+                          </Typography>
+                        </Alert>
+                      )}
+                      
+                      {/* Usage statistics */}
+                      <Box sx={{ mt: 2, display: 'flex', justifyContent: 'space-between' }}>
+                        <Typography variant="body2" color="text.secondary">
+                          <MemoryIcon sx={{ fontSize: '1rem', verticalAlign: 'middle', mr: 0.5 }} />
+                          Total: {formatNumber(usage.totalTokensUsed)} tokens
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary">
+                          <InfoIcon sx={{ fontSize: '1rem', verticalAlign: 'middle', mr: 0.5 }} />
+                          {usage.windowSize - usage.totalTokensUsed > 0 ? 
+                            `${formatNumber(usage.windowSize - usage.totalTokensUsed)} tokens remaining` : 
+                            'Window exceeded'}
+                        </Typography>
+                      </Box>
+                    </CardContent>
+                  </Card>
+                </Grid>
+              );
+            })}
+          </Grid>
+        </Box>
       </AccordionDetails>
     </Accordion>
   );
