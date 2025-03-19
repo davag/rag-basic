@@ -233,85 +233,43 @@ const EmbeddingQualityAnalysis = ({
     };
   };
 
-  // Analyze clustering quality
-  const analyzeClustering = async (embeddings) => {
-    try {
-      if (!documents || documents.length === 0) {
-        console.error('No documents available for clustering analysis');
-        return {
-          clusterQualityScore: 0,
-          clusterSizes: [0, 0, 0, 0, 0],
-          coherence: [0, 0, 0, 0, 0],
-          recommendations: ['Load documents before analyzing clusters']
-        };
-      }
-      
-      const llm = createLlmInstance(analysisModel, 'You are an expert at analyzing clustering quality in embeddings. Evaluate how well the embeddings group related content.');
-      
-      // Perform simple k-means clustering
-      const k = 5;
-      const clusters = Array(k).fill().map(() => []);
-      const centroids = embeddings.slice(0, k);
-      
-      // Assign points to clusters
-      embeddings.forEach((embedding, i) => {
-        let minDist = Infinity;
-        let clusterIndex = 0;
-        
-        centroids.forEach((centroid, j) => {
-          const dist = cosineSimilarity(embedding, centroid);
-          if (dist < minDist) {
-            minDist = dist;
-            clusterIndex = j;
-          }
-        });
-        
-        clusters[clusterIndex].push(i);
-      });
-      
-      // Get sample content from each cluster
-      const clusterSamples = clusters.map(cluster => 
-        cluster.slice(0, 3).map(i => {
-          if (!documents[i] || !documents[i].pageContent) {
-            return "No content available";
-          }
-          return documents[i].pageContent.substring(0, 200);
-        })
-      );
-      
-      const prompt = `Analyze these clusters of content:
-      
-      ${clusterSamples.map((cluster, i) => `
-      Cluster ${i+1} (${cluster.length} items):
-      ${cluster.join('\n\n')}
-      `).join('\n\n')}
-      
-      Evaluate the quality of these clusters. Format your response as JSON:
-      {
-        "clusterQualityScore": float,
-        "clusterSizes": [size1, size2, ...],
-        "coherence": ["coherence1", "coherence2", ...],
-        "recommendations": ["rec1", "rec2", ...]
-      }`;
-      
-      const response = await llm.invoke(prompt);
-      
-      // Extract the JSON from the response
-      const jsonMatch = response.match(/(\{[\s\S]*\})/);
-      if (jsonMatch) {
-        const result = JSON.parse(jsonMatch[0]);
-        if (result.coherence) {
-          // Use coherence in visualization
-          renderClusterVisualization(embeddings, result.clusters);
-        }
-        return result;
-      }
-      
-      return null;
-    } catch (error) {
-      console.error('Error analyzing clustering:', error);
-      return null;
+  // Analyze a single vector
+  const analyzeVector = async (vector) => {
+    if (!vector || !Array.isArray(vector)) {
+      throw new Error('Invalid vector format');
     }
+    
+    // Calculate basic statistics
+    const mean = vector.reduce((sum, val) => sum + val, 0) / vector.length;
+    const variance = vector.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / vector.length;
+    const std = Math.sqrt(variance);
+    
+    // Calculate sparsity (percentage of near-zero values)
+    const epsilon = 1e-6;
+    const sparsity = vector.filter(val => Math.abs(val) < epsilon).length / vector.length;
+    
+    // Calculate magnitude
+    const magnitude = Math.sqrt(vector.reduce((sum, val) => sum + val * val, 0));
+    
+    return {
+      mean,
+      variance,
+      std,
+      sparsity,
+      magnitude,
+      dimension: vector.length
+    };
+  };
+
+  // Analyze clustering quality
+  const analyzeClustering = async (vectors) => {
+    const results = [];
+    for (let i = 0; i < vectors.length; i++) {
+      const vector = vectors[i];
+      const analysis = await analyzeVector(vector);
+      results.push(analysis);
+    }
+    return results;
   };
 
   // Save results for comparison

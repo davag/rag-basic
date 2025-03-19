@@ -29,10 +29,39 @@ import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import DownloadIcon from '@mui/icons-material/Download';
 import AssessmentIcon from '@mui/icons-material/Assessment';
 import EditIcon from '@mui/icons-material/Edit';
-import { createLlmInstance, calculateCost } from '../utils/apiServices';
 import { validateResponsesInParallel } from '../utils/parallelValidationProcessor';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
+
+// Function to calculate cost based on model and token usage
+const calculateCost = (model, tokens) => {
+  // Default to lowest cost if model not found
+  if (!tokens) return 0;
+  
+  const costs = {
+    // OpenAI models
+    'gpt-4o': 0.00003,
+    'gpt-4o-mini': 0.00002,
+    // Azure models
+    'azure-gpt-4o': 0.000025,
+    'azure-gpt-4o-mini': 0.000015,
+    // Anthropic models
+    'claude-3-5-sonnet-latest': 0.00002,
+    'claude-3-7-sonnet-latest': 0.000025,
+    // Ollama models are free
+    'llama3.2:latest': 0,
+    'gemma3:12b': 0,
+    'mistral:latest': 0
+  };
+
+  // Get base model name without Set prefix
+  const baseModel = model.replace(/^Set \d+-/, '');
+  
+  // Get cost per token, default to lowest cost if model not found
+  const costPerToken = costs[baseModel] || Math.min(...Object.values(costs));
+  
+  return tokens * costPerToken;
+};
 
 // Helper function to find metrics for any model regardless of storage pattern
 const findMetrics = (metrics, modelKey) => {
@@ -1012,18 +1041,6 @@ const ResponseValidation = ({
       direction = 'descending';
     }
     setSortConfig({ key, direction });
-  };
-
-  const formatModelDisplay = (model) => {
-    if (!model) return "";
-    
-    // For parallel validation, show a generic message
-    if (localStorage.getItem('useParallelProcessing') === 'true') {
-      return "Validating all responses in parallel...";
-    }
-    
-    // For sequential validation, show the specific model
-    return `(Processing ${model})`;
   };
 
   // Function to normalize validation results

@@ -25,7 +25,6 @@ import InsertChartIcon from '@mui/icons-material/InsertChart';
 import DashboardIcon from '@mui/icons-material/Dashboard';
 import BuildIcon from '@mui/icons-material/Build';
 import SpeedIcon from '@mui/icons-material/Speed';
-import PsychologyIcon from '@mui/icons-material/Psychology';
 import RagIntroduction from './components/RagIntroduction';
 
 import DocumentUpload from './components/DocumentUpload';
@@ -165,6 +164,8 @@ function App() {
     if (uploadedNamespaces) {
       setNamespaces(uploadedNamespaces);
     }
+    // Save documents to localStorage
+    localStorage.setItem('documents', JSON.stringify(docs));
     // Automatically navigate to the second tab (Configure Vector Store)
     setTabValue(1);
   };
@@ -172,6 +173,18 @@ function App() {
   const handleVectorStoreCreated = (store) => {
     console.log('Vector store created:', store);
     setVectorStore(store);
+    
+    // Create a serializable copy of the vector store with only the necessary data
+    const serializableStore = {
+      memoryVectors: store.memoryVectors.map(vector => ({
+        content: vector.pageContent,
+        metadata: vector.metadata,
+        vector: vector.vector
+      }))
+    };
+    
+    // Save vector store to localStorage
+    localStorage.setItem('vectorStore', JSON.stringify(serializableStore));
     setTabValue(2); // Move to query interface after vector store is created
   };
 
@@ -180,6 +193,24 @@ function App() {
     setMetrics(queryMetrics);
     setCurrentQuery(query);
     setSystemPrompts(prompts);
+    
+    // Save query history
+    try {
+      const queryHistory = JSON.parse(localStorage.getItem('queryHistory') || '[]');
+      const newQuery = {
+        query,
+        timestamp: Date.now(),
+        success: true,
+        latency: queryMetrics[Object.keys(queryMetrics)[0]]?.elapsedTime || 0,
+        relevanceScore: queryMetrics[Object.keys(queryMetrics)[0]]?.relevanceScore || 0,
+        completenessScore: queryMetrics[Object.keys(queryMetrics)[0]]?.completenessScore || 0,
+        consistencyScore: queryMetrics[Object.keys(queryMetrics)[0]]?.consistencyScore || 0
+      };
+      queryHistory.push(newQuery);
+      localStorage.setItem('queryHistory', JSON.stringify(queryHistory));
+    } catch (error) {
+      console.error('Failed to save query history:', error);
+    }
     
     // Save the query interface state for when the user navigates back
     if (queryState) {

@@ -19,8 +19,6 @@ import {
   IconButton,
   Tooltip,
   Link,
-  Switch,
-  FormControlLabel,
   Slider,
   Stack,
   LinearProgress,
@@ -30,13 +28,11 @@ import {
   DialogActions
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
-import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
 import SaveIcon from '@mui/icons-material/Save';
 import UploadIcon from '@mui/icons-material/Upload';
 import LightbulbIcon from '@mui/icons-material/Lightbulb';
 import CloseIcon from '@mui/icons-material/Close';
 import FullscreenIcon from '@mui/icons-material/Fullscreen';
-import FullscreenExitIcon from '@mui/icons-material/FullscreenExit';
 import { createLlmInstance } from '../utils/apiServices';
 import { processModelsInParallel } from '../utils/parallelLLMProcessor';
 import AddIcon from '@mui/icons-material/Add';

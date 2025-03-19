@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Box,
   Card,
@@ -17,7 +17,10 @@ import {
   DialogContent,
   DialogActions,
   TextField,
-  MenuItem
+  MenuItem,
+  Alert,
+  Snackbar,
+  LinearProgress
 } from '@mui/material';
 import {
   Speed as SpeedIcon,
@@ -26,77 +29,184 @@ import {
   Build as BuildIcon,
   CheckCircle as CheckCircleIcon,
   Error as ErrorIcon,
-  Warning as WarningIcon
+  Warning as WarningIcon,
+  Refresh as RefreshIcon
 } from '@mui/icons-material';
+import { createLlmInstance } from '../../../utils/apiServices';
 
 const OptimizationRecommendations = () => {
   const [selectedRecommendation, setSelectedRecommendation] = useState(null);
   const [implementing, setImplementing] = useState(false);
   const [filter, setFilter] = useState('all');
+  const [recommendations, setRecommendations] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [success, setSuccess] = useState(null);
 
-  // Simulated recommendations data
-  const recommendations = [
-    {
-      id: 1,
-      category: 'performance',
-      title: 'Optimize Embedding Batch Size',
-      description: 'Current batch size may be causing memory inefficiencies. Consider adjusting for better performance.',
-      impact: 'high',
-      effort: 'medium',
-      metrics: {
-        currentValue: '128',
-        recommendedValue: '256',
-        estimatedImprovement: '25%'
-      },
-      steps: [
-        'Analyze current memory usage patterns',
-        'Gradually increase batch size while monitoring performance',
-        'Implement new batch size with fallback mechanism',
-        'Verify performance improvements'
-      ],
-      status: 'pending'
-    },
-    {
-      id: 2,
-      category: 'quality',
-      title: 'Enhance Document Preprocessing',
-      description: 'Current preprocessing pipeline missing key cleaning steps. Add additional filters for better quality.',
-      impact: 'medium',
-      effort: 'low',
-      metrics: {
-        currentQuality: '85%',
-        estimatedQuality: '92%',
-        affectedDocuments: '2.3k'
-      },
-      steps: [
-        'Implement additional text cleaning filters',
-        'Add special character handling',
-        'Update preprocessing pipeline',
-        'Reprocess affected documents'
-      ],
-      status: 'in_progress'
-    },
-    {
-      id: 3,
-      category: 'storage',
-      title: 'Optimize Vector Store Index',
-      description: 'Current index structure showing signs of fragmentation. Reorganization recommended.',
-      impact: 'medium',
-      effort: 'high',
-      metrics: {
-        fragmentation: '15%',
-        potentialSaving: '500MB',
-        estimatedSpeedup: '10%'
-      },
-      steps: [
-        'Create backup of current index',
-        'Analyze fragmentation patterns',
-        'Rebuild index with optimized structure',
-        'Verify query performance'
-      ],
-      status: 'completed'
+  // Load recommendations from localStorage on mount
+  useEffect(() => {
+    loadRecommendations();
+  }, []);
+
+  const loadRecommendations = () => {
+    const savedRecommendations = JSON.parse(localStorage.getItem('optimizationRecommendations') || '[]');
+    setRecommendations(savedRecommendations);
+  };
+
+  const generateRecommendations = async () => {
+    setLoading(true);
+    try {
+      // Get quality check results
+      const qualityResults = JSON.parse(localStorage.getItem('qualityCheckResults') || '{}');
+      
+      // Create LLM instance for analysis
+      const llm = createLlmInstance('gpt-4o-mini', 'You are an expert at analyzing RAG system quality and providing actionable recommendations.');
+      
+      // Prepare analysis prompt
+      const analysisPrompt = `Analyze the following quality check results and provide specific, actionable recommendations for improvement:
+        ${JSON.stringify(qualityResults, null, 2)}
+        
+        For each recommendation, provide:
+        1. Category (performance, quality, or storage)
+        2. Title
+        3. Description
+        4. Impact (high, medium, low)
+        5. Effort (high, medium, low)
+        6. Specific metrics affected
+        7. Implementation steps
+        8. Current status (pending)
+        
+        Return ONLY a JSON array of recommendation objects, with no markdown formatting or additional text.`;
+
+      // Get recommendations from LLM
+      const response = await llm.invoke(analysisPrompt);
+      
+      // Clean the response by removing markdown code blocks and any extra text
+      const cleanResponse = response
+        .replace(/```json\n?/g, '')  // Remove opening ```json
+        .replace(/```\n?/g, '')      // Remove closing ```
+        .trim();                     // Remove extra whitespace
+      
+      const newRecommendations = JSON.parse(cleanResponse);
+      
+      // Add IDs and timestamps
+      const recommendationsWithIds = newRecommendations.map((rec, index) => ({
+        ...rec,
+        id: Date.now() + index,
+        timestamp: new Date().toISOString(),
+        status: 'pending'
+      }));
+
+      // Save to localStorage
+      localStorage.setItem('optimizationRecommendations', JSON.stringify(recommendationsWithIds));
+      setRecommendations(recommendationsWithIds);
+      setSuccess('Recommendations generated successfully');
+    } catch (error) {
+      console.error('Error generating recommendations:', error);
+      setError('Failed to generate recommendations: ' + error.message);
+    } finally {
+      setLoading(false);
     }
-  ];
+  };
+
+  const handleImplement = async (recommendation) => {
+    setImplementing(true);
+    try {
+      // Get quality check results
+      const qualityResults = JSON.parse(localStorage.getItem('qualityCheckResults') || '{}');
+      
+      // Create LLM instance for implementation
+      const llm = createLlmInstance('gpt-4o-mini', 'You are an expert at implementing RAG system optimizations.');
+      
+      // Prepare implementation prompt
+      const implementationPrompt = `Implement the following recommendation:
+        ${JSON.stringify(recommendation, null, 2)}
+        
+        Current system state:
+        ${JSON.stringify(qualityResults, null, 2)}
+        
+        Return ONLY a JSON object with implementation steps and expected outcomes, with no markdown formatting or additional text.`;
+
+      // Get implementation guidance
+      const response = await llm.invoke(implementationPrompt);
+      
+      // Clean the response
+      const cleanResponse = response
+        .replace(/```json\n?/g, '')
+        .replace(/```\n?/g, '')
+        .trim();
+      
+      const implementationSteps = JSON.parse(cleanResponse);
+
+      // Update recommendation status
+      const updatedRecommendations = recommendations.map(rec => 
+        rec.id === recommendation.id 
+          ? { ...rec, status: 'in_progress', implementationSteps }
+          : rec
+      );
+
+      // Save updated recommendations
+      localStorage.setItem('optimizationRecommendations', JSON.stringify(updatedRecommendations));
+      setRecommendations(updatedRecommendations);
+      setSuccess('Implementation started successfully');
+    } catch (error) {
+      console.error('Error implementing recommendation:', error);
+      setError('Failed to implement recommendation: ' + error.message);
+    } finally {
+      setImplementing(false);
+      setSelectedRecommendation(null);
+    }
+  };
+
+  const completeImplementation = async (recommendation) => {
+    try {
+      // Get quality check results
+      const qualityResults = JSON.parse(localStorage.getItem('qualityCheckResults') || '{}');
+      
+      // Create LLM instance for verification
+      const llm = createLlmInstance('gpt-4o-mini', 'You are an expert at verifying RAG system optimizations.');
+      
+      // Prepare verification prompt
+      const verificationPrompt = `Verify the implementation of the following recommendation:
+        ${JSON.stringify(recommendation, null, 2)}
+        
+        Current system state:
+        ${JSON.stringify(qualityResults, null, 2)}
+        
+        Return ONLY a JSON object with verification results and any remaining issues, with no markdown formatting or additional text.`;
+
+      // Get verification results
+      const response = await llm.invoke(verificationPrompt);
+      
+      // Clean the response
+      const cleanResponse = response
+        .replace(/```json\n?/g, '')
+        .replace(/```\n?/g, '')
+        .trim();
+      
+      const verificationResults = JSON.parse(cleanResponse);
+
+      // Update recommendation status
+      const updatedRecommendations = recommendations.map(rec => 
+        rec.id === recommendation.id 
+          ? { 
+              ...rec, 
+              status: 'completed',
+              verificationResults,
+              completedAt: new Date().toISOString()
+            }
+          : rec
+      );
+
+      // Save updated recommendations
+      localStorage.setItem('optimizationRecommendations', JSON.stringify(updatedRecommendations));
+      setRecommendations(updatedRecommendations);
+      setSuccess('Implementation completed successfully');
+    } catch (error) {
+      console.error('Error completing implementation:', error);
+      setError('Failed to complete implementation: ' + error.message);
+    }
+  };
 
   const getCategoryIcon = (category) => {
     switch (category) {
@@ -137,14 +247,6 @@ const OptimizationRecommendations = () => {
     }
   };
 
-  const handleImplement = async (recommendation) => {
-    setImplementing(true);
-    // Simulate implementation process
-    await new Promise(resolve => setTimeout(resolve, 2000));
-    setImplementing(false);
-    setSelectedRecommendation(null);
-  };
-
   const filteredRecommendations = recommendations.filter(rec => 
     filter === 'all' || rec.status === filter
   );
@@ -155,19 +257,31 @@ const OptimizationRecommendations = () => {
         <Typography variant="h5">
           Optimization Recommendations
         </Typography>
-        <TextField
-          select
-          value={filter}
-          onChange={(e) => setFilter(e.target.value)}
-          size="small"
-          sx={{ width: 150 }}
-        >
-          <MenuItem value="all">All Status</MenuItem>
-          <MenuItem value="pending">Pending</MenuItem>
-          <MenuItem value="in_progress">In Progress</MenuItem>
-          <MenuItem value="completed">Completed</MenuItem>
-        </TextField>
+        <Box display="flex" gap={2}>
+          <Button
+            variant="outlined"
+            startIcon={<RefreshIcon />}
+            onClick={generateRecommendations}
+            disabled={loading}
+          >
+            Generate Recommendations
+          </Button>
+          <TextField
+            select
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            size="small"
+            sx={{ width: 150 }}
+          >
+            <MenuItem value="all">All Status</MenuItem>
+            <MenuItem value="pending">Pending</MenuItem>
+            <MenuItem value="in_progress">In Progress</MenuItem>
+            <MenuItem value="completed">Completed</MenuItem>
+          </TextField>
+        </Box>
       </Box>
+
+      {loading && <LinearProgress sx={{ mb: 3 }} />}
 
       <Grid container spacing={3}>
         {filteredRecommendations.map((recommendation) => (
@@ -202,22 +316,82 @@ const OptimizationRecommendations = () => {
                       {recommendation.description}
                     </Typography>
 
-                    <Grid container spacing={2}>
-                      {Object.entries(recommendation.metrics).map(([key, value]) => (
-                        <Grid item xs={12} sm={4} key={key}>
-                          <Box textAlign="center">
-                            <Typography variant="subtitle2" color="text.secondary">
-                              {key.split(/(?=[A-Z])/).join(' ')}
-                            </Typography>
-                            <Typography variant="h6">
-                              {value}
-                            </Typography>
-                          </Box>
-                        </Grid>
-                      ))}
-                    </Grid>
+                    {recommendation.metrics && (
+                      <Grid container spacing={2} sx={{ mb: 2 }}>
+                        {Object.entries(recommendation.metrics).map(([key, value]) => (
+                          <Grid item xs={12} sm={4} key={key}>
+                            <Box textAlign="center">
+                              <Typography variant="subtitle2" color="text.secondary">
+                                {key.split(/(?=[A-Z])/).join(' ')}
+                              </Typography>
+                              <Typography variant="h6">
+                                {value}
+                              </Typography>
+                            </Box>
+                          </Grid>
+                        ))}
+                      </Grid>
+                    )}
 
-                    {recommendation.status !== 'completed' && (
+                    {recommendation.status === 'in_progress' && recommendation.implementationSteps && (
+                      <Box mb={2}>
+                        <Typography variant="subtitle2" gutterBottom>
+                          Implementation Progress:
+                        </Typography>
+                        <List dense>
+                          {recommendation.implementationSteps.steps?.map((step, index) => (
+                            <ListItem key={index}>
+                              <ListItemIcon>
+                                <CheckCircleIcon color="disabled" />
+                              </ListItemIcon>
+                              <ListItemText primary={step} />
+                            </ListItem>
+                          )) || (
+                            <ListItem>
+                              <ListItemText primary="No implementation steps available" />
+                            </ListItem>
+                          )}
+                        </List>
+                        <Button
+                          variant="contained"
+                          color="success"
+                          onClick={() => completeImplementation(recommendation)}
+                          sx={{ mt: 1 }}
+                        >
+                          Complete Implementation
+                        </Button>
+                      </Box>
+                    )}
+
+                    {recommendation.status === 'completed' && recommendation.verificationResults && (
+                      <Box mb={2}>
+                        <Typography variant="subtitle2" gutterBottom>
+                          Verification Results:
+                        </Typography>
+                        <Typography color="text.secondary">
+                          {recommendation.verificationResults.summary}
+                        </Typography>
+                        {recommendation.verificationResults.remainingIssues && (
+                          <Box mt={1}>
+                            <Typography variant="subtitle2" color="warning.main">
+                              Remaining Issues:
+                            </Typography>
+                            <List dense>
+                              {recommendation.verificationResults.remainingIssues.map((issue, index) => (
+                                <ListItem key={index}>
+                                  <ListItemIcon>
+                                    <WarningIcon color="warning" />
+                                  </ListItemIcon>
+                                  <ListItemText primary={issue} />
+                                </ListItem>
+                              ))}
+                            </List>
+                          </Box>
+                        )}
+                      </Box>
+                    )}
+
+                    {recommendation.status === 'pending' && (
                       <Box display="flex" justifyContent="flex-end" mt={2}>
                         <Button
                           variant="contained"
@@ -251,14 +425,18 @@ const OptimizationRecommendations = () => {
                 Implementation Steps:
               </Typography>
               <List>
-                {selectedRecommendation.steps.map((step, index) => (
+                {selectedRecommendation.implementationSteps?.steps?.map((step, index) => (
                   <ListItem key={index}>
                     <ListItemIcon>
                       <CheckCircleIcon color="disabled" />
                     </ListItemIcon>
                     <ListItemText primary={step} />
                   </ListItem>
-                ))}
+                )) || (
+                  <ListItem>
+                    <ListItemText primary="Loading implementation steps..." />
+                  </ListItem>
+                )}
               </List>
             </>
           )}
@@ -286,6 +464,28 @@ const OptimizationRecommendations = () => {
           </Button>
         </DialogActions>
       </Dialog>
+
+      <Snackbar 
+        open={!!error} 
+        autoHideDuration={6000} 
+        onClose={() => setError(null)}
+        anchorOrigin={{ vertical: 'top', horizontal: 'center' }}
+      >
+        <Alert onClose={() => setError(null)} severity="error">
+          {error}
+        </Alert>
+      </Snackbar>
+
+      <Snackbar 
+        open={!!success} 
+        autoHideDuration={6000} 
+        onClose={() => setSuccess(null)}
+        anchorOrigin={{ vertical: 'top', horizontal: 'center' }}
+      >
+        <Alert onClose={() => setSuccess(null)} severity="success">
+          {success}
+        </Alert>
+      </Snackbar>
     </Box>
   );
 };
