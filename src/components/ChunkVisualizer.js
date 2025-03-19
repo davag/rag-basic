@@ -13,11 +13,14 @@ import {
   Alert,
   CircularProgress,
   Tooltip,
-  IconButton
+  IconButton,
+  List,
+  ListItem,
+  ListItemText
 } from '@mui/material';
 import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
 import AbcIcon from '@mui/icons-material/Abc';
-import { RecursiveCharacterTextSplitter } from 'langchain/text_splitter';
+import { createTextSplitter, chunkingStrategies } from '../utils/chunkingStrategies';
 
 /**
  * Chunk Visualizer Component
@@ -29,6 +32,7 @@ const ChunkVisualizer = ({ documents }) => {
   const [documentContent, setDocumentContent] = useState('');
   const [chunkSize, setChunkSize] = useState(1000);
   const [chunkOverlap, setChunkOverlap] = useState(200);
+  const [chunkingStrategy, setChunkingStrategy] = useState('recursive');
   const [chunks, setChunks] = useState([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
@@ -66,6 +70,16 @@ const ChunkVisualizer = ({ documents }) => {
     // Reset chunks when document changes
     setChunks([]);
   };
+
+  const handleChunkingStrategyChange = (event) => {
+    const strategy = event.target.value;
+    setChunkingStrategy(strategy);
+    
+    // Update chunk size and overlap based on strategy defaults
+    const strategyConfig = chunkingStrategies[strategy].defaultConfig;
+    setChunkSize(strategyConfig.chunkSize);
+    setChunkOverlap(strategyConfig.chunkOverlap);
+  };
   
   const handleChunkSizeChange = (event, newValue) => {
     setChunkSize(newValue);
@@ -82,8 +96,8 @@ const ChunkVisualizer = ({ documents }) => {
     setChunks([]);
     
     try {
-      // Create text splitter with current settings
-      const textSplitter = new RecursiveCharacterTextSplitter({
+      // Create text splitter based on selected strategy
+      const textSplitter = createTextSplitter(chunkingStrategy, {
         chunkSize,
         chunkOverlap
       });
@@ -104,7 +118,7 @@ const ChunkVisualizer = ({ documents }) => {
       
       setChunks(chunksWithPositions);
     } catch (err) {
-      window.console.error('Error visualizing chunks:', err);
+      console.error('Error visualizing chunks:', err);
     } finally {
       setIsProcessing(false);
     }
@@ -303,6 +317,19 @@ const ChunkVisualizer = ({ documents }) => {
             <strong>What are chunks?</strong> Documents are split into smaller pieces called "chunks" before being converted to embeddings.
           </Typography>
           <Typography variant="body2" paragraph>
+            <strong>Chunking Strategies:</strong> Different strategies are optimized for different types of content:
+          </Typography>
+          <List dense>
+            {Object.entries(chunkingStrategies).map(([key, strategy]) => (
+              <ListItem key={key}>
+                <ListItemText 
+                  primary={strategy.name}
+                  secondary={strategy.description}
+                />
+              </ListItem>
+            ))}
+          </List>
+          <Typography variant="body2" paragraph>
             <strong>Chunk Size:</strong> The maximum character length of each chunk. Larger chunks provide more context but may reduce retrieval precision.
           </Typography>
           <Typography variant="body2">
@@ -331,6 +358,29 @@ const ChunkVisualizer = ({ documents }) => {
                   {documentOptions.map((doc, index) => (
                     <MenuItem key={index} value={doc.id}>
                       {doc.name}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+
+              <FormControl fullWidth sx={{ mb: 3 }}>
+                <InputLabel id="chunking-strategy-label">Chunking Strategy</InputLabel>
+                <Select
+                  labelId="chunking-strategy-label"
+                  id="chunking-strategy"
+                  value={chunkingStrategy}
+                  onChange={handleChunkingStrategyChange}
+                  label="Chunking Strategy"
+                  disabled={isProcessing}
+                >
+                  {Object.entries(chunkingStrategies).map(([key, strategy]) => (
+                    <MenuItem key={key} value={key}>
+                      <Box>
+                        <Typography variant="body1">{strategy.name}</Typography>
+                        <Typography variant="caption" color="textSecondary">
+                          {strategy.description}
+                        </Typography>
+                      </Box>
                     </MenuItem>
                   ))}
                 </Select>
