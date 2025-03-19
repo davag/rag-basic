@@ -13,6 +13,47 @@ This application allows you to test and compare Retrieval-Augmented Generation (
 - Side-by-side response comparison
 - Basic metrics (response time, token usage)
 
+## Quality Analysis Tools
+
+The application includes three powerful quality analysis tools to help evaluate and improve your RAG system:
+
+### 1. Retrieval Quality Evaluation
+- Evaluates the quality of retrieval results using multiple metrics:
+  - Relevance scoring of retrieved chunks
+  - Diversity analysis of results
+  - Precision and recall measurements
+- Generates test queries to evaluate retrieval performance
+- Provides detailed analysis of retrieved content quality
+- Shows aggregate scores and recommendations for improvement
+
+### 2. Embedding Quality Analysis
+- Analyzes the quality and characteristics of embeddings:
+  - Semantic coherence evaluation
+  - Dimensionality analysis
+  - Clustering quality assessment
+  - Distance distribution analysis
+- Provides visualizations and statistics
+- Identifies potential issues in embedding quality
+- Offers recommendations for optimization
+
+### 3. Source Content Analysis
+- Evaluates the quality of source documents:
+  - Content completeness check
+  - Formatting issues detection
+  - Readability analysis
+  - Key information identification
+- Calculates aggregate quality metrics
+- Identifies common issues across documents
+- Provides detailed per-document analysis
+- Shows recommendations for content improvement
+
+These tools help you:
+- Identify potential issues in your RAG pipeline
+- Optimize retrieval quality
+- Improve embedding effectiveness
+- Enhance source document quality
+- Make data-driven decisions for system improvement
+
 ## Setup
 
 1. Clone this repository

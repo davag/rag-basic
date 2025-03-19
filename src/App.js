@@ -701,6 +701,9 @@ function App() {
               systemPrompts={systemPrompts}
               onBackToQuery={handleBackToQuery}
               onImportResults={handleImportResults}
+              documents={documents}
+              vectorStore={vectorStore}
+              availableModels={Object.keys(llmResponses)}
             />
             <Box sx={{ display: 'flex', justifyContent: 'space-between', mt: 2 }}>
               <Button

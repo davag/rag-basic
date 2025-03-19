@@ -41,8 +41,21 @@ import 'jspdf-autotable';
 import { calculateCost } from '../utils/apiServices';
 import TokenUsageAnalyzer from './TokenUsageAnalyzer';
 import ContextWindowVisualizer from './ContextWindowVisualizer';
+import RetrievalEvaluation from './RetrievalEvaluation';
+import EmbeddingQualityAnalysis from './EmbeddingQualityAnalysis';
+import SourceContentAnalysis from './SourceContentAnalysis';
 
-const ResponseComparison = ({ responses, metrics, currentQuery, systemPrompts, onBackToQuery, onImportResults }) => {
+const ResponseComparison = ({ 
+  responses, 
+  metrics, 
+  currentQuery, 
+  systemPrompts, 
+  onBackToQuery, 
+  onImportResults,
+  documents,
+  vectorStore,
+  availableModels
+}) => {
   const [expandedSources, setExpandedSources] = useState(false);
   const [snackbarOpen, setSnackbarOpen] = useState(false);
   const [snackbarMessage, setSnackbarMessage] = useState('');
@@ -53,6 +66,11 @@ const ResponseComparison = ({ responses, metrics, currentQuery, systemPrompts, o
   
   // Get sources from the first model (they're the same for all models)
   const sources = Object.values(responses)[0]?.sources || [];
+
+  // Add new state variables
+  const [showRetrievalEval, setShowRetrievalEval] = useState(false);
+  const [showEmbeddingAnalysis, setShowEmbeddingAnalysis] = useState(false);
+  const [showSourceAnalysis, setShowSourceAnalysis] = useState(false);
 
   const handleSourcesToggle = () => {
     setExpandedSources(!expandedSources);
@@ -410,6 +428,22 @@ const ResponseComparison = ({ responses, metrics, currentQuery, systemPrompts, o
     }
   };
 
+  // Add new handlers
+  const handleRetrievalEvalComplete = (results) => {
+    console.log('Retrieval evaluation complete:', results);
+    // Handle results as needed
+  };
+
+  const handleEmbeddingAnalysisComplete = (results) => {
+    console.log('Embedding analysis complete:', results);
+    // Handle results as needed
+  };
+
+  const handleSourceAnalysisComplete = (results) => {
+    console.log('Source analysis complete:', results);
+    // Handle results as needed
+  };
+
   return (
     <Box>
       <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
@@ -682,6 +716,109 @@ const ResponseComparison = ({ responses, metrics, currentQuery, systemPrompts, o
           </Accordion>
         </Box>
       )}
+
+      <Box mt={4}>
+        <Typography variant="h6" gutterBottom>
+          Quality Analysis Tools
+        </Typography>
+        
+        <Grid container spacing={2}>
+          <Grid item xs={12} md={4}>
+            <Card variant="outlined">
+              <CardContent>
+                <Typography variant="subtitle1" gutterBottom>
+                  Retrieval Quality
+                </Typography>
+                <Typography variant="body2" color="textSecondary" paragraph>
+                  Evaluate the quality of retrieval results using various metrics.
+                </Typography>
+                <Button
+                  variant="contained"
+                  color="primary"
+                  onClick={() => setShowRetrievalEval(!showRetrievalEval)}
+                  fullWidth
+                >
+                  {showRetrievalEval ? 'Hide Evaluation' : 'Show Evaluation'}
+                </Button>
+              </CardContent>
+            </Card>
+          </Grid>
+          
+          <Grid item xs={12} md={4}>
+            <Card variant="outlined">
+              <CardContent>
+                <Typography variant="subtitle1" gutterBottom>
+                  Embedding Quality
+                </Typography>
+                <Typography variant="body2" color="textSecondary" paragraph>
+                  Analyze the quality and characteristics of embeddings.
+                </Typography>
+                <Button
+                  variant="contained"
+                  color="primary"
+                  onClick={() => setShowEmbeddingAnalysis(!showEmbeddingAnalysis)}
+                  fullWidth
+                >
+                  {showEmbeddingAnalysis ? 'Hide Analysis' : 'Show Analysis'}
+                </Button>
+              </CardContent>
+            </Card>
+          </Grid>
+          
+          <Grid item xs={12} md={4}>
+            <Card variant="outlined">
+              <CardContent>
+                <Typography variant="subtitle1" gutterBottom>
+                  Source Content
+                </Typography>
+                <Typography variant="body2" color="textSecondary" paragraph>
+                  Analyze the quality and characteristics of source content.
+                </Typography>
+                <Button
+                  variant="contained"
+                  color="primary"
+                  onClick={() => setShowSourceAnalysis(!showSourceAnalysis)}
+                  fullWidth
+                >
+                  {showSourceAnalysis ? 'Hide Analysis' : 'Show Analysis'}
+                </Button>
+              </CardContent>
+            </Card>
+          </Grid>
+        </Grid>
+        
+        {showRetrievalEval && (
+          <Box mt={2}>
+            <RetrievalEvaluation
+              documents={documents}
+              vectorStore={vectorStore}
+              availableModels={availableModels}
+              onEvaluationComplete={handleRetrievalEvalComplete}
+            />
+          </Box>
+        )}
+        
+        {showEmbeddingAnalysis && (
+          <Box mt={2}>
+            <EmbeddingQualityAnalysis
+              documents={documents}
+              vectorStore={vectorStore}
+              availableModels={availableModels}
+              onAnalysisComplete={handleEmbeddingAnalysisComplete}
+            />
+          </Box>
+        )}
+        
+        {showSourceAnalysis && (
+          <Box mt={2}>
+            <SourceContentAnalysis
+              documents={documents}
+              availableModels={availableModels}
+              onAnalysisComplete={handleSourceAnalysisComplete}
+            />
+          </Box>
+        )}
+      </Box>
 
       <Snackbar
         open={snackbarOpen}
