@@ -756,6 +756,13 @@ and then answers user questions based on that context.
 
 ${modelToUse ? `The prompt will be used with the ${modelToUse} model.` : 'The prompt will be used with various LLM models.'}
 
+Please evaluate the prompt based on these key criteria:
+- Clear instructions for handling retrieved context
+- Guidance on dealing with incomplete or irrelevant context
+- Instructions for citation or attribution of sources
+- Effective handling of user queries that go beyond the context
+- Clarity and conciseness of the overall prompt
+
 Please provide:
 1. A fair analysis of the prompt's quality
 2. If the prompt is already well-crafted with no significant issues, ACKNOWLEDGE THIS EXPLICITLY instead of inventing weaknesses

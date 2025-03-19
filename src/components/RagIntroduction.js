@@ -14,8 +14,7 @@ import {
   Dialog,
   DialogTitle,
   DialogContent,
-  IconButton,
-  Tooltip,
+  IconButton
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import AutoGraphIcon from '@mui/icons-material/AutoGraph';
@@ -23,7 +22,6 @@ import PsychologyIcon from '@mui/icons-material/Psychology';
 import StorageIcon from '@mui/icons-material/Storage';
 import SearchIcon from '@mui/icons-material/Search';
 import CompareIcon from '@mui/icons-material/Compare';
-import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
 import CloseIcon from '@mui/icons-material/Close';
 import { styled } from '@mui/material/styles';
 
