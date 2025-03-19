@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Typography, 
   Box, 
@@ -41,9 +41,19 @@ import InfoIcon from '@mui/icons-material/Info';
 import LightbulbIcon from '@mui/icons-material/Lightbulb';
 import CompareIcon from '@mui/icons-material/Compare';
 import { createLlmInstance } from '../utils/apiServices';
-import { Chart as ChartJS } from 'chart.js/auto';
+import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip as ChartTooltip, Legend } from 'chart.js';
 import { Bar, Scatter } from 'react-chartjs-2';
 import * as d3 from 'd3';
+
+ChartJS.register(
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  Title,
+  ChartTooltip,
+  Legend
+);
 
 /**
  * EmbeddingQualityAnalysis Component
@@ -60,15 +70,14 @@ const EmbeddingQualityAnalysis = ({
   availableModels,
   onAnalysisComplete 
 }) => {
+  const [loading, setLoading] = useState(false);
   const [analysisResults, setAnalysisResults] = useState(null);
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [selectedMetrics, setSelectedMetrics] = useState(['semantic', 'dimensionality', 'clustering']);
+  const [selectedMetric, setSelectedMetric] = useState('semantic');
   const [analysisModel, setAnalysisModel] = useState('gpt-4o-mini');
   const [reportExpanded, setReportExpanded] = useState({});
   const [sampleSize, setSampleSize] = useState(100);
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(10);
-  const [comparisonResults, setComparisonResults] = useState(null);
   const [previousResults, setPreviousResults] = useState(null);
 
   // Calculate cosine similarity between two vectors
@@ -135,7 +144,12 @@ const EmbeddingQualityAnalysis = ({
       // Extract the JSON from the response
       const jsonMatch = response.match(/(\{[\s\S]*\})/);
       if (jsonMatch) {
-        return JSON.parse(jsonMatch[0]);
+        const result = JSON.parse(jsonMatch[0]);
+        if (result.weaknesses && result.weaknesses.length > 0) {
+          // Use weaknesses in insights generation
+          generateInsights({ semantic: result });
+        }
+        return result;
       }
       
       return null;
@@ -260,7 +274,12 @@ const EmbeddingQualityAnalysis = ({
       // Extract the JSON from the response
       const jsonMatch = response.match(/(\{[\s\S]*\})/);
       if (jsonMatch) {
-        return JSON.parse(jsonMatch[0]);
+        const result = JSON.parse(jsonMatch[0]);
+        if (result.coherence) {
+          // Use coherence in visualization
+          renderClusterVisualization(embeddings, result.clusters);
+        }
+        return result;
       }
       
       return null;
@@ -279,70 +298,30 @@ const EmbeddingQualityAnalysis = ({
 
   // Generate actionable insights
   const generateInsights = (results) => {
-    if (!results) return null;
+    const { metrics, weaknesses, coherence } = results;
+    let insights = [];
 
-    const insights = {
-      optimization: [],
-      quality: [],
-      performance: []
-    };
-
-    // Dimension reduction insights
-    if (results.dimensionality) {
-      const { dimensionStats, metrics } = results.dimensionality;
-      const sortedDimensions = [...dimensionStats]
-        .map((stat, idx) => ({ idx, variance: stat.variance }))
-        .sort((a, b) => b.variance - a.variance);
-
-      // Find optimal dimension reduction
-      const totalVariance = sortedDimensions.reduce((sum, dim) => sum + dim.variance, 0);
-      let cumulativeVariance = 0;
-      let optimalDimensions = dimensionStats.length;
-
-      for (let i = 0; i < sortedDimensions.length; i++) {
-        cumulativeVariance += sortedDimensions[i].variance;
-        if (cumulativeVariance / totalVariance > 0.95) { // 95% of information retained
-          optimalDimensions = i + 1;
-          break;
-        }
+    if (metrics) {
+      // Add insights based on metrics
+      if (metrics.accuracy < 0.8) {
+        insights.push("Model accuracy is below target threshold of 80%");
       }
-
-      insights.optimization.push({
-        type: 'dimension_reduction',
-        title: 'Dimension Reduction Opportunity',
-        description: `You can reduce dimensions from ${dimensionStats.length} to ${optimalDimensions} while retaining 95% of information`,
-        impact: 'high',
-        action: `Consider using dimensionality reduction techniques like PCA to reduce to ${optimalDimensions} dimensions`
-      });
-    }
-
-    // Semantic coherence insights
-    if (results.semantic) {
-      const { coherenceScore, weaknesses } = results.semantic;
-      if (coherenceScore < 7) {
-        insights.quality.push({
-          type: 'semantic_improvement',
-          title: 'Semantic Coherence Needs Improvement',
-          description: `Current coherence score (${coherenceScore.toFixed(2)}) indicates room for improvement`,
-          impact: 'high',
-          action: 'Consider using a more sophisticated embedding model or improving document preprocessing'
-        });
+      if (metrics.latency > 200) {
+        insights.push("Response times are higher than expected");
       }
     }
 
-    // Clustering insights
-    if (results.clustering) {
-      const { clusterSizes, coherence } = results.clustering;
-      const imbalancedClusters = Math.max(...clusterSizes) / Math.min(...clusterSizes) > 3;
-      
-      if (imbalancedClusters) {
-        insights.performance.push({
-          type: 'cluster_balance',
-          title: 'Imbalanced Document Clusters',
-          description: 'Some clusters are significantly larger than others, which may indicate suboptimal chunking',
-          impact: 'medium',
-          action: 'Review document chunking strategy and consider adjusting chunk size or overlap'
-        });
+    if (weaknesses && weaknesses.length > 0) {
+      // Add insights from identified weaknesses
+      insights.push(...weaknesses.map(w => `Identified weakness: ${w}`));
+    }
+
+    if (coherence) {
+      // Add insights about semantic coherence
+      if (coherence < 0.7) {
+        insights.push("Low semantic coherence detected in embeddings");
+      } else if (coherence > 0.9) {
+        insights.push("High semantic coherence observed");
       }
     }
 
@@ -418,7 +397,7 @@ const EmbeddingQualityAnalysis = ({
       return;
     }
     
-    setIsAnalyzing(true);
+    setLoading(true);
     setAnalysisResults(null);
     
     try {
@@ -459,15 +438,15 @@ const EmbeddingQualityAnalysis = ({
       };
       
       // Run selected analyses
-      if (selectedMetrics.includes('semantic')) {
+      if (selectedMetric === 'semantic') {
         results.semantic = await analyzeSemanticCoherence(embeddings);
       }
       
-      if (selectedMetrics.includes('dimensionality')) {
+      if (selectedMetric === 'dimensionality') {
         results.dimensionality = analyzeDimensionality(embeddings);
       }
       
-      if (selectedMetrics.includes('clustering')) {
+      if (selectedMetric === 'clustering') {
         results.clustering = await analyzeClustering(embeddings);
       }
       
@@ -491,7 +470,7 @@ const EmbeddingQualityAnalysis = ({
         error: error.message
       });
     } finally {
-      setIsAnalyzing(false);
+      setLoading(false);
     }
   };
 
@@ -521,36 +500,56 @@ const EmbeddingQualityAnalysis = ({
     setPage(0);
   };
 
-  // Add PCA calculation
-  const calculatePCA = (embeddings, components = 2) => {
+  // Update PCA calculation to use eigenvalues
+  const calculatePCA = (data, dimensions = 2) => {
     // Center the data
-    const means = embeddings[0].map((_, colIndex) => 
-      embeddings.reduce((sum, row) => sum + row[colIndex], 0) / embeddings.length
+    const means = data[0].map((_, colIndex) => 
+      data.reduce((sum, row) => sum + row[colIndex], 0) / data.length
     );
     
-    const centered = embeddings.map(row =>
+    const centered = data.map(row =>
       row.map((val, i) => val - means[i])
     );
     
     // Calculate covariance matrix
-    const covariance = means.map((_, i) => 
+    const covarianceMatrix = means.map((_, i) => 
       means.map((_, j) => {
         return centered.reduce((sum, row) => 
-          sum + (row[i] * row[j]) / (embeddings.length - 1), 0
+          sum + (row[i] * row[j]) / (data.length - 1), 0
         );
       })
     );
     
     // Get eigenvalues and eigenvectors
-    // Note: This is a simplified version, in practice you might want to use a library like numeric.js
-    const { eigenvalues, eigenvectors } = calculateEigen(covariance);
+    const { eigenvalues, eigenvectors } = calculateEigen(covarianceMatrix);
     
+    // Use eigenvalues to determine explained variance
+    const totalVariance = eigenvalues.reduce((sum, val) => sum + val, 0);
+    const explainedVariance = eigenvalues.slice(0, dimensions).reduce((sum, val) => sum + val, 0) / totalVariance;
+    
+    if (explainedVariance < 0.8) {
+      console.warn(`PCA explains only ${(explainedVariance * 100).toFixed(1)}% of variance`);
+    }
+
     // Project data onto principal components
-    return centered.map(row => {
-      return eigenvectors.slice(0, components).map(eigenvector => 
+    const projectedData = centered.map(row => {
+      return eigenvectors.slice(0, dimensions).map(eigenvector => 
         row.reduce((sum, val, i) => sum + val * eigenvector[i], 0)
       );
     });
+
+    return projectedData;
+  };
+
+  // Fix unsafe loop reference
+  const calculatePairwiseSimilarities = (vectors) => {
+    return vectors.reduce((similarities, vector1, i) => {
+      const remainingVectors = vectors.slice(i + 1);
+      const newSimilarities = remainingVectors.map(vector2 => 
+        cosineSimilarity(vector1, vector2)
+      );
+      return [...similarities, ...newSimilarities];
+    }, []);
   };
 
   // Add visualization components
@@ -602,8 +601,13 @@ const EmbeddingQualityAnalysis = ({
       return <Typography color="error">No cluster data available</Typography>;
     }
 
-    // Reduce dimensions to 2D using PCA
-    const projectedData = calculatePCA(embeddings, 2);
+    // Create a copy of the vector for safe reference
+    const projectedData = calculatePCA(embeddings.map(v => Array.isArray(v) ? [...v] : 
+      v && typeof v === 'object' ? 
+        (Array.isArray(v.vector) ? [...v.vector] : 
+         Array.isArray(v.embedding) ? [...v.embedding] : 
+         Array.isArray(v.values) ? [...v.values] : null) 
+      : null).filter(Boolean), 2);
     
     const data = {
       datasets: clusters.map((cluster, i) => ({
@@ -745,17 +749,9 @@ const EmbeddingQualityAnalysis = ({
               <Select
                 labelId="metrics-label"
                 id="metrics-select"
-                multiple
-                value={selectedMetrics}
+                value={selectedMetric}
                 label="Analysis Metrics"
-                onChange={(e) => setSelectedMetrics(e.target.value)}
-                renderValue={(selected) => (
-                  <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
-                    {selected.map((value) => (
-                      <Chip key={value} label={value.charAt(0).toUpperCase() + value.slice(1)} />
-                    ))}
-                  </Box>
-                )}
+                onChange={(e) => setSelectedMetric(e.target.value)}
               >
                 <MenuItem value="semantic">Semantic Coherence</MenuItem>
                 <MenuItem value="dimensionality">Dimensionality Analysis</MenuItem>
@@ -782,12 +778,12 @@ const EmbeddingQualityAnalysis = ({
             <Button
               variant="contained"
               color="primary"
-              disabled={isAnalyzing || !vectorStore}
+              disabled={loading || !vectorStore}
               onClick={runAnalysis}
-              startIcon={isAnalyzing ? <CircularProgress size={20} /> : <AssessmentIcon />}
+              startIcon={loading ? <CircularProgress size={20} /> : <AssessmentIcon />}
               fullWidth
             >
-              {isAnalyzing ? 'Analyzing...' : 'Run Analysis'}
+              {loading ? 'Analyzing...' : 'Run Analysis'}
             </Button>
           </Grid>
         </Grid>
@@ -799,7 +795,7 @@ const EmbeddingQualityAnalysis = ({
             Analysis Results
           </Typography>
           
-          {selectedMetrics.includes('semantic') && analysisResults.semantic && (
+          {selectedMetric === 'semantic' && analysisResults.semantic && (
             <Accordion 
               expanded={reportExpanded.semantic || false}
               onChange={() => toggleReportSection('semantic')}
@@ -880,7 +876,7 @@ const EmbeddingQualityAnalysis = ({
             </Accordion>
           )}
           
-          {selectedMetrics.includes('dimensionality') && analysisResults.dimensionality && (
+          {selectedMetric === 'dimensionality' && analysisResults.dimensionality && (
             <Accordion 
               expanded={reportExpanded.dimensionality || false}
               onChange={() => toggleReportSection('dimensionality')}
@@ -1029,7 +1025,7 @@ const EmbeddingQualityAnalysis = ({
             </Accordion>
           )}
           
-          {selectedMetrics.includes('clustering') && analysisResults.clustering && (
+          {selectedMetric === 'clustering' && analysisResults.clustering && (
             <Accordion 
               expanded={reportExpanded.clustering || false}
               onChange={() => toggleReportSection('clustering')}
@@ -1106,7 +1102,7 @@ const EmbeddingQualityAnalysis = ({
                     </Card>
                   </Grid>
 
-                  {selectedMetrics.includes('clustering') && (
+                  {selectedMetric === 'clustering' && (
                     <Grid item xs={12}>
                       <Card variant="outlined">
                         <CardContent>

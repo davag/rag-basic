@@ -27,7 +27,16 @@ import {
   FormControl,
   InputLabel,
   Select,
-  MenuItem
+  MenuItem,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  TextField,
+  Tooltip,
+  IconButton,
+  Stack,
+  AlertTitle
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import DescriptionIcon from '@mui/icons-material/Description';
@@ -38,6 +47,13 @@ import WarningIcon from '@mui/icons-material/Warning';
 import SpellcheckIcon from '@mui/icons-material/Spellcheck';
 import ErrorIcon from '@mui/icons-material/Error';
 import { createLlmInstance } from '../utils/apiServices';
+import {
+  Speed as SpeedIcon,
+  Storage as StorageIcon,
+  TrendingUp as TrendingUpIcon,
+  Build as BuildIcon
+} from '@mui/icons-material';
+import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
 
 /**
  * SourceContentAnalysis Component
@@ -282,9 +298,18 @@ const SourceContentAnalysis = ({
         Source Content Analysis
       </Typography>
       
-      <Typography variant="body2" color="textSecondary" paragraph>
-        Analyze the quality of source documents used in your RAG system to identify potential issues.
-      </Typography>
+      <Alert severity="info" sx={{ mb: 3 }}>
+        <AlertTitle>How to use Document Analysis</AlertTitle>
+        <Typography variant="body2">
+          This tool helps you evaluate the quality of your documents for RAG applications. It analyzes:
+          <Stack component="ul" sx={{ mt: 1, mb: 0 }}>
+            <li>Content completeness and coherence</li>
+            <li>Formatting issues that might affect processing</li>
+            <li>Information density and relevance</li>
+            <li>Document credibility and authority</li>
+          </Stack>
+        </Typography>
+      </Alert>
       
       {!documents || documents.length === 0 ? (
         <Alert severity="warning" sx={{ mb: 2 }}>
@@ -294,27 +319,34 @@ const SourceContentAnalysis = ({
         <Paper elevation={1} sx={{ p: 2, mb: 3 }}>
           <Grid container spacing={2} alignItems="center">
             <Grid item xs={12} md={6}>
-              <FormControl fullWidth variant="outlined">
-                <InputLabel id="analysis-model-label">Analysis Model</InputLabel>
-                <Select
-                  labelId="analysis-model-label"
-                  id="analysis-model"
-                  value={selectedModel}
-                  label="Analysis Model"
-                  onChange={(e) => setSelectedModel(e.target.value)}
-                >
-                  {Object.keys(availableModels || {}).filter(model => 
-                    availableModels[model].active && 
-                    (model.includes('gpt-4') || model.includes('claude'))
-                  ).map(model => (
-                    <MenuItem key={model} value={model}>
-                      {model}
-                    </MenuItem>
-                  ))}
-                  <MenuItem value="gpt-4o-mini">gpt-4o-mini</MenuItem>
-                  <MenuItem value="gpt-4o">gpt-4o</MenuItem>
-                </Select>
-              </FormControl>
+              <Box display="flex" alignItems="center">
+                <FormControl fullWidth variant="outlined">
+                  <InputLabel id="analysis-model-label">Analysis Model</InputLabel>
+                  <Select
+                    labelId="analysis-model-label"
+                    id="analysis-model"
+                    value={selectedModel}
+                    label="Analysis Model"
+                    onChange={(e) => setSelectedModel(e.target.value)}
+                  >
+                    {Object.keys(availableModels || {}).filter(model => 
+                      availableModels[model].active && 
+                      (model.includes('gpt-4') || model.includes('claude'))
+                    ).map(model => (
+                      <MenuItem key={model} value={model}>
+                        {model}
+                      </MenuItem>
+                    ))}
+                    <MenuItem value="gpt-4o-mini">gpt-4o-mini</MenuItem>
+                    <MenuItem value="gpt-4o">gpt-4o</MenuItem>
+                  </Select>
+                </FormControl>
+                <Tooltip title="GPT-4 and Claude models provide more detailed analysis. Use GPT-4o-mini for faster, basic analysis." arrow>
+                  <IconButton size="small" sx={{ ml: 1 }}>
+                    <HelpOutlineIcon />
+                  </IconButton>
+                </Tooltip>
+              </Box>
             </Grid>
             
             <Grid item xs={12} md={6}>
@@ -337,8 +369,16 @@ const SourceContentAnalysis = ({
         <Box mt={3}>
           <Card variant="outlined" sx={{ mb: 3 }}>
             <CardHeader 
-              title="Source Quality Overview"
-              titleTypographyProps={{ variant: 'h6' }}
+              title={
+                <Box display="flex" alignItems="center">
+                  <Typography variant="h6">Source Quality Overview</Typography>
+                  <Tooltip title="This overview shows aggregate metrics across all analyzed documents. Higher scores indicate better quality for RAG applications." arrow>
+                    <IconButton size="small" sx={{ ml: 1 }}>
+                      <HelpOutlineIcon />
+                    </IconButton>
+                  </Tooltip>
+                </Box>
+              }
             />
             <Divider />
             <CardContent>
@@ -535,11 +575,30 @@ const SourceContentAnalysis = ({
             </CardContent>
           </Card>
           
-          <Typography variant="h6" gutterBottom>
-            <SpellcheckIcon sx={{ mr: 1, verticalAlign: 'middle' }} />
-            Individual Document Analysis
-          </Typography>
-          
+          <Box display="flex" alignItems="center" mb={2}>
+            <Typography variant="h6">
+              <SpellcheckIcon sx={{ mr: 1, verticalAlign: 'middle' }} />
+              Individual Document Analysis
+            </Typography>
+            <Tooltip title="Click on each document to see detailed analysis results and specific recommendations for improvement." arrow>
+              <IconButton size="small" sx={{ ml: 1 }}>
+                <HelpOutlineIcon />
+              </IconButton>
+            </Tooltip>
+          </Box>
+
+          <Alert severity="info" sx={{ mb: 2 }}>
+            <Typography variant="body2">
+              <strong>Understanding the scores:</strong>
+              <Stack component="ul" sx={{ mt: 1, mb: 0 }}>
+                <li><strong>8-10:</strong> Excellent - Ideal for RAG systems</li>
+                <li><strong>6-7.9:</strong> Good - Suitable with minor improvements</li>
+                <li><strong>4-5.9:</strong> Average - May need significant improvements</li>
+                <li><strong>Below 4:</strong> Poor - Consider revising or replacing content</li>
+              </Stack>
+            </Typography>
+          </Alert>
+
           {analysisResults.documentResults.map((result, index) => (
             <Accordion 
               key={index} 
@@ -592,14 +651,25 @@ const SourceContentAnalysis = ({
                     <Grid item xs={12} md={6}>
                       <Card variant="outlined" sx={{ height: '100%' }}>
                         <CardContent>
-                          <Typography variant="subtitle1" gutterBottom>
-                            Content Quality Scores
-                          </Typography>
+                          <Box display="flex" alignItems="center">
+                            <Typography variant="subtitle1" gutterBottom>
+                              Content Quality Scores
+                            </Typography>
+                            <Tooltip title="These scores evaluate different aspects of document quality. Hover over each score for specific recommendations." arrow>
+                              <IconButton size="small" sx={{ ml: 1 }}>
+                                <HelpOutlineIcon />
+                              </IconButton>
+                            </Tooltip>
+                          </Box>
                           <TableContainer>
                             <Table size="small">
                               <TableBody>
                                 <TableRow>
-                                  <TableCell>Completeness</TableCell>
+                                  <TableCell>
+                                    <Tooltip title="Measures whether the content is complete and well-structured" arrow>
+                                      <span>Completeness</span>
+                                    </Tooltip>
+                                  </TableCell>
                                   <TableCell>
                                     <Chip 
                                       size="small"
@@ -613,7 +683,11 @@ const SourceContentAnalysis = ({
                                   <TableCell>{result.completeness.assessment}</TableCell>
                                 </TableRow>
                                 <TableRow>
-                                  <TableCell>Formatting</TableCell>
+                                  <TableCell>
+                                    <Tooltip title="Evaluates the formatting and presentation of the content" arrow>
+                                      <span>Formatting</span>
+                                    </Tooltip>
+                                  </TableCell>
                                   <TableCell>
                                     <Chip 
                                       size="small"
@@ -627,7 +701,11 @@ const SourceContentAnalysis = ({
                                   <TableCell>{result.formatting.assessment}</TableCell>
                                 </TableRow>
                                 <TableRow>
-                                  <TableCell>Informativeness</TableCell>
+                                  <TableCell>
+                                    <Tooltip title="Assesses the level of detail and depth of the content" arrow>
+                                      <span>Informativeness</span>
+                                    </Tooltip>
+                                  </TableCell>
                                   <TableCell>
                                     <Chip 
                                       size="small"
@@ -641,7 +719,11 @@ const SourceContentAnalysis = ({
                                   <TableCell>{result.informativeness.assessment}</TableCell>
                                 </TableRow>
                                 <TableRow>
-                                  <TableCell>Credibility</TableCell>
+                                  <TableCell>
+                                    <Tooltip title="Evaluates the credibility and trustworthiness of the content" arrow>
+                                      <span>Credibility</span>
+                                    </Tooltip>
+                                  </TableCell>
                                   <TableCell>
                                     <Chip 
                                       size="small"
@@ -681,10 +763,17 @@ const SourceContentAnalysis = ({
                     {(result.completeness.issues?.length > 0 || result.formatting.issues?.length > 0) && (
                       <Grid item xs={12}>
                         <Paper variant="outlined" sx={{ p: 2, bgcolor: '#fff3e0' }}>
-                          <Typography variant="subtitle2" color="warning.main" gutterBottom>
-                            <WarningIcon sx={{ mr: 1, verticalAlign: 'middle' }} />
-                            Issues Detected
-                          </Typography>
+                          <Box display="flex" alignItems="center">
+                            <Typography variant="subtitle2" color="warning.main" gutterBottom>
+                              <WarningIcon sx={{ mr: 1, verticalAlign: 'middle' }} />
+                              Issues Detected
+                            </Typography>
+                            <Tooltip title="These issues may affect your RAG system's performance. Consider addressing them to improve results." arrow>
+                              <IconButton size="small" sx={{ ml: 1 }}>
+                                <HelpOutlineIcon />
+                              </IconButton>
+                            </Tooltip>
+                          </Box>
                           
                           <Grid container spacing={2}>
                             {result.completeness.issues?.length > 0 && (
@@ -724,6 +813,37 @@ const SourceContentAnalysis = ({
                         </Paper>
                       </Grid>
                     )}
+
+                    <Grid item xs={12}>
+                      <Alert severity="info">
+                        <AlertTitle>Improvement Tips</AlertTitle>
+                        <Typography variant="body2">
+                          To improve this document's quality:
+                          <List dense>
+                            {result.completeness.score < 8 && (
+                              <ListItem>
+                                <ListItemText primary="Completeness: Check for missing sections, incomplete sentences, or abrupt endings." />
+                              </ListItem>
+                            )}
+                            {result.formatting.score < 8 && (
+                              <ListItem>
+                                <ListItemText primary="Formatting: Fix any irregular spacing, inconsistent formatting, or special character issues." />
+                              </ListItem>
+                            )}
+                            {result.informativeness.score < 8 && (
+                              <ListItem>
+                                <ListItemText primary="Informativeness: Add more specific details, examples, or explanations to enrich the content." />
+                              </ListItem>
+                            )}
+                            {result.credibility.score < 8 && (
+                              <ListItem>
+                                <ListItemText primary="Credibility: Include references, citations, or source attributions to enhance authority." />
+                              </ListItem>
+                            )}
+                          </List>
+                        </Typography>
+                      </Alert>
+                    </Grid>
                   </Grid>
                 </AccordionDetails>
               ) : (

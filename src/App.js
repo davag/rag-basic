@@ -23,6 +23,10 @@ import StorageIcon from '@mui/icons-material/Storage';
 import CompareIcon from '@mui/icons-material/Compare';
 // eslint-disable-next-line no-unused-vars
 import AssessmentIcon from '@mui/icons-material/Assessment';
+import InsertChartIcon from '@mui/icons-material/InsertChart';
+import DashboardIcon from '@mui/icons-material/Dashboard';
+import BuildIcon from '@mui/icons-material/Build';
+import SpeedIcon from '@mui/icons-material/Speed';
 
 import DocumentUpload from './components/DocumentUpload';
 import VectorStoreConfig from './components/VectorStoreConfig';
@@ -32,6 +36,9 @@ import ResponseValidation from './components/ResponseValidation';
 import LlmSettings from './components/LlmSettings';
 import DocumentAnalytics from './components/DocumentAnalytics';
 import ChunkVisualizer from './components/ChunkVisualizer';
+import QualityDashboard from './components/QualityAnalysisHub/Monitoring/QualityDashboard';
+import OptimizationRecommendations from './components/QualityAnalysisHub/Optimization/OptimizationRecommendations';
+import QualityTestSuite from './components/QualityAnalysisHub/Testing/QualityTestSuite';
 
 const theme = createTheme({
   palette: {
@@ -84,7 +91,7 @@ function App() {
   const [showWelcome, setShowWelcome] = useState(true);
   const [showApiKeyNotice, setShowApiKeyNotice] = useState(true);
   const [settingsTabValue, setSettingsTabValue] = useState(0);
-  const [analysisTabValue, setAnalysisTabValue] = useState(0);
+  const [analysisTab, setAnalysisTab] = useState(0);
   const [chunkSize, setChunkSize] = useState(1000);
   const [chunkOverlap, setChunkOverlap] = useState(200);
   const [menuAnchorEl, setMenuAnchorEl] = useState(null);
@@ -305,11 +312,6 @@ function App() {
   // Function to handle settings tab changes
   const handleSettingsTabChange = (event, newValue) => {
     setSettingsTabValue(newValue);
-  };
-
-  // Function to handle analysis tab changes
-  const handleAnalysisTabChange = (event, newValue) => {
-    setAnalysisTabValue(newValue);
   };
 
   const handleChunkParametersChange = (size, overlap) => {
@@ -839,29 +841,37 @@ function App() {
               </Alert>
             ) : (
               <>
-                <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 3 }}>
-                  <Tabs
-                    value={analysisTabValue}
-                    onChange={handleAnalysisTabChange}
-                    indicatorColor="primary"
-                    textColor="primary"
-                  >
-                    <Tab 
-                      label="Document Analytics" 
-                      icon={<BarChartIcon />} 
-                      iconPosition="start" 
-                    />
-                    <Tab 
-                      label="Chunk Visualizer" 
-                      icon={<TextSnippetIcon />} 
-                      iconPosition="start" 
-                    />
-                  </Tabs>
-                </Box>
-                
-                {/* Document Analytics Tab */}
-                <Box hidden={analysisTabValue !== 0}>
-                  {analysisTabValue === 0 && (
+                <Tabs
+                  value={analysisTab}
+                  onChange={(e, newValue) => setAnalysisTab(newValue)}
+                  variant="scrollable"
+                  scrollButtons="auto"
+                  sx={{ borderBottom: 1, borderColor: 'divider', mb: 2 }}
+                >
+                  <Tab 
+                    icon={<InsertChartIcon />} 
+                    label="Basic Analytics" 
+                    iconPosition="start"
+                  />
+                  <Tab 
+                    icon={<DashboardIcon />} 
+                    label="Quality Metrics" 
+                    iconPosition="start"
+                  />
+                  <Tab 
+                    icon={<BuildIcon />} 
+                    label="Optimization" 
+                    iconPosition="start"
+                  />
+                  <Tab 
+                    icon={<SpeedIcon />} 
+                    label="Testing" 
+                    iconPosition="start"
+                  />
+                </Tabs>
+
+                <Box sx={{ mt: 2 }}>
+                  {analysisTab === 0 && (
                     <DocumentAnalytics 
                       documents={documents}
                       vectorStore={vectorStore}
@@ -869,13 +879,22 @@ function App() {
                       chunkOverlap={chunkOverlap}
                     />
                   )}
-                </Box>
-                
-                {/* Chunk Visualizer Tab */}
-                <Box hidden={analysisTabValue !== 1}>
-                  {analysisTabValue === 1 && (
-                    <ChunkVisualizer 
+                  {analysisTab === 1 && (
+                    <QualityDashboard 
                       documents={documents}
+                      vectorStore={vectorStore}
+                    />
+                  )}
+                  {analysisTab === 2 && (
+                    <OptimizationRecommendations 
+                      documents={documents}
+                      vectorStore={vectorStore}
+                    />
+                  )}
+                  {analysisTab === 3 && (
+                    <QualityTestSuite 
+                      documents={documents}
+                      vectorStore={vectorStore}
                     />
                   )}
                 </Box>
