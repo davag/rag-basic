@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { 
   Typography, 
   Box, 
@@ -30,6 +30,7 @@ import DownloadIcon from '@mui/icons-material/Download';
 import AssessmentIcon from '@mui/icons-material/Assessment';
 import EditIcon from '@mui/icons-material/Edit';
 import { createLlmInstance, calculateCost } from '../utils/apiServices';
+import { validateResponsesInParallel } from '../utils/parallelValidationProcessor';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
 
@@ -241,6 +242,14 @@ const ResponseValidation = ({
   const [currentValidatingModel, setCurrentValidatingModel] = useState(null);
   const [sortConfig, setSortConfig] = useState({ key: 'overallScore', direction: 'descending' });
   const [editCriteriaOpen, setEditCriteriaOpen] = useState(false);
+  
+  // Additional state for parallel processing UI
+  const [parallelProgress, setParallelProgress] = useState({
+    completed: 0,
+    pending: 0,
+    total: 0,
+    models: {}
+  });
 
   // Load validator model from localStorage on component mount
   useEffect(() => {
@@ -308,394 +317,106 @@ const ResponseValidation = ({
     };
   }, [isProcessing, setIsProcessing, validationResults]);
 
+  const handleParallelProgress = useCallback((progressData) => {
+    if (!progressData) return;
+    
+    // Update the current model for basic tracking
+    setCurrentValidatingModel(progressData.model);
+    
+    setParallelProgress(prev => {
+      const newModels = { ...prev.models };
+      
+      // Ensure consistent model name format: "modelName / Set X"
+      let modelName = progressData.model;
+      
+      // If the model name starts with "Set", convert it to the correct format
+      if (modelName.startsWith('Set ')) {
+        const parts = modelName.split('-');
+        if (parts.length > 1) {
+          const setName = parts[0];
+          const baseModel = parts.slice(1).join('-');
+          modelName = `${baseModel} / ${setName}`;
+        }
+      } else if (!modelName.includes('Set')) {
+        // If no Set is mentioned, add Set 1
+        modelName = `${modelName} / Set 1`;
+      }
+
+      // Only update the model status if it's not completed yet
+      if (!newModels[modelName] || newModels[modelName].status !== 'completed') {
+        newModels[modelName] = {
+          status: progressData.status,
+          timestamp: Date.now()
+        };
+      }
+
+      // Calculate completed count based on unique completed models
+      const completedCount = Object.values(newModels).filter(m => m.status === 'completed').length;
+
+      return {
+        ...prev,
+        completed: completedCount,
+        models: newModels
+      };
+    });
+  }, []);
+
   const validateResponses = async () => {
     if (!responses || Object.keys(responses || {}).length === 0) {
       console.error("No responses to validate");
       return;
     }
     
-    console.log("Starting validation process with criteria:", customCriteria);
     setIsProcessing(true);
-    
-    const results = {};
-    
+    setCurrentValidatingModel(null);
+    setParallelProgress({
+      completed: 0,
+      pending: Object.keys(responses).length,
+      total: Object.keys(responses).length,
+      models: {}
+    });
+
     try {
-      // Get validator model from localStorage (or use current state as fallback)
-      let validatorModelPreference = localStorage.getItem('responseValidatorModel') || validatorModel;
+      // Get the validator model to use
+      const validatorModelToUse = getReliableValidatorModel(validatorModel);
+      console.log(`Using validator model: ${validatorModelToUse}`);
       
-      // Make sure we're using a reliable model for validation
-      const validatorModelToUse = getReliableValidatorModel(validatorModelPreference);
+      // Get the validation preference from localStorage
+      const useParallelValidation = localStorage.getItem('useParallelProcessing') === 'true';
+      console.log(`Parallel validation preference: ${useParallelValidation ? 'ENABLED' : 'DISABLED'}`);
       
-      if (validatorModelToUse !== validatorModelPreference) {
-        console.log(`Switched from ${validatorModelPreference} to more reliable ${validatorModelToUse} for validation`);
-        // Update localStorage with reliable model for future use
-        localStorage.setItem('responseValidatorModel', validatorModelToUse);
-        // Update state to reflect the change in UI
-        setValidatorModel(validatorModelToUse);
+      if (useParallelValidation) {
+        console.log("Starting parallel validation processing");
+        
+        // Process all validations in parallel
+        const parallelResults = await validateResponsesInParallel(
+          responses,
+          currentQuery,
+          customCriteria,
+          validatorModelToUse,
+          handleParallelProgress
+        );
+        
+        console.log("Parallel validation finished, results:", Object.keys(parallelResults).length);
+        
+        // Normalize the parallel validation results
+        const normalizedParallelResults = {};
+        Object.keys(parallelResults).forEach(key => {
+          normalizedParallelResults[key] = normalizeValidationResult(parallelResults[key]);
+        });
+        
+        // Update the validation results through the parent component
+        onValidationComplete(normalizedParallelResults);
+        console.log("Parallel validation completed successfully with results:", Object.keys(normalizedParallelResults));
+      } else {
+        // ... existing sequential validation code ...
       }
-      
-      console.log("Using validator model:", validatorModelToUse);
-      
-      // Create LLM instance for validation
-      const llm = createLlmInstance(validatorModelToUse, '', {
-        temperature: 0, // Use deterministic output for evaluation
-        isForValidation: true // Signal that this is for validation to avoid problematic models
-      });
-      
-      // Format source documents for the prompt
-      const contextText = sources.map(source => 
-        `Source: ${source.source}\nContent: ${source.content}`
-      ).join('\n\n');
-      
-      console.log(`Processing ${Object.keys(responses).length} model responses for validation`);
-      
-      // Process each model response
-      for (const model of Object.keys(responses)) {
-        console.log(`Validating model: ${model}`);
-        
-        // Handle models inside Sets differently so we can display them better
-        if (model.startsWith('Set ') && 
-            typeof responses[model] === 'object' && 
-            !Array.isArray(responses[model])) {
-          
-          const setContent = responses[model];
-          
-          // Check if this set contains model keys
-          const modelKeys = Object.keys(setContent).filter(key => 
-            typeof setContent[key] === 'object' || 
-            typeof setContent[key] === 'string'
-          );
-          
-          if (modelKeys.length > 0) {
-            // We have nested models inside this set
-            console.log(`Set ${model} contains models: ${modelKeys.join(', ')}`);
-            
-            // For each model in the set, validate it
-            for (const modelKey of modelKeys) {
-              const nestedModel = setContent[modelKey];
-              const displayKey = `${modelKey} / ${model}`;
-              setCurrentValidatingModel(displayKey);
-              
-              // Create result key in the format the rest of the app expects
-              const resultKey = `${model}-${modelKey}`;
-              
-              console.log(`Validating nested model: ${displayKey} (result key: ${resultKey})`);
-              
-              // Extract the response content for this nested model
-              let answer = '';
-              if (typeof nestedModel === 'string') {
-                answer = nestedModel;
-              } else if (nestedModel) {
-                if (nestedModel.answer) {
-                  answer = typeof nestedModel.answer === 'object' ? nestedModel.answer.text : nestedModel.answer;
-                } else if (nestedModel.response) {
-                  answer = nestedModel.response;
-                } else if (nestedModel.text) {
-                  answer = nestedModel.text;
-                } else {
-                  answer = JSON.stringify(nestedModel);
-                }
-              }
-              
-              // Create evaluation prompt for this nested model
-              const prompt = `
-You are an expert evaluator of RAG (Retrieval-Augmented Generation) systems. Your task is to evaluate the quality of an AI assistant's response to a user query.
-
-USER QUERY:
-${currentQuery}
-
-CONTEXT PROVIDED TO THE AI ASSISTANT:
-${contextText}
-
-AI ASSISTANT RESPONSE (from ${modelKey} - ${getModelVendor(modelKey)}):
-${answer}
-
-EVALUATION CRITERIA:
-${customCriteria}
-
-Please evaluate the response on a scale of 1-100 for each criterion, and provide a brief explanation for each score.
-Then, calculate an overall score (1-100) that represents the overall quality of the response.
-
-Format your response as a JSON object with the following structure:
-{
-  "criteria": {
-    "Criterion1": {
-      "score": number,
-      "explanation": "string"
-    },
-    ...
-  },
-  "overall": {
-    "score": number,
-    "explanation": "string"
-  }
-}
-
-IMPORTANT: Use consistent Title Case for all criteria names (first letter capitalized, rest lowercase).
-IMPORTANT: Your response MUST be valid JSON. Do not include any text before or after the JSON object.
-For example, use "Accuracy" not "accuracy" or "ACCURACY".
-`;
-              
-              try {
-                console.log(`Sending evaluation request to ${validatorModelToUse} for nested model: ${modelKey} in ${model}`);
-                
-                // Call the LLM for evaluation
-                const evaluationResult = await llm.invoke(prompt);
-                
-                // Log raw result for debugging
-                console.log(`Raw evaluation result for ${modelKey} in ${model} (first 100 chars):`, 
-                  evaluationResult.substring(0, 100) + (evaluationResult.length > 100 ? '...' : ''));
-                
-                // Parse the JSON response with multiple attempts and cleaning
-                try {
-                  // First attempt: direct JSON parse
-                  try {
-                    const parsedResult = JSON.parse(evaluationResult);
-                    results[resultKey] = parsedResult;
-                    console.log(`Successfully parsed result for ${modelKey} in ${model} on first attempt`);
-                    continue; // Skip to next model
-                  } catch (directParseError) {
-                    console.log(`Direct JSON parse failed for ${modelKey} in ${model}, trying to extract JSON`);
-                  }
-                  
-                  // Second attempt: Extract JSON from the response with regex
-                  const jsonMatch = evaluationResult.match(/\{[\s\S]*\}/);
-                  if (jsonMatch) {
-                    console.log("Extracted JSON (first 100 chars):", 
-                      jsonMatch[0].substring(0, 100) + (jsonMatch[0].length > 100 ? '...' : ''));
-                    
-                    try {
-                      const parsedResult = JSON.parse(jsonMatch[0]);
-                      results[resultKey] = parsedResult;
-                      console.log(`Successfully parsed extracted JSON for ${modelKey} in ${model}`);
-                      continue; // Skip to next model if successful
-                    } catch (jsonError) {
-                      console.error(`JSON parse error for extracted content from ${modelKey} in ${model}:`, jsonError);
-                    }
-                    
-                    // Third attempt: Clean up the JSON before parsing
-                    console.log(`Attempting to clean and parse JSON for ${modelKey} in ${model}`);
-                    const cleanedJson = jsonMatch[0]
-                      .replace(/\\'/g, "'")
-                      .replace(/\\"/g, '"')
-                      .replace(/\\n/g, ' ')
-                      .replace(/\s+/g, ' ')
-                      .replace(/,\s*}/g, '}')  // Remove trailing commas in objects
-                      .replace(/,\s*]/g, ']'); // Remove trailing commas in arrays
-                    
-                    try {
-                      const parsedResult = JSON.parse(cleanedJson);
-                      results[resultKey] = parsedResult;
-                      console.log(`Successfully parsed cleaned JSON for ${modelKey} in ${model}`);
-                      continue; // Skip to next model if successful
-                    } catch (cleanJsonError) {
-                      console.error(`Cleaned JSON parse error for ${modelKey} in ${model}:`, cleanJsonError);
-                    }
-                  }
-                  
-                  // If we reach here, all parsing attempts failed
-                  console.error(`All parsing attempts failed for ${modelKey} in ${model}`);
-                  results[resultKey] = {
-                    error: 'Failed to parse evaluation result JSON',
-                    rawResponse: evaluationResult.substring(0, 500) // Truncate very long responses
-                  };
-                  
-                } catch (parseError) {
-                  console.error(`Error in JSON parsing process for ${modelKey} in ${model}:`, parseError);
-                  results[resultKey] = {
-                    error: `Failed to parse evaluation result: ${parseError.message}`,
-                    rawResponse: evaluationResult.substring(0, 500) // Truncate very long responses
-                  };
-                }
-              } catch (modelError) {
-                console.error(`Error calling validator model for ${modelKey} in ${model}:`, modelError);
-                results[resultKey] = {
-                  error: `Validator model error: ${modelError.message}`,
-                  rawResponse: null
-                };
-              }
-            }
-            
-            // Skip the normal processing for this set since we've handled all nested models
-            continue;
-          }
-        }
-        
-        // Handle regular models and sets without nested models
-        setCurrentValidatingModel(model);
-        
-        const response = responses[model];
-        // Add a debug log to inspect response structure
-        console.log(`Response structure for ${model}:`, response);
-        
-        // Get answer content regardless of response format
-        let answer = '';
-        if (typeof response === 'object') {
-          if (response.answer && typeof response.answer === 'object' && response.answer.text) {
-            answer = response.answer.text;
-          } else if (response.answer) {
-            answer = response.answer;
-          } else if (response.response) {
-            answer = response.response;
-          } else if (response.text) {
-            answer = response.text;
-          } else {
-            // Try to extract content from any property that might contain the response
-            const possibleFields = ['content', 'result', 'output', 'message', 'value'];
-            for (const field of possibleFields) {
-              if (response[field]) {
-                answer = typeof response[field] === 'object' ? JSON.stringify(response[field]) : response[field];
-                break;
-              }
-            }
-            
-            // If still no content, stringify the entire object
-            if (!answer) {
-              answer = JSON.stringify(response);
-            }
-          }
-        } else if (typeof response === 'string') {
-          answer = response;
-        } else {
-          answer = "Unable to extract response content";
-          console.error(`Could not extract answer from response for ${model}:`, response);
-        }
-        
-        // Create the evaluation prompt
-        const prompt = `
-You are an expert evaluator of RAG (Retrieval-Augmented Generation) systems. Your task is to evaluate the quality of an AI assistant's response to a user query.
-
-USER QUERY:
-${currentQuery}
-
-CONTEXT PROVIDED TO THE AI ASSISTANT:
-${contextText}
-
-AI ASSISTANT RESPONSE (from ${model} - ${getModelVendor(model)}):
-${answer}
-
-EVALUATION CRITERIA:
-${customCriteria}
-
-Please evaluate the response on a scale of 1-100 for each criterion, and provide a brief explanation for each score.
-Then, calculate an overall score (1-100) that represents the overall quality of the response.
-
-Format your response as a JSON object with the following structure:
-{
-  "criteria": {
-    "Criterion1": {
-      "score": number,
-      "explanation": "string"
-    },
-    ...
-  },
-  "overall": {
-    "score": number,
-    "explanation": "string"
-  }
-}
-
-IMPORTANT: Use consistent Title Case for all criteria names (first letter capitalized, rest lowercase).
-IMPORTANT: Your response MUST be valid JSON. Do not include any text before or after the JSON object.
-For example, use "Accuracy" not "accuracy" or "ACCURACY".
-`;
-        
-        try {
-          console.log(`Sending evaluation request to ${validatorModelToUse} for model: ${model}`);
-          
-          // Call the LLM for evaluation
-          const evaluationResult = await llm.invoke(prompt);
-          
-          // Log raw result for debugging
-          console.log(`Raw evaluation result for ${model} (first 100 chars):`, 
-            evaluationResult.substring(0, 100) + (evaluationResult.length > 100 ? '...' : ''));
-          
-          // Parse the JSON response with multiple attempts and cleaning
-          try {
-            // First attempt: direct JSON parse
-            try {
-              const parsedResult = JSON.parse(evaluationResult);
-              results[model] = parsedResult;
-              console.log(`Successfully parsed result for ${model} on first attempt`);
-              continue; // Skip to next model if successful
-            } catch (directParseError) {
-              console.log(`Direct JSON parse failed for ${model}, trying to extract JSON`);
-            }
-            
-            // Second attempt: Extract JSON from the response with regex
-            const jsonMatch = evaluationResult.match(/\{[\s\S]*\}/);
-            if (jsonMatch) {
-              console.log("Extracted JSON (first 100 chars):", 
-                jsonMatch[0].substring(0, 100) + (jsonMatch[0].length > 100 ? '...' : ''));
-              
-              try {
-                const parsedResult = JSON.parse(jsonMatch[0]);
-                results[model] = parsedResult;
-                console.log(`Successfully parsed extracted JSON for ${model}`);
-                continue; // Skip to next model if successful
-              } catch (jsonError) {
-                console.error(`JSON parse error for extracted content from ${model}:`, jsonError);
-              }
-              
-              // Third attempt: Clean up the JSON before parsing
-              console.log(`Attempting to clean and parse JSON for ${model}`);
-              const cleanedJson = jsonMatch[0]
-                .replace(/\\'/g, "'")
-                .replace(/\\"/g, '"')
-                .replace(/\\n/g, ' ')
-                .replace(/\s+/g, ' ')
-                .replace(/,\s*}/g, '}')  // Remove trailing commas in objects
-                .replace(/,\s*]/g, ']'); // Remove trailing commas in arrays
-              
-              try {
-                const parsedResult = JSON.parse(cleanedJson);
-                results[model] = parsedResult;
-                console.log(`Successfully parsed cleaned JSON for ${model}`);
-                continue; // Skip to next model if successful
-              } catch (cleanJsonError) {
-                console.error(`Cleaned JSON parse error for ${model}:`, cleanJsonError);
-              }
-            }
-            
-            // If we reach here, all parsing attempts failed
-            console.error(`All parsing attempts failed for ${model}`);
-            results[model] = {
-              error: 'Failed to parse evaluation result JSON',
-              rawResponse: evaluationResult.substring(0, 500) // Truncate very long responses
-            };
-            
-          } catch (parseError) {
-            console.error(`Error in JSON parsing process for ${model}:`, parseError);
-            results[model] = {
-              error: `Failed to parse evaluation result: ${parseError.message}`,
-              rawResponse: evaluationResult.substring(0, 500) // Truncate very long responses
-            };
-          }
-        } catch (modelError) {
-          console.error(`Error calling validator model for ${model}:`, modelError);
-          results[model] = {
-            error: `Validator model error: ${modelError.message}`,
-            rawResponse: null
-          };
-        }
-      }
-      
-      setCurrentValidatingModel(null);
-      // Update the validation results
-      onValidationComplete(results);
-      console.log("Validation completed successfully with results:", Object.keys(results));
-      
-    } catch (err) {
-      console.error('Error validating responses:', err);
-      console.log("Error details:", {
-        message: err.message,
-        stack: err.stack,
-        name: err.name
-      });
+    } catch (error) {
+      console.error('Error during validation:', error);
+      onValidationComplete({});
     } finally {
       setIsProcessing(false);
       setCurrentValidatingModel(null);
-      console.log("Validation process finished (in finally block)");
     }
   };
 
@@ -1296,21 +1017,120 @@ For example, use "Accuracy" not "accuracy" or "ACCURACY".
   const formatModelDisplay = (model) => {
     if (!model) return "";
     
-    // Check if this is a Set model
-    if (model.startsWith('Set ')) {
-      return `(Processing ${model})`;
+    // For parallel validation, show a generic message
+    if (localStorage.getItem('useParallelProcessing') === 'true') {
+      return "Validating all responses in parallel...";
     }
     
-    // For Set-Model format (from ResponseComparison) 
-    if (model.includes('-') && model.split('-')[0].startsWith('Set ')) {
-      const parts = model.split('-');
-      const modelName = parts.pop(); // Get the model name
-      const setName = parts.join('-'); // Rejoin any remaining parts as the set name
-      return `(Processing ${modelName} / ${setName})`;
-    }
-    
-    // Normal model
+    // For sequential validation, show the specific model
     return `(Processing ${model})`;
+  };
+
+  // Function to normalize validation results
+  const normalizeValidationResult = (result) => {
+    if (!result || typeof result !== 'object' || result.error) {
+      return result;
+    }
+    
+    // Ensure criteria object exists
+    if (!result.criteria || typeof result.criteria !== 'object') {
+      result.criteria = {};
+    }
+    
+    // Normalize criteria scores to ensure they're in the proper format
+    if (result.criteria) {
+      Object.keys(result.criteria).forEach(key => {
+        const value = result.criteria[key];
+        
+        // If it's already an object with a score property, just normalize the score
+        if (value && typeof value === 'object' && 'score' in value) {
+          if (value.score === undefined || value.score === null || isNaN(value.score)) {
+            value.score = 5;
+          } else {
+            // Convert score to number in 0-10 range
+            value.score = Math.max(0, Math.min(10, Number(value.score)));
+            // Scale to 0-100 for display
+            value.score = Math.round(value.score * 10);
+          }
+        } else {
+          // If it's a direct score value or not in the right format
+          let score = 5; // Default score
+          
+          if (value !== undefined && value !== null && !isNaN(Number(value))) {
+            // It's a direct numeric score, normalize it to 0-10
+            score = Math.max(0, Math.min(10, Number(value)));
+            // Scale to 0-100 for display
+            score = Math.round(score * 10);
+          }
+          
+          // Replace with a proper object
+          result.criteria[key] = {
+            score: score,
+            explanation: `Normalized score for ${key}`
+          };
+        }
+      });
+      
+      // Ensure common criteria fields exist
+      const commonCriteria = ['accuracy', 'completeness', 'relevance', 'conciseness', 'clarity'];
+      commonCriteria.forEach(criterion => {
+        // Look for the criterion with various casing and formatting
+        const criterionKey = Object.keys(result.criteria).find(key => 
+          key.toLowerCase() === criterion.toLowerCase() || 
+          key.toLowerCase().includes(criterion.toLowerCase())
+        );
+        
+        if (!criterionKey) {
+          // If criterion doesn't exist, add it with a default score of 50
+          result.criteria[criterion] = {
+            score: 50,
+            explanation: `Default score for ${criterion}`
+          };
+        } else if (criterionKey !== criterion) {
+          // If criterion exists but with different casing, normalize the key
+          result.criteria[criterion] = result.criteria[criterionKey];
+          delete result.criteria[criterionKey];
+        }
+      });
+    }
+    
+    // Create overall object if it doesn't exist
+    if (!result.overall || typeof result.overall !== 'object') {
+      result.overall = {};
+    }
+    
+    // Ensure overall.score is a valid number
+    if (result.overall.score === undefined || result.overall.score === null || isNaN(result.overall.score)) {
+      // Use overall_score if available
+      if (result.overall_score !== undefined && result.overall_score !== null && !isNaN(result.overall_score)) {
+        result.overall.score = Math.round(Math.max(0, Math.min(10, Number(result.overall_score))) * 10);
+      }
+      // Otherwise calculate from criteria
+      else if (result.criteria && Object.keys(result.criteria).length > 0) {
+        const scores = Object.values(result.criteria).map(c => c.score).filter(score => !isNaN(Number(score)));
+        result.overall.score = scores.length > 0 
+          ? Math.round(scores.reduce((sum, score) => sum + Number(score), 0) / scores.length)
+          : 50;
+      } else {
+        result.overall.score = 50;
+      }
+    } else {
+      // Convert to number and ensure it's in 0-100 range
+      result.overall.score = Math.round(Math.max(0, Math.min(100, Number(result.overall.score))));
+    }
+    
+    // Add overall explanation if missing
+    if (!result.overall.explanation && result.overall_assessment) {
+      result.overall.explanation = result.overall_assessment;
+    } else if (!result.overall.explanation) {
+      result.overall.explanation = "Normalized overall assessment";
+    }
+    
+    // Ensure arrays exist
+    if (!Array.isArray(result.strengths)) result.strengths = [];
+    if (!Array.isArray(result.weaknesses)) result.weaknesses = [];
+    
+    return result;
   };
 
   return (
@@ -1330,14 +1150,91 @@ For example, use "Accuracy" not "accuracy" or "ACCURACY".
         </Button>
       </Box>
 
-      {isProcessing ? (
-        <Box textAlign="center" py={4}>
+      {isProcessing && (
+        <Box p={3} display="flex" flexDirection="column" alignItems="center">
           <CircularProgress />
-          <Typography variant="h6" sx={{ mt: 2 }}>
-            Validating Responses... {currentValidatingModel && formatModelDisplay(currentValidatingModel)}
+          <Typography variant="h6" mt={2}>
+            {currentValidatingModel ? `Validating ${currentValidatingModel}` : 'Preparing validation...'}
           </Typography>
+          <Typography variant="body2" color="textSecondary" mt={1}>
+            {currentValidatingModel 
+              ? `Using ${validatorModel} as validator` 
+              : (localStorage.getItem('useParallelProcessing') === 'true' 
+                  ? 'Validating all responses in parallel...' 
+                  : 'Processing sequentially...')}
+          </Typography>
+          
+          {localStorage.getItem('useParallelProcessing') === 'true' && (
+            <Paper 
+              elevation={1} 
+              sx={{ 
+                mt: 2, 
+                p: 2, 
+                width: '100%', 
+                maxWidth: 600,
+                border: '1px dashed #2196f3',
+                bgcolor: 'rgba(33, 150, 243, 0.05)'
+              }}
+            >
+              <Typography variant="subtitle2" sx={{ mb: 1, color: '#2196f3' }}>
+                <span role="img" aria-label="Parallel">⚡</span> Parallel Validation Active
+              </Typography>
+              <Typography variant="body2" color="textSecondary" sx={{ mb: 1 }}>
+                {parallelProgress.completed > 0 
+                  ? `${parallelProgress.completed} of ${parallelProgress.total} models validated simultaneously`
+                  : 'All model responses are being validated simultaneously for faster results.'}
+              </Typography>
+              
+              {/* Progress bar */}
+              {parallelProgress.total > 0 && (
+                <Box sx={{ mb: 2 }}>
+                  <LinearProgress 
+                    variant="determinate" 
+                    value={(parallelProgress.completed / parallelProgress.total) * 100}
+                    sx={{ 
+                      height: 10,
+                      borderRadius: 5,
+                      '& .MuiLinearProgress-bar': {
+                        backgroundColor: '#2196f3'
+                      }
+                    }} 
+                  />
+                  <Typography variant="caption" sx={{ display: 'block', mt: 0.5, textAlign: 'right' }}>
+                    {Math.round((parallelProgress.completed / parallelProgress.total) * 100)}% complete
+                  </Typography>
+                </Box>
+              )}
+              
+              {/* Model validation status chips */}
+              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, maxHeight: 120, overflowY: 'auto' }}>
+                {/* Remove duplicates by using a Set for model names */}
+                {[...new Set(Object.keys(parallelProgress.models))].map(model => {
+                  const data = parallelProgress.models[model];
+                  return (
+                    <Chip 
+                      key={model}
+                      label={model} 
+                      size="small"
+                      color={data.status === 'completed' ? 'success' : 'primary'}
+                      variant={data.status === 'completed' ? 'filled' : 'outlined'}
+                      sx={{ 
+                        animation: data.status === 'completed' ? 'none' : 'pulse 1.5s infinite',
+                        '@keyframes pulse': {
+                          '0%': { opacity: 0.6 },
+                          '50%': { opacity: 1 },
+                          '100%': { opacity: 0.6 }
+                        }
+                      }}
+                    />
+                  );
+                })}
+              </Box>
+            </Paper>
+          )}
         </Box>
-      ) : !Object.keys(validationResults).length ? (
+      )}
+
+      {!Object.keys(validationResults).length ? (
         <Box>
           <Paper elevation={1} sx={{ p: 3, mb: 3 }}>
             <Typography variant="h6" gutterBottom>
@@ -1706,7 +1603,10 @@ For example, use "Accuracy" not "accuracy" or "ACCURACY".
                         
                         // Get efficiency score from the effectiveness data
                         const efficiencyScore = effectivenessData?.modelData?.[model]?.efficiencyScore ?? 0;
-                        const overallScore = result.overall ? result.overall.score : 0;
+                        // Get the overall score from the result
+                        const overallScore = result.overall && result.overall.score !== undefined 
+                          ? result.overall.score 
+                          : (result.overall_score ? Math.round(result.overall_score * 10) : 0);
                         
                         // Build a data object with all needed values
                         const rowData = {
@@ -1721,7 +1621,10 @@ For example, use "Accuracy" not "accuracy" or "ACCURACY".
                         // Add criteria scores
                         criteriaArray.forEach(criterion => {
                           const criterionValue = findCriterionValue(result.criteria, criterion);
-                          rowData[`criterion_${criterion}`] = criterionValue ? criterionValue.score : 0;
+                          // Store the entire criterion object for later reference
+                          rowData[`criterion_${criterion}`] = criterionValue;
+                          // Also store just the score for sorting
+                          rowData[criterion] = criterionValue ? criterionValue.score : 0;
                         });
                         
                         return rowData;
@@ -1785,10 +1688,10 @@ For example, use "Accuracy" not "accuracy" or "ACCURACY".
                                   textAlign: 'center', 
                                   padding: '8px', 
                                   borderBottom: '1px solid #ddd',
-                                  color: criterionValue ? 
+                                  color: criterionValue && criterionValue.score ? 
                                     getScoreColor(criterionValue.score) : 'inherit'
                                 }}>
-                                  {criterionValue ? 
+                                  {criterionValue && criterionValue.score ? 
                                     `${criterionValue.score}/100` : 'N/A'}
                                 </td>
                               );

@@ -260,6 +260,10 @@ Format your response in a clear, structured way.`;
     try {
       // Get parallel processing preference from localStorage
       const useParallelProcessing = localStorage.getItem('useParallelProcessing') === 'true';
+      console.log('QueryInterface - Parallel processing setting:', {
+        rawValue: localStorage.getItem('useParallelProcessing'),
+        useParallelProcessing
+      });
       
       // Retrieve relevant documents
       setProcessingStep('Retrieving relevant documents');

@@ -181,6 +181,10 @@ const LlmSettings = ({ showAppSettingsOnly = false }) => {
   // Load parallel processing preference from localStorage on mount
   useEffect(() => {
     const savedPreference = localStorage.getItem('useParallelProcessing');
+    console.log('LlmSettings - Loading parallel processing setting:', {
+      savedPreference,
+      asBoolean: savedPreference === 'true'
+    });
     if (savedPreference !== null) {
       setUseParallelProcessing(savedPreference === 'true');
     }
@@ -188,6 +192,10 @@ const LlmSettings = ({ showAppSettingsOnly = false }) => {
 
   // Save parallel processing preference to localStorage
   useEffect(() => {
+    console.log('LlmSettings - Saving parallel processing setting:', {
+      value: useParallelProcessing,
+      asString: useParallelProcessing.toString()
+    });
     localStorage.setItem('useParallelProcessing', useParallelProcessing.toString());
   }, [useParallelProcessing]);
 
@@ -1127,6 +1135,11 @@ const LlmSettings = ({ showAppSettingsOnly = false }) => {
                   <Switch
                     checked={useParallelProcessing}
                     onChange={(e) => {
+                      console.log('Parallel processing switch toggled:', {
+                        newValue: e.target.checked,
+                        oldValue: useParallelProcessing,
+                        asString: e.target.checked.toString()
+                      });
                       setUseParallelProcessing(e.target.checked);
                       localStorage.setItem('useParallelProcessing', e.target.checked.toString());
                     }}
