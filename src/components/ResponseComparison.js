@@ -23,9 +23,13 @@ import {
   Stack,
   Alert,
   Snackbar,
-  Tooltip
+  Tooltip,
+  Tabs,
+  Tab,
+  Collapse
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import ExpandLessIcon from '@mui/icons-material/ExpandLess';
 import AccessTimeIcon from '@mui/icons-material/AccessTime';
 import TokenIcon from '@mui/icons-material/Token';
 import DescriptionIcon from '@mui/icons-material/Description';
@@ -44,6 +48,10 @@ import ContextWindowVisualizer from './ContextWindowVisualizer';
 import RetrievalEvaluation from './RetrievalEvaluation';
 import EmbeddingQualityAnalysis from './EmbeddingQualityAnalysis';
 import SourceContentAnalysis from './SourceContentAnalysis';
+import CompareIcon from '@mui/icons-material/Compare';
+import AssessmentIcon from '@mui/icons-material/Assessment';
+import TuneIcon from '@mui/icons-material/Tune';
+import AnalyticsIcon from '@mui/icons-material/Analytics';
 
 const ResponseComparison = ({ 
   responses, 
@@ -71,6 +79,7 @@ const ResponseComparison = ({
   const [showRetrievalEval, setShowRetrievalEval] = useState(false);
   const [showEmbeddingAnalysis, setShowEmbeddingAnalysis] = useState(false);
   const [showSourceAnalysis, setShowSourceAnalysis] = useState(false);
+  const [selectedTab, setSelectedTab] = useState('comparison');
 
   const handleSourcesToggle = () => {
     setExpandedSources(!expandedSources);
@@ -131,15 +140,19 @@ const ResponseComparison = ({
 
   // Group sources by namespace
   const getSourcesByNamespace = (sources) => {
-    const byNamespace = {};
-    sources.forEach(source => {
-      const namespace = source.namespace || 'default';
-      if (!byNamespace[namespace]) {
-        byNamespace[namespace] = [];
+    if (!Array.isArray(sources)) return [];
+    
+    return sources.reduce((acc, source) => {
+      const namespace = source.metadata?.namespace || 'default';
+      if (!acc.find(ns => ns.name === namespace)) {
+        acc.push({
+          name: namespace,
+          sources: []
+        });
       }
-      byNamespace[namespace].push(source);
-    });
-    return byNamespace;
+      acc.find(ns => ns.name === namespace).sources.push(source);
+      return acc;
+    }, []);
   };
 
   // Export results to a JSON file
@@ -446,379 +459,348 @@ const ResponseComparison = ({
 
   return (
     <Box>
-      <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
-        <Box display="flex" alignItems="center">
-          <Button 
-            variant="outlined" 
-            color="primary" 
-            startIcon={<ArrowBackIcon />}
-            onClick={handleBackToQuery}
-            sx={{ mr: 2 }}
-          >
-            Back to Query
-          </Button>
-          <Typography variant="h5">
-            Response Comparison
-          </Typography>
-        </Box>
-        <Stack direction="row" spacing={1}>
-          <Button 
-            variant="outlined" 
-            startIcon={<SaveIcon />}
-            onClick={handleExportResults}
-          >
-            Export Results
-          </Button>
-          <Button 
-            variant="outlined" 
-            startIcon={<UploadIcon />}
-            onClick={handleImportClick}
-          >
-            Import Results
-          </Button>
-          <Button 
-            variant="contained" 
-            color="primary" 
-            startIcon={<DownloadIcon />}
-            onClick={generatePDF}
-          >
-            Download PDF
-          </Button>
-          <input
-            type="file"
-            ref={fileInputRef}
-            onChange={handleImportResults}
-            accept=".json"
-            style={{ display: 'none' }}
-          />
-        </Stack>
-      </Box>
-
-      <Box mb={4}>
-        <Typography variant="h6" gutterBottom>
-          Performance Metrics
-        </Typography>
-        <TableContainer component={Paper}>
-          <Table>
-            <TableHead>
-              <TableRow>
-                <TableCell>Model</TableCell>
-                <TableCell>Response Time</TableCell>
-                <TableCell>Token Usage</TableCell>
-                <TableCell>Estimated Cost</TableCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {Object.keys(metrics)
-                .filter(key => !['systemPrompts', 'temperatures', 'retrievalTime', 'query'].includes(key))
-                .map((model) => {
-                  const cost = calculateCost(model, metrics[model]?.tokenUsage?.total || 0);
-                  return (
-                    <TableRow key={model}>
-                      <TableCell>
-                        <Box display="flex" alignItems="center">
-                          <Box 
-                            width={16} 
-                            height={16} 
-                            borderRadius="50%" 
-                            bgcolor={modelColors[model] || '#888'} 
-                            mr={1} 
-                          />
-                          <Typography variant="body2">
-                            {model} ({getModelVendor(model)})
-                          </Typography>
-                        </Box>
-                      </TableCell>
-                      <TableCell>
-                        <Box display="flex" alignItems="center">
-                          <AccessTimeIcon fontSize="small" sx={{ mr: 1 }} />
-                          {metrics[model] && metrics[model].responseTime ? formatResponseTime(metrics[model].responseTime) : 'Unknown'}
-                          {metrics[model] && metrics[model].elapsedTime && metrics[model].elapsedTime !== metrics[model].responseTime && 
-                            <Tooltip title={`Total elapsed time including setup: ${formatElapsedTime(metrics[model].elapsedTime)}`}>
-                              <InfoIcon fontSize="small" sx={{ ml: 1, color: 'text.secondary' }} />
-                            </Tooltip>
-                          }
-                        </Box>
-                      </TableCell>
-                      <TableCell>
-                        <Tooltip title={`Input: ~${metrics[model]?.tokenUsage?.input || 'Unknown'} tokens, Output: ~${metrics[model]?.tokenUsage?.output || 'Unknown'} tokens`}>
-                          <Stack direction="row" spacing={0.5} alignItems="center">
-                            <TokenIcon fontSize="small" />
-                            <Typography variant="body2">
-                              {metrics[model]?.tokenUsage?.estimated ? '~' : ''}
-                              {metrics[model]?.tokenUsage?.total || 'Unknown'} tokens
-                            </Typography>
-                          </Stack>
-                        </Tooltip>
-                      </TableCell>
-                      <TableCell>
-                        <Box display="flex" alignItems="center">
-                          <AttachMoneyIcon fontSize="small" sx={{ mr: 1 }} />
-                          {formatCost(cost)}
-                        </Box>
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
-            </TableBody>
-          </Table>
-        </TableContainer>
-      </Box>
-
-      {/* Token Usage Analyzer */}
-      <Box mb={4}>
-        <TokenUsageAnalyzer 
-          metrics={metrics} 
-          responses={responses} 
-          systemPrompts={systemPrompts} 
-          currentQuery={currentQuery}
-        />
-      </Box>
-
-      {/* Context Window Visualizer */}
-      <Box mb={4}>
-        <ContextWindowVisualizer 
-          responses={responses}
-          systemPrompts={systemPrompts}
-          currentQuery={currentQuery}
-        />
-      </Box>
-
-      <Typography variant="h6" gutterBottom>
-        Model Responses
-      </Typography>
-      <Grid container spacing={3}>
-        {Object.keys(responses).map((model) => (
-          <Grid item xs={12} md={6} key={model}>
-            <Card 
-              className="response-card" 
+      <Paper elevation={1} sx={{ p: 2, mb: 3 }}>
+        <Grid container spacing={2} alignItems="center">
+          <Grid item>
+            <Button
+              startIcon={<ArrowBackIcon />}
+              onClick={handleBackToQuery}
               variant="outlined"
-              sx={{ 
-                height: '100%',
-                borderLeft: `4px solid ${modelColors[model] || '#888'}`
-              }}
+              size="small"
             >
-              <CardHeader
-                title={model}
-                subheader={getModelVendor(model)}
-                sx={{ pb: 1 }}
-              />
-              <Divider />
-              <CardContent sx={{ pt: 2, pb: 1 }}>
-                <Typography 
-                  variant="body2" 
-                  className="response-content"
-                  sx={{ 
-                    whiteSpace: 'pre-wrap',
-                    mb: 2,
-                    minHeight: '200px'
-                  }}
-                >
-                  {typeof responses[model].answer === 'object' && responses[model].answer.text 
-                    ? responses[model].answer.text 
-                    : responses[model].answer}
-                </Typography>
-              </CardContent>
-              <CardActions sx={{ justifyContent: 'space-between', px: 2, pt: 0 }}>
-                <Box>
-                  <Chip 
-                    icon={<AccessTimeIcon />} 
-                    label={metrics[model] && metrics[model].responseTime ? formatResponseTime(metrics[model].responseTime) : 'Unknown'} 
-                    size="small"
-                    className="metrics-chip"
-                  />
-                  <Chip 
-                    icon={<TokenIcon />} 
-                    label={`${metrics[model]?.tokenUsage?.estimated ? '~' : ''}${metrics[model]?.tokenUsage?.total || 'Unknown'} tokens`} 
-                    size="small"
-                    className="metrics-chip"
-                  />
-                </Box>
-              </CardActions>
-            </Card>
+              Back to Query
+            </Button>
           </Grid>
-        ))}
-      </Grid>
+          <Grid item xs>
+            <Typography variant="h6" component="div">
+              Response Analysis & Quality Tools
+            </Typography>
+          </Grid>
+          <Grid item>
+            <Stack direction="row" spacing={1}>
+              <Button 
+                variant="outlined" 
+                startIcon={<SaveIcon />}
+                onClick={handleExportResults}
+              >
+                Export Results
+              </Button>
+              <Button 
+                variant="outlined" 
+                startIcon={<UploadIcon />}
+                onClick={handleImportClick}
+              >
+                Import Results
+              </Button>
+              <Button 
+                variant="contained" 
+                color="primary" 
+                startIcon={<DownloadIcon />}
+                onClick={generatePDF}
+              >
+                Download PDF
+              </Button>
+              <input
+                type="file"
+                ref={fileInputRef}
+                onChange={handleImportResults}
+                accept=".json"
+                style={{ display: 'none' }}
+              />
+            </Stack>
+          </Grid>
+        </Grid>
+      </Paper>
 
-      {/* Source Documents Section - Shared across all models */}
-      {sources.length > 0 && (
-        <Box mb={4}>
-          <Accordion 
-            expanded={expandedSources}
-            onChange={handleSourcesToggle}
-          >
-            <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-              <Box display="flex" alignItems="center">
-                <DescriptionIcon fontSize="small" sx={{ mr: 1 }} />
-                <Typography variant="h6">Source Documents ({sources.length})</Typography>
-              </Box>
-            </AccordionSummary>
-            <AccordionDetails>
-              <Typography variant="body2" color="textSecondary" paragraph>
-                These source documents were retrieved from the vector store based on their relevance to your query. 
-                The complete text shown below was provided as context to all models to generate their responses. 
-                Understanding this context is crucial for evaluating the quality of the responses and for creating 
-                effective datasets for RAG applications.
+      <Tabs
+        value={selectedTab}
+        onChange={(e, newValue) => setSelectedTab(newValue)}
+        sx={{ mb: 3 }}
+        variant="scrollable"
+        scrollButtons="auto"
+      >
+        <Tab 
+          icon={<CompareIcon />} 
+          iconPosition="start"
+          label="Response Comparison" 
+          value="comparison"
+        />
+        <Tab 
+          icon={<AssessmentIcon />} 
+          iconPosition="start"
+          label="Source Quality" 
+          value="sourceQuality"
+        />
+        <Tab 
+          icon={<TuneIcon />} 
+          iconPosition="start"
+          label="Embedding Quality" 
+          value="embeddingQuality"
+        />
+        <Tab 
+          icon={<AnalyticsIcon />} 
+          iconPosition="start"
+          label="Retrieval Evaluation" 
+          value="retrievalEval"
+        />
+      </Tabs>
+
+      {selectedTab === 'comparison' && (
+        <Box>
+          <Paper elevation={1} sx={{ p: 3, mb: 3 }}>
+            {/* Query Details */}
+            <Typography variant="h6" gutterBottom>
+              Query Details
+            </Typography>
+            <Typography variant="body1" sx={{ mb: 4, fontStyle: 'italic' }}>
+              "{currentQuery}"
+            </Typography>
+            
+            {/* Performance Metrics */}
+            <Typography variant="h6" gutterBottom>
+              Performance Metrics
+            </Typography>
+            <TableContainer component={Paper} variant="outlined" sx={{ mb: 4 }}>
+              <Table size="small">
+                <TableHead>
+                  <TableRow>
+                    <TableCell>Model</TableCell>
+                    <TableCell>Response Time</TableCell>
+                    <TableCell>Token Usage</TableCell>
+                    <TableCell>Estimated Cost</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {Object.keys(metrics)
+                    .filter(key => !['systemPrompts', 'temperatures', 'retrievalTime', 'query'].includes(key))
+                    .map((model) => {
+                      const cost = calculateCost(model, metrics[model]?.tokenUsage?.total || 0);
+                      return (
+                        <TableRow key={model}>
+                          <TableCell>
+                            <Box display="flex" alignItems="center">
+                              <Box 
+                                width={12} 
+                                height={12} 
+                                borderRadius="50%" 
+                                bgcolor={modelColors[model] || '#888'} 
+                                mr={1} 
+                              />
+                              <Typography variant="body2">
+                                {model} ({getModelVendor(model)})
+                              </Typography>
+                            </Box>
+                          </TableCell>
+                          <TableCell>
+                            <Box display="flex" alignItems="center">
+                              <AccessTimeIcon fontSize="small" sx={{ mr: 1 }} />
+                              {metrics[model] && metrics[model].responseTime ? formatResponseTime(metrics[model].responseTime) : 'Unknown'}
+                              {metrics[model] && metrics[model].elapsedTime && metrics[model].elapsedTime !== metrics[model].responseTime && 
+                                <Tooltip title={`Total elapsed time including setup: ${formatElapsedTime(metrics[model].elapsedTime)}`}>
+                                  <InfoIcon fontSize="small" sx={{ ml: 1, color: 'text.secondary' }} />
+                                </Tooltip>
+                              }
+                            </Box>
+                          </TableCell>
+                          <TableCell>
+                            <Tooltip title={`Input: ~${metrics[model]?.tokenUsage?.input || 'Unknown'} tokens, Output: ~${metrics[model]?.tokenUsage?.output || 'Unknown'} tokens`}>
+                              <Stack direction="row" spacing={0.5} alignItems="center">
+                                <TokenIcon fontSize="small" />
+                                <Typography variant="body2">
+                                  {metrics[model]?.tokenUsage?.estimated ? '~' : ''}
+                                  {metrics[model]?.tokenUsage?.total || 'Unknown'} tokens
+                                </Typography>
+                              </Stack>
+                            </Tooltip>
+                          </TableCell>
+                          <TableCell>
+                            <Box display="flex" alignItems="center">
+                              <AttachMoneyIcon fontSize="small" sx={{ mr: 1 }} />
+                              {formatCost(cost)}
+                            </Box>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                </TableBody>
+              </Table>
+            </TableContainer>
+
+            {/* Token Usage Analysis */}
+            <Box sx={{ mb: 4 }}>
+              <TokenUsageAnalyzer 
+                metrics={metrics} 
+                responses={responses} 
+                systemPrompts={systemPrompts} 
+                currentQuery={currentQuery}
+              />
+            </Box>
+
+            {/* Context Window Analysis */}
+            <Box sx={{ mb: 4 }}>
+              <ContextWindowVisualizer 
+                responses={responses}
+                systemPrompts={systemPrompts}
+                currentQuery={currentQuery}
+              />
+            </Box>
+
+            {/* Source Documents - Collapsible by default */}
+            <Typography variant="h6" gutterBottom>
+              Source Documents
+            </Typography>
+            <Alert severity="info" sx={{ mb: 3 }}>
+              <Typography variant="body2">
+                These documents were retrieved as context for the models' responses. The quality and relevance of these sources directly impacts the accuracy of the generated answers.
               </Typography>
-              
-              <Alert severity="info" sx={{ mb: 3 }}>
-                <Typography variant="body2">
-                  <strong>How RAG works:</strong> The system finds the most semantically similar documents to your query, 
-                  combines them into a context window, and instructs the LLM to answer based only on this provided information. 
-                  The quality of responses depends heavily on whether the relevant information is contained in these documents.
-                </Typography>
-              </Alert>
-              
-              {Object.entries(getSourcesByNamespace(sources)).map(([namespace, namespaceSources]) => (
-                <Box key={namespace} mb={3}>
-                  <Box display="flex" alignItems="center" mb={1}>
-                    <FolderIcon fontSize="small" sx={{ mr: 1 }} />
-                    <Typography variant="subtitle1">
-                      Namespace: {namespace} ({namespaceSources.length} sources)
-                    </Typography>
-                  </Box>
-                  
-                  {namespaceSources.map((source, idx) => (
-                    <Paper 
-                      key={idx} 
-                      variant="outlined" 
-                      sx={{ p: 2, mb: 2, backgroundColor: '#f9f9f9' }}
-                    >
-                      <Typography variant="subtitle2" gutterBottom>
-                        Source: {source.source}
+            </Alert>
+            <Accordion defaultExpanded={false} sx={{ mb: 4 }}>
+              <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+                <Typography variant="subtitle1">View Source Documents</Typography>
+              </AccordionSummary>
+              <AccordionDetails>
+                {getSourcesByNamespace(sources).map((namespace, index) => (
+                  <Box key={`${namespace.name}-${index}`} sx={{ mb: 3 }}>
+                    <Paper variant="outlined" sx={{ p: 2 }}>
+                      <Typography variant="subtitle1" color="text.secondary" gutterBottom>
+                        <FolderIcon fontSize="small" sx={{ mr: 1, verticalAlign: 'middle' }} />
+                        {namespace.name}
                       </Typography>
-                      <Divider sx={{ mb: 2 }} />
-                      <Box 
-                        sx={{ 
-                          maxHeight: '300px', 
-                          overflowY: 'auto', 
-                          p: 1, 
-                          backgroundColor: '#fff',
-                          border: '1px solid #eee',
-                          borderRadius: 1
-                        }}
-                      >
-                        <Typography 
-                          variant="body2" 
-                          sx={{ 
-                            whiteSpace: 'pre-wrap',
-                            fontFamily: 'monospace'
-                          }}
-                        >
-                          {source.content}
-                        </Typography>
+                      <Box sx={{ pl: 4 }}>
+                        {namespace.sources.map((source, sourceIndex) => (
+                          <Box 
+                            key={`${namespace.name}-${sourceIndex}`}
+                            sx={{ 
+                              mb: 2,
+                              p: 2,
+                              bgcolor: 'grey.50',
+                              borderRadius: 1,
+                              border: '1px solid',
+                              borderColor: 'grey.200'
+                            }}
+                          >
+                            <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>
+                              {source.content}
+                            </Typography>
+                            {source.metadata && (
+                              <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
+                                Document: {source.metadata.documentName || 'Unknown'}
+                                <br />
+                                Original File Name: {source.metadata.originalFileName || 'Unknown'}
+                                <br />
+                                Source: {source.metadata.source || 'Unknown'} 
+                                {source.metadata.page && ` (Page ${source.metadata.page})`}
+                              </Typography>
+                            )}
+                          </Box>
+                        ))}
                       </Box>
                     </Paper>
-                  ))}
-                </Box>
-              ))}
-            </AccordionDetails>
-          </Accordion>
+                  </Box>
+                ))}
+              </AccordionDetails>
+            </Accordion>
+
+            {/* Model Responses - Moved to bottom */}
+            <Typography variant="h6" gutterBottom>
+              Model Responses
+            </Typography>
+            <Box sx={{ mb: 4 }}>
+              <Grid container spacing={3}>
+                {Object.keys(responses).map((model) => (
+                  <Grid item xs={12} md={6} key={model}>
+                    <Card 
+                      className="response-card" 
+                      variant="outlined"
+                      sx={{ 
+                        height: '100%',
+                        borderLeft: `4px solid ${modelColors[model] || '#888'}`
+                      }}
+                    >
+                      <CardHeader
+                        title={
+                          <Box display="flex" alignItems="center">
+                            <Box 
+                              width={16} 
+                              height={16} 
+                              borderRadius="50%" 
+                              bgcolor={modelColors[model] || '#888'} 
+                              mr={1} 
+                            />
+                            {model}
+                          </Box>
+                        }
+                        subheader={`${getModelVendor(model)} - Response time: ${formatResponseTime(metrics[model]?.responseTime)}`}
+                        action={
+                          <Stack direction="row" spacing={2} alignItems="center">
+                            <Tooltip title={`${metrics[model]?.tokenUsage?.total || 'Unknown'} tokens used`}>
+                              <Stack direction="row" spacing={0.5} alignItems="center">
+                                <TokenIcon fontSize="small" />
+                                <Typography variant="body2">
+                                  {metrics[model]?.tokenUsage?.total || 'Unknown'}
+                                </Typography>
+                              </Stack>
+                            </Tooltip>
+                            <Tooltip title={`Estimated cost: ${formatCost(calculateCost(model, metrics[model]?.tokenUsage?.total || 0))}`}>
+                              <Stack direction="row" spacing={0.5} alignItems="center">
+                                <AttachMoneyIcon fontSize="small" />
+                                <Typography variant="body2">
+                                  {formatCost(calculateCost(model, metrics[model]?.tokenUsage?.total || 0))}
+                                </Typography>
+                              </Stack>
+                            </Tooltip>
+                          </Stack>
+                        }
+                      />
+                      <CardContent sx={{ pt: 1 }}>
+                        <Typography 
+                          variant="body1" 
+                          component="div" 
+                          sx={{ 
+                            whiteSpace: 'pre-wrap',
+                            minHeight: '300px',
+                            maxHeight: '500px',
+                            overflowY: 'auto',
+                            p: 2,
+                            bgcolor: 'grey.50',
+                            borderRadius: 1
+                          }}
+                        >
+                          {typeof responses[model].answer === 'object' && responses[model].answer.text 
+                            ? responses[model].answer.text 
+                            : responses[model].answer || responses[model].response}
+                        </Typography>
+                      </CardContent>
+                    </Card>
+                  </Grid>
+                ))}
+              </Grid>
+            </Box>
+          </Paper>
         </Box>
       )}
 
-      <Box mt={4}>
-        <Typography variant="h6" gutterBottom>
-          Quality Analysis Tools
-        </Typography>
-        
-        <Grid container spacing={2}>
-          <Grid item xs={12} md={4}>
-            <Card variant="outlined">
-              <CardContent>
-                <Typography variant="subtitle1" gutterBottom>
-                  Retrieval Quality
-                </Typography>
-                <Typography variant="body2" color="textSecondary" paragraph>
-                  Evaluate the quality of retrieval results using various metrics.
-                </Typography>
-                <Button
-                  variant="contained"
-                  color="primary"
-                  onClick={() => setShowRetrievalEval(!showRetrievalEval)}
-                  fullWidth
-                >
-                  {showRetrievalEval ? 'Hide Evaluation' : 'Show Evaluation'}
-                </Button>
-              </CardContent>
-            </Card>
-          </Grid>
-          
-          <Grid item xs={12} md={4}>
-            <Card variant="outlined">
-              <CardContent>
-                <Typography variant="subtitle1" gutterBottom>
-                  Embedding Quality
-                </Typography>
-                <Typography variant="body2" color="textSecondary" paragraph>
-                  Analyze the quality and characteristics of embeddings.
-                </Typography>
-                <Button
-                  variant="contained"
-                  color="primary"
-                  onClick={() => setShowEmbeddingAnalysis(!showEmbeddingAnalysis)}
-                  fullWidth
-                >
-                  {showEmbeddingAnalysis ? 'Hide Analysis' : 'Show Analysis'}
-                </Button>
-              </CardContent>
-            </Card>
-          </Grid>
-          
-          <Grid item xs={12} md={4}>
-            <Card variant="outlined">
-              <CardContent>
-                <Typography variant="subtitle1" gutterBottom>
-                  Source Content
-                </Typography>
-                <Typography variant="body2" color="textSecondary" paragraph>
-                  Analyze the quality and characteristics of source content.
-                </Typography>
-                <Button
-                  variant="contained"
-                  color="primary"
-                  onClick={() => setShowSourceAnalysis(!showSourceAnalysis)}
-                  fullWidth
-                >
-                  {showSourceAnalysis ? 'Hide Analysis' : 'Show Analysis'}
-                </Button>
-              </CardContent>
-            </Card>
-          </Grid>
-        </Grid>
-        
-        {showRetrievalEval && (
-          <Box mt={2}>
-            <RetrievalEvaluation
-              documents={documents}
-              vectorStore={vectorStore}
-              availableModels={availableModels}
-              onEvaluationComplete={handleRetrievalEvalComplete}
-            />
-          </Box>
-        )}
-        
-        {showEmbeddingAnalysis && (
-          <Box mt={2}>
-            <EmbeddingQualityAnalysis
-              documents={documents}
-              vectorStore={vectorStore}
-              availableModels={availableModels}
-              onAnalysisComplete={handleEmbeddingAnalysisComplete}
-            />
-          </Box>
-        )}
-        
-        {showSourceAnalysis && (
-          <Box mt={2}>
-            <SourceContentAnalysis
-              documents={documents}
-              availableModels={availableModels}
-              onAnalysisComplete={handleSourceAnalysisComplete}
-            />
-          </Box>
-        )}
-      </Box>
+      {selectedTab === 'sourceQuality' && (
+        <SourceContentAnalysis 
+          documents={documents}
+          availableModels={availableModels}
+        />
+      )}
+
+      {selectedTab === 'embeddingQuality' && (
+        <EmbeddingQualityAnalysis
+          vectorStore={vectorStore}
+          documents={documents}
+        />
+      )}
+
+      {selectedTab === 'retrievalEval' && (
+        <RetrievalEvaluation
+          documents={documents}
+          vectorStore={vectorStore}
+          availableModels={availableModels}
+        />
+      )}
 
       <Snackbar
         open={snackbarOpen}
