@@ -25,6 +25,8 @@ import InsertChartIcon from '@mui/icons-material/InsertChart';
 import DashboardIcon from '@mui/icons-material/Dashboard';
 import BuildIcon from '@mui/icons-material/Build';
 import SpeedIcon from '@mui/icons-material/Speed';
+import PsychologyIcon from '@mui/icons-material/Psychology';
+import RagIntroduction from './components/RagIntroduction';
 
 import DocumentUpload from './components/DocumentUpload';
 import VectorStoreConfig from './components/VectorStoreConfig';
@@ -92,6 +94,7 @@ function App() {
   const [chunkSize, setChunkSize] = useState(1000);
   const [chunkOverlap, setChunkOverlap] = useState(200);
   const [menuAnchorEl, setMenuAnchorEl] = useState(null);
+  const [helpDialogOpen, setHelpDialogOpen] = useState(false);
   
   // Store query interface state to preserve it when navigating back
   const [lastQueryState, setLastQueryState] = useState({
@@ -333,6 +336,17 @@ function App() {
             <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
               RAG Application
             </Typography>
+            
+            {/* Help button */}
+            <Tooltip title="Learn about RAG">
+              <IconButton 
+                color="inherit" 
+                onClick={() => setHelpDialogOpen(true)}
+                sx={{ mr: 1 }}
+              >
+                <HelpOutlineIcon />
+              </IconButton>
+            </Tooltip>
             
             {/* Back button - visible when not on first tab */}
             {tabValue > 0 && (
@@ -899,6 +913,12 @@ function App() {
             )}
           </DialogContent>
         </Dialog>
+        
+        {/* Help Dialog */}
+        <RagIntroduction 
+          open={helpDialogOpen} 
+          onClose={() => setHelpDialogOpen(false)} 
+        />
         
         <Snackbar
           open={snackbarOpen}
