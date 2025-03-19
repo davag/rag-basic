@@ -92,6 +92,8 @@ export const processFile = async (file) => {
     pageContent: text,
     metadata: { 
       source: file.name,
+      originalFileName: file.name,
+      documentName: file.name,
       namespace: 'default' // Default namespace, will be updated by the component
     }
   };

@@ -133,6 +133,7 @@ export const processModelsInParallel = async (
         sources: sources.map(doc => ({
           content: doc.pageContent,
           source: doc.metadata.source,
+          metadata: doc.metadata,
           namespace: doc.metadata.namespace || 'default'
         }))
       };
@@ -156,6 +157,7 @@ export const processModelsInParallel = async (
         sources: sources.map(doc => ({
           content: doc.pageContent,
           source: doc.metadata.source,
+          metadata: doc.metadata,
           namespace: doc.metadata.namespace || 'default'
         }))
       };

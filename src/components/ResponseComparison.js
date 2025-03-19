@@ -649,15 +649,14 @@ const ResponseComparison = ({
                               borderColor: 'grey.200'
                             }}
                           >
+                            <Typography variant="subtitle2" color="primary" gutterBottom>
+                              File: {source.metadata?.originalFileName || source.metadata?.documentName || source.metadata?.source || 'Unknown'}
+                            </Typography>
                             <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>
                               {source.content}
                             </Typography>
                             {source.metadata && (
                               <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
-                                Document: {source.metadata.documentName || 'Unknown'}
-                                <br />
-                                Original File Name: {source.metadata.originalFileName || 'Unknown'}
-                                <br />
                                 Source: {source.metadata.source || 'Unknown'} 
                                 {source.metadata.page && ` (Page ${source.metadata.page})`}
                               </Typography>
