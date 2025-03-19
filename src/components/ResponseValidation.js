@@ -1069,6 +1069,28 @@ const ResponseValidation = ({
             // Scale to 0-100 for display
             value.score = Math.round(value.score * 10);
           }
+          
+          // Ensure explanation is meaningful
+          if (!value.explanation || value.explanation === `Normalized score for ${key}`) {
+            const score = value.score;
+            let explanation = '';
+            
+            if (score >= 90) {
+              explanation = `Excellent performance in ${key.toLowerCase()}. The response demonstrates mastery of this criterion.`;
+            } else if (score >= 80) {
+              explanation = `Strong performance in ${key.toLowerCase()}. The response shows good understanding and execution.`;
+            } else if (score >= 70) {
+              explanation = `Good performance in ${key.toLowerCase()}. The response meets most requirements with some room for improvement.`;
+            } else if (score >= 60) {
+              explanation = `Adequate performance in ${key.toLowerCase()}. The response meets basic requirements but could be enhanced.`;
+            } else if (score >= 50) {
+              explanation = `Moderate performance in ${key.toLowerCase()}. The response shows some understanding but needs significant improvement.`;
+            } else {
+              explanation = `Needs improvement in ${key.toLowerCase()}. The response falls short of expected standards.`;
+            }
+            
+            value.explanation = explanation;
+          }
         } else {
           // If it's a direct score value or not in the right format
           let score = 5; // Default score
@@ -1080,10 +1102,26 @@ const ResponseValidation = ({
             score = Math.round(score * 10);
           }
           
+          // Create meaningful explanation based on score
+          let explanation = '';
+          if (score >= 90) {
+            explanation = `Excellent performance in ${key.toLowerCase()}. The response demonstrates mastery of this criterion.`;
+          } else if (score >= 80) {
+            explanation = `Strong performance in ${key.toLowerCase()}. The response shows good understanding and execution.`;
+          } else if (score >= 70) {
+            explanation = `Good performance in ${key.toLowerCase()}. The response meets most requirements with some room for improvement.`;
+          } else if (score >= 60) {
+            explanation = `Adequate performance in ${key.toLowerCase()}. The response meets basic requirements but could be enhanced.`;
+          } else if (score >= 50) {
+            explanation = `Moderate performance in ${key.toLowerCase()}. The response shows some understanding but needs significant improvement.`;
+          } else {
+            explanation = `Needs improvement in ${key.toLowerCase()}. The response falls short of expected standards.`;
+          }
+          
           // Replace with a proper object
           result.criteria[key] = {
             score: score,
-            explanation: `Normalized score for ${key}`
+            explanation: explanation
           };
         }
       });
@@ -1101,7 +1139,7 @@ const ResponseValidation = ({
           // If criterion doesn't exist, add it with a default score of 50
           result.criteria[criterion] = {
             score: 50,
-            explanation: `Default score for ${criterion}`
+            explanation: `Moderate performance in ${criterion}. The response shows some understanding but needs significant improvement.`
           };
         } else if (criterionKey !== criterion) {
           // If criterion exists but with different casing, normalize the key
@@ -1136,11 +1174,22 @@ const ResponseValidation = ({
       result.overall.score = Math.round(Math.max(0, Math.min(100, Number(result.overall.score))));
     }
     
-    // Add overall explanation if missing
-    if (!result.overall.explanation && result.overall_assessment) {
-      result.overall.explanation = result.overall_assessment;
-    } else if (!result.overall.explanation) {
-      result.overall.explanation = "Normalized overall assessment";
+    // Add meaningful overall explanation if missing
+    if (!result.overall.explanation) {
+      const score = result.overall.score;
+      if (score >= 90) {
+        result.overall.explanation = "The response demonstrates exceptional quality across all evaluation criteria.";
+      } else if (score >= 80) {
+        result.overall.explanation = "The response shows strong overall performance with minor areas for improvement.";
+      } else if (score >= 70) {
+        result.overall.explanation = "The response is generally good but has some areas that could be enhanced.";
+      } else if (score >= 60) {
+        result.overall.explanation = "The response meets basic requirements but needs significant improvement in several areas.";
+      } else if (score >= 50) {
+        result.overall.explanation = "The response shows moderate performance but requires substantial improvement.";
+      } else {
+        result.overall.explanation = "The response needs significant improvement to meet quality standards.";
+      }
     }
     
     // Ensure arrays exist
