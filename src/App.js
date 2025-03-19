@@ -563,7 +563,7 @@ function App() {
                     {tabValue > 2 ? <CheckIcon fontSize="small" /> : 3}
                   </Box>
                 } 
-                label="Query Models"
+                label="Model Selection"
                 disabled={!vectorStore}
               />
               <Tab 
