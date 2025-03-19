@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Typography, 
   Box, 
@@ -24,7 +24,10 @@ import {
   ListItemText,
   Chip,
   Snackbar,
-  Alert
+  Alert,
+  FormControlLabel,
+  Switch,
+  Tooltip
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import EditIcon from '@mui/icons-material/Edit';
@@ -34,6 +37,7 @@ import FileDownloadIcon from '@mui/icons-material/FileDownload';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import ErrorIcon from '@mui/icons-material/Error';
+import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
 import { createLlmInstance, CustomAzureOpenAI } from '../utils/apiServices';
 import axios from 'axios';
 
@@ -164,6 +168,7 @@ const LlmSettings = ({ showAppSettingsOnly = false }) => {
     'Exception handling: Only if the output is code then check exceptions paths'
   );
   const [defaultQueryTemplate, setDefaultQueryTemplate] = useState('');
+  const [useParallelProcessing, setUseParallelProcessing] = useState(true);
 
   const vendorColors = {
     'OpenAI': '#10a37f',    // Green
@@ -172,6 +177,19 @@ const LlmSettings = ({ showAppSettingsOnly = false }) => {
     'Ollama': '#ff6b6b',     // Red
     'Other': '#888888'       // Gray
   };
+
+  // Load parallel processing preference from localStorage on mount
+  useEffect(() => {
+    const savedPreference = localStorage.getItem('useParallelProcessing');
+    if (savedPreference !== null) {
+      setUseParallelProcessing(savedPreference === 'true');
+    }
+  }, []);
+
+  // Save parallel processing preference to localStorage
+  useEffect(() => {
+    localStorage.setItem('useParallelProcessing', useParallelProcessing.toString());
+  }, [useParallelProcessing]);
 
   // Test LLM connectivity
   const testLlmConnection = async (modelId) => {
@@ -1097,6 +1115,37 @@ const LlmSettings = ({ showAppSettingsOnly = false }) => {
           <Typography variant="body2" color="textSecondary" paragraph>
             Configure application-wide settings and defaults.
           </Typography>
+          
+          {/* RAG Query Configuration */}
+          <Box mb={4}>
+            <Typography variant="h6" gutterBottom>
+              RAG Query Configuration
+            </Typography>
+            <Paper elevation={1} sx={{ p: 2, mb: 2 }}>
+              <FormControlLabel
+                control={
+                  <Switch
+                    checked={useParallelProcessing}
+                    onChange={(e) => {
+                      setUseParallelProcessing(e.target.checked);
+                      localStorage.setItem('useParallelProcessing', e.target.checked.toString());
+                    }}
+                    color="primary"
+                  />
+                }
+                label={
+                  <Box display="flex" alignItems="center">
+                    <Typography variant="body1" mr={1}>
+                      Parallel Processing
+                    </Typography>
+                    <Tooltip title="Process all models in parallel for faster responses. Disable for sequential processing if you encounter rate limiting or timeouts.">
+                      <HelpOutlineIcon fontSize="small" color="action" />
+                    </Tooltip>
+                  </Box>
+                }
+              />
+            </Paper>
+          </Box>
           
           {/* Prompt Advisor Settings */}
           <Box mb={4}>
