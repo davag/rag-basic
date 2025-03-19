@@ -28,11 +28,6 @@ import {
   InputLabel,
   Select,
   MenuItem,
-  Dialog,
-  DialogTitle,
-  DialogContent,
-  DialogActions,
-  TextField,
   Tooltip,
   IconButton,
   Stack,
@@ -47,12 +42,6 @@ import WarningIcon from '@mui/icons-material/Warning';
 import SpellcheckIcon from '@mui/icons-material/Spellcheck';
 import ErrorIcon from '@mui/icons-material/Error';
 import { createLlmInstance } from '../utils/apiServices';
-import {
-  Speed as SpeedIcon,
-  Storage as StorageIcon,
-  TrendingUp as TrendingUpIcon,
-  Build as BuildIcon
-} from '@mui/icons-material';
 import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
 
 /**

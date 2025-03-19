@@ -4,12 +4,9 @@ import {
   Box, 
   Grid, 
   Paper, 
-  Chip,
-  Divider,
   Card,
   CardContent,
   CardHeader,
-  CardActions,
   Accordion,
   AccordionSummary,
   AccordionDetails,
@@ -25,14 +22,11 @@ import {
   Snackbar,
   Tooltip,
   Tabs,
-  Tab,
-  Collapse
+  Tab
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
-import ExpandLessIcon from '@mui/icons-material/ExpandLess';
 import AccessTimeIcon from '@mui/icons-material/AccessTime';
 import TokenIcon from '@mui/icons-material/Token';
-import DescriptionIcon from '@mui/icons-material/Description';
 import FolderIcon from '@mui/icons-material/Folder';
 import DownloadIcon from '@mui/icons-material/Download';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
@@ -64,7 +58,6 @@ const ResponseComparison = ({
   vectorStore,
   availableModels
 }) => {
-  const [expandedSources, setExpandedSources] = useState(false);
   const [snackbarOpen, setSnackbarOpen] = useState(false);
   const [snackbarMessage, setSnackbarMessage] = useState('');
   const [snackbarSeverity, setSnackbarSeverity] = useState('success');
@@ -76,15 +69,7 @@ const ResponseComparison = ({
   const sources = Object.values(responses)[0]?.sources || [];
 
   // Add new state variables
-  const [showRetrievalEval, setShowRetrievalEval] = useState(false);
-  const [showEmbeddingAnalysis, setShowEmbeddingAnalysis] = useState(false);
-  const [showSourceAnalysis, setShowSourceAnalysis] = useState(false);
   const [selectedTab, setSelectedTab] = useState('comparison');
-
-  const handleSourcesToggle = () => {
-    setExpandedSources(!expandedSources);
-  };
-
   const formatResponseTime = (ms) => {
     if (ms < 1000) {
       return `${ms}ms`;
@@ -441,21 +426,6 @@ const ResponseComparison = ({
     }
   };
 
-  // Add new handlers
-  const handleRetrievalEvalComplete = (results) => {
-    console.log('Retrieval evaluation complete:', results);
-    // Handle results as needed
-  };
-
-  const handleEmbeddingAnalysisComplete = (results) => {
-    console.log('Embedding analysis complete:', results);
-    // Handle results as needed
-  };
-
-  const handleSourceAnalysisComplete = (results) => {
-    console.log('Source analysis complete:', results);
-    // Handle results as needed
-  };
 
   return (
     <Box>
