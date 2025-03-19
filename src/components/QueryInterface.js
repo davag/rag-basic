@@ -22,7 +22,8 @@ import {
   Switch,
   FormControlLabel,
   Slider,
-  Stack
+  Stack,
+  LinearProgress
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
@@ -63,6 +64,14 @@ const QueryInterface = ({ vectorStore, namespaces = [], onQuerySubmitted, isProc
   const [processingStartTimes, setProcessingStartTimes] = useState({});
   const [elapsedTimes, setElapsedTimes] = useState({});
   const [timerInterval, setTimerInterval] = useState(null);
+  
+  // Add parallel progress state
+  const [parallelProgress, setParallelProgress] = useState({
+    completed: 0,
+    pending: 0,
+    total: 0,
+    models: {}
+  });
 
   // Reference to the file input element
   const fileInputRef = useRef(null);
@@ -297,6 +306,14 @@ Given the context information and not prior knowledge, answer the question: ${qu
         setCurrentProcessingModel('all models');
         setProcessingStep('Processing queries in parallel');
         
+        // Initialize parallel progress
+        setParallelProgress({
+          completed: 0,
+          pending: selectedModels.length * promptSets.length,
+          total: selectedModels.length * promptSets.length,
+          models: {}
+        });
+        
         // Start timers for all models
         const startTimes = {};
         selectedModels.forEach(model => {
@@ -315,7 +332,44 @@ Given the context information and not prior knowledge, answer the question: ${qu
             {
               getSystemPromptForModel: () => promptSet.systemPrompt,
               getTemperatureForModel: () => promptSet.temperature,
-              sources: filteredDocs
+              sources: filteredDocs,
+              onProgress: (progressData) => {
+                if (!progressData) return;
+                
+                setParallelProgress(prev => {
+                  const newModels = { ...prev.models };
+                  
+                  // Ensure consistent model name format: "modelName / Set X"
+                  let modelName = progressData.model;
+                  if (modelName.startsWith('Set ')) {
+                    const parts = modelName.split('-');
+                    if (parts.length > 1) {
+                      const setName = parts[0];
+                      const baseModel = parts.slice(1).join('-');
+                      modelName = `${baseModel} / ${setName}`;
+                    }
+                  } else if (!modelName.includes('Set')) {
+                    modelName = `${modelName} / Set ${promptSet.id}`;
+                  }
+
+                  // Only update the model status if it's not completed yet
+                  if (!newModels[modelName] || newModels[modelName].status !== 'completed') {
+                    newModels[modelName] = {
+                      status: progressData.status,
+                      timestamp: Date.now()
+                    };
+                  }
+
+                  // Calculate completed count based on unique completed models
+                  const completedCount = Object.values(newModels).filter(m => m.status === 'completed').length;
+
+                  return {
+                    ...prev,
+                    completed: completedCount,
+                    models: newModels
+                  };
+                });
+              }
             }
           );
           
@@ -450,6 +504,12 @@ Given the context information and not prior knowledge, answer the question: ${qu
       setIsProcessing(false);
       setCurrentProcessingModel(null);
       setProcessingStep('');
+      setParallelProgress({
+        completed: 0,
+        pending: 0,
+        total: 0,
+        models: {}
+      });
     }
   };
 
@@ -815,43 +875,110 @@ Given the context information and not prior knowledge, answer the question: ${qu
               </Typography>
               <Typography variant="body2" color="textSecondary" sx={{ mt: 1 }}>
                 {currentProcessingModel === 'all models' 
-                  ? `Querying ${(selectedModels || []).length} models in parallel...` 
+                  ? `Querying ${selectedModels.length * promptSets.length} models in parallel...` 
                   : 'Processing...'}
               </Typography>
             </Box>
             
-            <Box sx={{ mt: 2 }}>
-              {(selectedModels || []).map(model => (
-                <Box key={model} sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
-                  <Box 
-                    sx={{ 
-                      width: 20, 
-                      height: 20, 
-                      borderRadius: '50%', 
-                      mr: 1,
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      bgcolor: currentProcessingModel === model ? 'primary.main' : (Object.keys(responses || {}).includes(model) ? 'success.main' : 'grey.300')
-                    }}
-                  >
-                    {currentProcessingModel === model && <CircularProgress size={16} color="inherit" />}
+            {localStorage.getItem('useParallelProcessing') === 'true' ? (
+              <Paper 
+                elevation={1} 
+                sx={{ 
+                  mt: 2, 
+                  p: 2, 
+                  width: '100%', 
+                  maxWidth: 600,
+                  border: '1px dashed #2196f3',
+                  bgcolor: 'rgba(33, 150, 243, 0.05)'
+                }}
+              >
+                <Typography variant="subtitle2" sx={{ mb: 1, color: '#2196f3' }}>
+                  <span role="img" aria-label="Parallel">⚡</span> Parallel Processing Active
+                </Typography>
+                <Typography variant="body2" color="textSecondary" sx={{ mb: 1 }}>
+                  {parallelProgress.completed > 0 
+                    ? `${parallelProgress.completed} of ${parallelProgress.total} models processed simultaneously`
+                    : 'All models are being processed simultaneously for faster results.'}
+                </Typography>
+                
+                {/* Progress bar */}
+                {parallelProgress.total > 0 && (
+                  <Box sx={{ mb: 2 }}>
+                    <LinearProgress 
+                      variant="determinate" 
+                      value={(parallelProgress.completed / parallelProgress.total) * 100}
+                      sx={{ 
+                        height: 10,
+                        borderRadius: 5,
+                        '& .MuiLinearProgress-bar': {
+                          backgroundColor: '#2196f3'
+                        }
+                      }} 
+                    />
+                    <Typography variant="caption" sx={{ display: 'block', mt: 0.5, textAlign: 'right' }}>
+                      {Math.round((parallelProgress.completed / parallelProgress.total) * 100)}% complete
+                    </Typography>
                   </Box>
-                  <Typography 
-                    variant="body2" 
-                    color={currentProcessingModel === model ? 'primary' : (Object.keys(responses || {}).includes(model) ? 'success.main' : 'textSecondary')}
-                    sx={{ fontWeight: currentProcessingModel === model ? 'bold' : 'normal' }}
-                  >
-                    {model}
-                    {currentProcessingModel === model && ' (processing...'}
-                    {(currentProcessingModel === model || Object.keys(responses || {}).includes(model)) && 
-                      ` ${formatElapsedTime(elapsedTimes[model] || 0)}`}
-                    {currentProcessingModel === model && ')'}
-                    {Object.keys(responses || {}).includes(model) && ` (completed in ${formatElapsedTime(elapsedTimes[model] || 0)})`}
-                  </Typography>
+                )}
+                
+                {/* Model status chips */}
+                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, maxHeight: 120, overflowY: 'auto' }}>
+                  {[...new Set(Object.keys(parallelProgress.models))].map(model => {
+                    const data = parallelProgress.models[model];
+                    return (
+                      <Chip 
+                        key={model}
+                        label={model} 
+                        size="small"
+                        color={data.status === 'completed' ? 'success' : 'primary'}
+                        variant={data.status === 'completed' ? 'filled' : 'outlined'}
+                        sx={{ 
+                          animation: data.status === 'completed' ? 'none' : 'pulse 1.5s infinite',
+                          '@keyframes pulse': {
+                            '0%': { opacity: 0.6 },
+                            '50%': { opacity: 1 },
+                            '100%': { opacity: 0.6 }
+                          }
+                        }}
+                      />
+                    );
+                  })}
                 </Box>
-              ))}
-            </Box>
+              </Paper>
+            ) : (
+              <Box sx={{ mt: 2 }}>
+                {(selectedModels || []).map(model => (
+                  <Box key={model} sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
+                    <Box 
+                      sx={{ 
+                        width: 20, 
+                        height: 20, 
+                        borderRadius: '50%', 
+                        mr: 1,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        bgcolor: currentProcessingModel === model ? 'primary.main' : (Object.keys(responses || {}).includes(model) ? 'success.main' : 'grey.300')
+                      }}
+                    >
+                      {currentProcessingModel === model && <CircularProgress size={16} color="inherit" />}
+                    </Box>
+                    <Typography 
+                      variant="body2" 
+                      color={currentProcessingModel === model ? 'primary' : (Object.keys(responses || {}).includes(model) ? 'success.main' : 'textSecondary')}
+                      sx={{ fontWeight: currentProcessingModel === model ? 'bold' : 'normal' }}
+                    >
+                      {model}
+                      {currentProcessingModel === model && ' (processing...'}
+                      {(currentProcessingModel === model || Object.keys(responses || {}).includes(model)) && 
+                        ` ${formatElapsedTime(elapsedTimes[model] || 0)}`}
+                      {currentProcessingModel === model && ')'}
+                      {Object.keys(responses || {}).includes(model) && ` (completed in ${formatElapsedTime(elapsedTimes[model] || 0)})`}
+                    </Typography>
+                  </Box>
+                ))}
+              </Box>
+            )}
           </Box>
         )}
       </Box>

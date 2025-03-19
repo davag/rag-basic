@@ -11,6 +11,7 @@ import { createLlmInstance } from './apiServices';
  * @param {Function} getSystemPromptForModel - Function to get system prompt for a model
  * @param {Function} getTemperatureForModel - Function to get temperature for a model
  * @param {Array} sources - Array of sources to include with results
+ * @param {Function} onProgress - Optional callback for progress updates
  * @returns {Object} - Object mapping model names to results
  */
 export const processModelsInParallel = async (
@@ -19,12 +20,29 @@ export const processModelsInParallel = async (
   {
     getSystemPromptForModel = () => '',
     getTemperatureForModel = () => 0,
-    sources = []
+    sources = [],
+    onProgress = null
   }
 ) => {
   // Create an array of promises for querying multiple models in parallel
-  const promises = (models || []).map(async (modelName) => {
+  const promises = (models || []).map(async (modelName, index) => {
     const startTime = Date.now();
+    
+    // Report start of processing if callback exists
+    if (onProgress) {
+      onProgress({
+        model: modelName,
+        status: 'started',
+        current: index + 1,
+        total: models.length,
+        progress: {
+          completed: 0,
+          pending: models.length,
+          total: models.length
+        }
+      });
+    }
+    
     try {
       // Get Ollama endpoint from localStorage
       const ollamaEndpoint = localStorage.getItem('ollamaEndpoint') || 'http://localhost:11434';
@@ -43,6 +61,21 @@ export const processModelsInParallel = async (
       
       // Get the answer text, handling both object and string responses
       const answerText = answer && typeof answer === 'object' ? answer.text : (answer || '');
+      
+      // Report completion if callback exists
+      if (onProgress) {
+        onProgress({
+          model: modelName,
+          status: 'completed',
+          current: index + 1,
+          total: models.length,
+          progress: {
+            completed: index + 1,
+            pending: models.length - (index + 1),
+            total: models.length
+          }
+        });
+      }
       
       return {
         modelName,
@@ -75,6 +108,21 @@ export const processModelsInParallel = async (
         errorMessage = 'Request timed out. Please try again.';
       } else if (error.message?.includes('unauthorized') || error.message?.includes('401')) {
         errorMessage = 'Authentication error. Please check your API keys.';
+      }
+      
+      // Report error if callback exists
+      if (onProgress) {
+        onProgress({
+          model: modelName,
+          status: 'error',
+          current: index + 1,
+          total: models.length,
+          progress: {
+            completed: index + 1,
+            pending: models.length - (index + 1),
+            total: models.length
+          }
+        });
       }
       
       return {
