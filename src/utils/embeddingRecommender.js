@@ -53,16 +53,70 @@ const calculateComplexity = (text) => {
 };
 
 /**
+ * Get model-specific chunk configurations
+ * @returns {Object} Mapping of model names to their optimal chunk configurations
+ */
+export const getModelChunkConfigs = () => ({
+  // OpenAI models
+  'text-embedding-3-small': {
+    chunkSize: 1000,
+    chunkOverlap: 200,
+    maxTokens: 8191,
+    maxChunkSize: 4000,  // ~1000 tokens
+    maxChunkOverlap: 800, // 20% of max chunk size
+    description: 'Optimized for general text with good performance and cost efficiency'
+  },
+  'text-embedding-3-large': {
+    chunkSize: 2000,
+    chunkOverlap: 400,
+    maxTokens: 8191,
+    maxChunkSize: 8000,  // ~2000 tokens
+    maxChunkOverlap: 1600, // 20% of max chunk size
+    description: 'Better for complex technical content and longer context'
+  },
+  
+  // Azure OpenAI models (inherit from OpenAI)
+  'azure-text-embedding-3-small': {
+    chunkSize: 1000,
+    chunkOverlap: 200,
+    maxTokens: 8191,
+    maxChunkSize: 4000,  // ~1000 tokens
+    maxChunkOverlap: 800, // 20% of max chunk size
+    description: 'Azure-hosted version of text-embedding-3-small'
+  },
+  'azure-text-embedding-3-large': {
+    chunkSize: 2000,
+    chunkOverlap: 400,
+    maxTokens: 8191,
+    maxChunkSize: 8000,  // ~2000 tokens
+    maxChunkOverlap: 1600, // 20% of max chunk size
+    description: 'Azure-hosted version of text-embedding-3-large'
+  },
+  
+  // Ollama models
+  'nomic-embed-text': {
+    chunkSize: 512,
+    chunkOverlap: 100,
+    maxTokens: 2048,
+    maxChunkSize: 2048,  // ~512 tokens
+    maxChunkOverlap: 400, // 20% of max chunk size
+    description: 'Local inference model optimized for shorter chunks'
+  }
+});
+
+/**
  * Recommend the most suitable embedding model based on document characteristics
  * @param {Array} documents - Array of document objects with pageContent
- * @returns {Object} Recommendation details
+ * @returns {Object} Recommendation details including chunk configuration
  */
 export const recommendEmbeddingModel = (documents) => {
   if (!documents || documents.length === 0) {
+    const defaultConfig = getModelChunkConfigs()['text-embedding-3-small'];
     return {
       model: 'text-embedding-3-small',
       confidence: 1,
-      reason: 'No documents provided. Defaulting to small model for cost efficiency.'
+      reason: 'No documents provided. Defaulting to small model for cost efficiency.',
+      chunkConfig: defaultConfig
     };
   }
 
@@ -93,8 +147,11 @@ export const recommendEmbeddingModel = (documents) => {
     avgScientificScore * 0.3 // Scientific content weight
   ));
 
-  // Decision making
+  // Decision making with chunk configurations
+  const modelConfigs = getModelChunkConfigs();
+  
   if (complexityScore > 0.5 || totalWords > 100000) {
+    const config = modelConfigs['text-embedding-3-large'];
     return {
       model: 'text-embedding-3-large',
       confidence: complexityScore,
@@ -102,15 +159,20 @@ export const recommendEmbeddingModel = (documents) => {
         complexityScore > 0.5 ? 'high content complexity' : 'large document volume'
       }. Content analysis shows ${
         Math.round(avgTechnicalScore * 100)}% technical and ${
-        Math.round(avgScientificScore * 100)}% scientific content.`
+        Math.round(avgScientificScore * 100)}% scientific content.`,
+      chunkConfig: config
+    };
+  } else {
+    const config = modelConfigs['text-embedding-3-small'];
+    return {
+      model: 'text-embedding-3-small',
+      confidence: 1 - complexityScore,
+      reason: `Recommended small model for ${
+        complexityScore <= 0.5 ? 'general content' : 'cost efficiency'
+      }. Content analysis shows ${
+        Math.round(avgTechnicalScore * 100)}% technical and ${
+        Math.round(avgScientificScore * 100)}% scientific content.`,
+      chunkConfig: config
     };
   }
-
-  return {
-    model: 'text-embedding-3-small',
-    confidence: 1 - complexityScore,
-    reason: `Recommended small model due to moderate content complexity. Content analysis shows ${
-      Math.round(avgTechnicalScore * 100)}% technical and ${
-      Math.round(avgScientificScore * 100)}% scientific content.`
-  };
 }; 

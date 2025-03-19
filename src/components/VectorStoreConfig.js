@@ -18,7 +18,8 @@ import {
   Accordion,
   AccordionSummary,
   AccordionDetails,
-  Link
+  Link,
+  FormHelperText
 } from '@mui/material';
 import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
@@ -26,7 +27,7 @@ import RecommendIcon from '@mui/icons-material/Recommend';
 import { RecursiveCharacterTextSplitter } from 'langchain/text_splitter';
 import { OpenAIEmbeddings } from 'langchain/embeddings/openai';
 import { MemoryVectorStore } from 'langchain/vectorstores/memory';
-import { recommendEmbeddingModel } from '../utils/embeddingRecommender';
+import { recommendEmbeddingModel, getModelChunkConfigs } from '../utils/embeddingRecommender';
 import axios from 'axios';
 
 // Custom class for Ollama embeddings
@@ -85,17 +86,57 @@ const VectorStoreConfig = ({
       const modelRec = recommendEmbeddingModel(documents);
       setRecommendation(modelRec);
       
-      // Automatically set the recommended model if confidence is high
+      // Automatically set the recommended model and chunk settings if confidence is high
       if (modelRec.confidence > 0.8) {
         setEmbeddingModel(modelRec.model);
+        setChunkSize(modelRec.chunkConfig.chunkSize);
+        setChunkOverlap(modelRec.chunkConfig.chunkOverlap);
       }
     }
   }, [documents]);
 
+  // Update chunk settings when embedding model changes
+  useEffect(() => {
+    const modelConfigs = getModelChunkConfigs();
+    const config = modelConfigs[embeddingModel];
+    if (config) {
+      setChunkSize(config.chunkSize);
+      setChunkOverlap(config.chunkOverlap);
+      if (onChunkParametersChange) {
+        onChunkParametersChange(config.chunkSize, config.chunkOverlap);
+      }
+    }
+  }, [embeddingModel, onChunkParametersChange]);
+
+  // Add function to estimate tokens (rough approximation)
+  const estimateTokens = (text) => {
+    // Rough approximation: 1 token ≈ 4 characters
+    return Math.ceil(text.length / 4);
+  };
+
+  // Validate chunk size against model's token limit
+  const validateChunkSize = (size) => {
+    const modelConfig = getModelChunkConfigs()[embeddingModel];
+    if (!modelConfig) return true;
+
+    const estimatedTokens = estimateTokens(size);
+    return estimatedTokens <= modelConfig.maxTokens;
+  };
+
   const handleChunkSizeChange = (event, newValue) => {
-    setChunkSize(newValue);
-    if (onChunkParametersChange) {
-      onChunkParametersChange(newValue, chunkOverlap);
+    if (validateChunkSize(newValue)) {
+      setChunkSize(newValue);
+      if (onChunkParametersChange) {
+        onChunkParametersChange(newValue, chunkOverlap);
+      }
+    } else {
+      // If invalid, set to max allowed size
+      const modelConfig = getModelChunkConfigs()[embeddingModel];
+      const maxChars = modelConfig.maxTokens * 4; // Convert tokens to chars
+      setChunkSize(maxChars);
+      if (onChunkParametersChange) {
+        onChunkParametersChange(maxChars, chunkOverlap);
+      }
     }
   };
 
@@ -295,42 +336,74 @@ const VectorStoreConfig = ({
       <Paper elevation={1} sx={{ p: 3, mb: 3 }}>
         <Grid container spacing={4}>
           <Grid item xs={12} md={6}>
-            <Typography gutterBottom>Chunk Size: {chunkSize}</Typography>
+            <Box display="flex" alignItems="center" mb={1}>
+              <Typography gutterBottom>Chunk Size: {chunkSize}</Typography>
+              <Tooltip title={
+                <Typography variant="body2">
+                  {getModelChunkConfigs()[embeddingModel]?.description || 
+                   'The size of each text chunk in characters. Smaller chunks are more precise but may lose context.'}
+                  <br /><br />
+                  Max tokens: {getModelChunkConfigs()[embeddingModel]?.maxTokens || 'Unknown'}
+                  <br />
+                  Max chunk size: {getModelChunkConfigs()[embeddingModel]?.maxChunkSize || 'Unknown'}
+                </Typography>
+              }>
+                <HelpOutlineIcon fontSize="small" sx={{ ml: 1, color: 'action.active' }} />
+              </Tooltip>
+            </Box>
             <Slider
               value={chunkSize}
               onChange={handleChunkSizeChange}
               min={100}
-              max={4000}
+              max={getModelChunkConfigs()[embeddingModel]?.maxChunkSize || 4000}
               step={100}
               marks={[
                 { value: 100, label: '100' },
-                { value: 2000, label: '2000' },
-                { value: 4000, label: '4000' }
+                { value: (getModelChunkConfigs()[embeddingModel]?.maxChunkSize || 4000) / 2, 
+                  label: `${Math.round((getModelChunkConfigs()[embeddingModel]?.maxChunkSize || 4000) / 2)}` },
+                { value: getModelChunkConfigs()[embeddingModel]?.maxChunkSize || 4000, 
+                  label: `${getModelChunkConfigs()[embeddingModel]?.maxChunkSize || 4000}` }
               ]}
               disabled={isProcessing}
             />
             <Typography variant="body2" color="textSecondary" sx={{ mt: 1 }}>
               The size of each text chunk in characters. Smaller chunks are more precise but may lose context.
+              Max tokens: {getModelChunkConfigs()[embeddingModel]?.maxTokens || 'Unknown'}
             </Typography>
           </Grid>
 
           <Grid item xs={12} md={6}>
-            <Typography gutterBottom>Chunk Overlap: {chunkOverlap}</Typography>
+            <Box display="flex" alignItems="center" mb={1}>
+              <Typography gutterBottom>Chunk Overlap: {chunkOverlap}</Typography>
+              <Tooltip title={
+                <Typography variant="body2">
+                  The number of characters shared between adjacent chunks. Helps maintain context across chunk boundaries.
+                  Recommended overlap is 20% of chunk size.
+                  <br /><br />
+                  Max overlap: {getModelChunkConfigs()[embeddingModel]?.maxChunkOverlap || 'Unknown'}
+                </Typography>
+              }>
+                <HelpOutlineIcon fontSize="small" sx={{ ml: 1, color: 'action.active' }} />
+              </Tooltip>
+            </Box>
             <Slider
               value={chunkOverlap}
               onChange={handleChunkOverlapChange}
               min={0}
-              max={500}
+              max={getModelChunkConfigs()[embeddingModel]?.maxChunkOverlap || 500}
               step={50}
               marks={[
                 { value: 0, label: '0' },
-                { value: 250, label: '250' },
-                { value: 500, label: '500' }
+                { value: (getModelChunkConfigs()[embeddingModel]?.maxChunkOverlap || 500) / 2, 
+                  label: `${Math.round((getModelChunkConfigs()[embeddingModel]?.maxChunkOverlap || 500) / 2)}` },
+                { value: getModelChunkConfigs()[embeddingModel]?.maxChunkOverlap || 500, 
+                  label: `${getModelChunkConfigs()[embeddingModel]?.maxChunkOverlap || 500}` }
               ]}
               disabled={isProcessing}
             />
             <Typography variant="body2" color="textSecondary" sx={{ mt: 1 }}>
               The number of characters to overlap between chunks. Helps maintain context between chunks.
+              Max overlap: {getModelChunkConfigs()[embeddingModel]?.maxChunkOverlap || 'Unknown'}
             </Typography>
           </Grid>
 
@@ -341,25 +414,23 @@ const VectorStoreConfig = ({
                 labelId="embedding-model-label"
                 id="embedding-model"
                 value={embeddingModel}
-                label="Embedding Model"
                 onChange={handleEmbeddingModelChange}
-                disabled={isProcessing}
+                label="Embedding Model"
               >
-                <MenuItem value="text-embedding-3-small">
-                  text-embedding-3-small (OpenAI) - Fast, efficient, good for most use cases
-                </MenuItem>
-                <MenuItem value="text-embedding-3-large">
-                  text-embedding-3-large (OpenAI) - Higher accuracy, better for technical/complex content
-                </MenuItem>
-                <MenuItem disabled>────── Azure OpenAI Models ──────</MenuItem>
-                <MenuItem value="azure-text-embedding-3-small">azure-text-embedding-3-small (Azure)</MenuItem>
-                <MenuItem value="azure-text-embedding-3-large">azure-text-embedding-3-large (Azure)</MenuItem>
-                <MenuItem disabled>────── Local Models ──────</MenuItem>
-                <MenuItem value="nomic-embed-text">nomic-embed-text (Ollama)</MenuItem>
+                {Object.entries(getModelChunkConfigs()).map(([model, config]) => (
+                  <MenuItem key={model} value={model}>
+                    <Box>
+                      <Typography variant="body1">{model}</Typography>
+                      <Typography variant="caption" color="textSecondary">
+                        {config.description}
+                      </Typography>
+                    </Box>
+                  </MenuItem>
+                ))}
               </Select>
-              <Typography variant="body2" color="textSecondary" sx={{ mt: 1 }}>
-                The model used to create embeddings for your documents. OpenAI models require an API key, while the Ollama option requires a local Ollama server with the nomic-embed-text model installed.
-              </Typography>
+              <FormHelperText>
+                Select the model to use for generating embeddings. Each model has optimized chunk settings.
+              </FormHelperText>
             </FormControl>
           </Grid>
         </Grid>

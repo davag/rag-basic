@@ -23,7 +23,11 @@ import {
   FormControlLabel,
   Slider,
   Stack,
-  LinearProgress
+  LinearProgress,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
@@ -75,6 +79,11 @@ const QueryInterface = ({ vectorStore, namespaces = [], onQuerySubmitted, isProc
 
   // Reference to the file input element
   const fileInputRef = useRef(null);
+
+  // Add new state for expanded prompt set and prompt
+  const [expandedPromptSet, setExpandedPromptSet] = useState(null);
+  const [expandedPrompt, setExpandedPrompt] = useState('');
+  const [expandedQueryText, setExpandedQueryText] = useState('');
 
   // Reset processing state when component is mounted or re-mounted
   useEffect(() => {
@@ -231,10 +240,26 @@ Provide feedback in these areas:
 4. Potential edge cases
 5. Performance optimization
 
-Format your response in a clear, structured way.`;
+Format your response in a clear, structured way. Focus on actionable improvements and specific examples.`;
       
       const response = await llm.invoke(prompt);
-      setPromptIdeas(response);
+      
+      // Extract the relevant parts from the response
+      const sections = response.split('\n\n').filter(section => 
+        section.trim().toLowerCase().includes('improvement') || 
+        section.trim().toLowerCase().includes('suggestion') ||
+        section.trim().toLowerCase().includes('recommendation') ||
+        section.trim().toLowerCase().includes('example')
+      );
+      
+      // Format the extracted sections
+      const formattedResponse = sections.map(section => {
+        // Remove any section headers that might be too generic
+        const cleanSection = section.replace(/^(improvements?|suggestions?|recommendations?|examples?):/i, '').trim();
+        return cleanSection;
+      }).join('\n\n');
+      
+      setPromptIdeas(formattedResponse);
     } catch (error) {
       console.error('Error getting prompt ideas:', error);
       setError('Failed to get prompt improvement suggestions. Please try again.');
@@ -581,6 +606,28 @@ Given the context information and not prior knowledge, answer the question: ${qu
     reader.readAsText(file);
   };
 
+  const handleExpandPrompt = (set) => {
+    setExpandedPromptSet(set);
+    setExpandedPrompt(set.systemPrompt);
+  };
+
+  const handleSaveExpandedPrompt = () => {
+    if (expandedPromptSet) {
+      handlePromptSetChange(expandedPromptSet.id, 'systemPrompt', expandedPrompt);
+      setExpandedPromptSet(null);
+    }
+  };
+
+  const handleExpandQuery = () => {
+    setExpandedQueryText(query);
+    setExpandedQuery(true);
+  };
+
+  const handleSaveExpandedQuery = () => {
+    setQuery(expandedQueryText);
+    setExpandedQuery(false);
+  };
+
   return (
     <Box>
       <Paper elevation={1} sx={{ p: 3, mb: 3 }}>
@@ -728,17 +775,31 @@ Given the context information and not prior knowledge, answer the question: ${qu
           </Select>
         </FormControl>
 
-        <TextField
-          fullWidth
-          multiline
-          rows={4}
-          variant="outlined"
-          label="Your Question"
-          value={query}
-          onChange={handleQueryChange}
-          disabled={isProcessing}
-          sx={{ mb: 3 }}
-        />
+        <Box sx={{ position: 'relative', mb: 3 }}>
+          <TextField
+            fullWidth
+            multiline
+            rows={4}
+            variant="outlined"
+            label="Your Question"
+            value={query}
+            onChange={handleQueryChange}
+            disabled={isProcessing}
+            InputProps={{
+              endAdornment: (
+                <Tooltip title="Expand editor">
+                  <IconButton
+                    size="small"
+                    onClick={handleExpandQuery}
+                    sx={{ position: 'absolute', right: 8, top: 8 }}
+                  >
+                    <FullscreenIcon fontSize="small" />
+                  </IconButton>
+                </Tooltip>
+              ),
+            }}
+          />
+        </Box>
 
         <Box sx={{ mb: 3 }}>
           <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
@@ -768,16 +829,30 @@ Given the context information and not prior knowledge, answer the question: ${qu
                 )}
               </Box>
               
-              <TextField
-                fullWidth
-                multiline
-                rows={3}
-                label="System Prompt"
-                value={set.systemPrompt}
-                onChange={(e) => handlePromptSetChange(set.id, 'systemPrompt', e.target.value)}
-                disabled={isProcessing}
-                sx={{ mb: 2 }}
-              />
+              <Box sx={{ position: 'relative', mb: 2 }}>
+                <TextField
+                  fullWidth
+                  multiline
+                  rows={6}
+                  label="System Prompt"
+                  value={set.systemPrompt}
+                  onChange={(e) => handlePromptSetChange(set.id, 'systemPrompt', e.target.value)}
+                  disabled={isProcessing}
+                  InputProps={{
+                    endAdornment: (
+                      <Tooltip title="Expand editor">
+                        <IconButton
+                          size="small"
+                          onClick={() => handleExpandPrompt(set)}
+                          sx={{ position: 'absolute', right: 8, top: 8 }}
+                        >
+                          <FullscreenIcon fontSize="small" />
+                        </IconButton>
+                      </Tooltip>
+                    ),
+                  }}
+                />
+              </Box>
               
               <Box>
                 <Typography id={`temperature-slider-${set.id}`} gutterBottom>
@@ -824,7 +899,7 @@ Given the context information and not prior knowledge, answer the question: ${qu
         {/* Display prompt improvement ideas */}
         {promptIdeas && (
           <Paper elevation={1} sx={{ p: 3, mb: 3, mt: 2, bgcolor: '#f8f9fa' }}>
-            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
               <Typography variant="h6" gutterBottom>
                 <LightbulbIcon sx={{ mr: 1, verticalAlign: 'middle', color: '#FFC107' }} />
                 Prompt Feedback
@@ -836,6 +911,39 @@ Given the context information and not prior knowledge, answer the question: ${qu
               </Box>
             </Box>
             <Divider sx={{ mb: 2 }} />
+            
+            <Box sx={{ display: 'flex', gap: 2, mb: 2 }}>
+              <Button
+                variant="outlined"
+                color="primary"
+                onClick={() => {
+                  if (promptSets[0]) {
+                    handlePromptSetChange(promptSets[0].id, 'systemPrompt', promptIdeas);
+                    setPromptIdeas(null);
+                  }
+                }}
+                startIcon={<SaveIcon />}
+              >
+                Apply to Current Set
+              </Button>
+              <Button
+                variant="outlined"
+                color="primary"
+                onClick={() => {
+                  const newSet = {
+                    id: promptSets.length + 1,
+                    systemPrompt: promptIdeas,
+                    temperature: 0
+                  };
+                  setPromptSets(prev => [...prev, newSet]);
+                  setPromptIdeas(null);
+                }}
+                startIcon={<AddIcon />}
+              >
+                Create New Set
+              </Button>
+            </Box>
+
             <Typography 
               variant="body1" 
               sx={{ 
@@ -844,11 +952,25 @@ Given the context information and not prior knowledge, answer the question: ${qu
                 lineHeight: 1.7,
                 maxHeight: '400px',
                 overflowY: 'auto',
-                p: 1
+                p: 2,
+                bgcolor: 'white',
+                borderRadius: 1,
+                border: '1px solid #e0e0e0'
               }}
             >
               {promptIdeas}
             </Typography>
+
+            <Box sx={{ mt: 2, display: 'flex', justifyContent: 'flex-end' }}>
+              <Button
+                variant="text"
+                color="primary"
+                onClick={() => setPromptIdeas(null)}
+                startIcon={<CloseIcon />}
+              >
+                Close
+              </Button>
+            </Box>
           </Paper>
         )}
       </Paper>
@@ -988,6 +1110,72 @@ Given the context information and not prior knowledge, answer the question: ${qu
           <Alert severity="error">{error}</Alert>
         </Box>
       )}
+
+      {/* Add the query dialog */}
+      <Dialog
+        open={expandedQuery}
+        onClose={() => setExpandedQuery(false)}
+        maxWidth="md"
+        fullWidth
+      >
+        <DialogTitle>
+          Edit Your Question
+        </DialogTitle>
+        <DialogContent>
+          <TextField
+            fullWidth
+            multiline
+            rows={15}
+            label="Your Question"
+            value={expandedQueryText}
+            onChange={(e) => setExpandedQueryText(e.target.value)}
+            disabled={isProcessing}
+            sx={{ mt: 2 }}
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setExpandedQuery(false)}>Cancel</Button>
+          <Button 
+            onClick={handleSaveExpandedQuery}
+            variant="contained"
+          >
+            Save Changes
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Add the dialog component */}
+      <Dialog
+        open={!!expandedPromptSet}
+        onClose={() => setExpandedPromptSet(null)}
+        maxWidth="md"
+        fullWidth
+      >
+        <DialogTitle>
+          Edit System Prompt - Set {expandedPromptSet?.id}
+        </DialogTitle>
+        <DialogContent>
+          <TextField
+            fullWidth
+            multiline
+            rows={15}
+            label="System Prompt"
+            value={expandedPrompt}
+            onChange={(e) => setExpandedPrompt(e.target.value)}
+            disabled={isProcessing}
+            sx={{ mt: 2 }}
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setExpandedPromptSet(null)}>Cancel</Button>
+          <Button 
+            onClick={handleSaveExpandedPrompt}
+            variant="contained"
+          >
+            Save Changes
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 };
