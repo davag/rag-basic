@@ -187,4 +187,108 @@ module.exports = function(app) {
       logLevel: 'debug'
     })
   );
+
+  // Proxy Azure OpenAI API requests
+  app.use(
+    '/api/proxy/azure',
+    createProxyMiddleware({
+      target: 'https://api.openai.com', // This will be overridden by the actual Azure endpoint
+      changeOrigin: true,
+      router: function(req) {
+        // Get the Azure endpoint from the request body
+        const endpoint = req.body.azureEndpoint;
+        if (!endpoint) {
+          throw new Error('Azure endpoint is required');
+        }
+        // Remove trailing slash if present
+        return endpoint.endsWith('/') ? endpoint.slice(0, -1) : endpoint;
+      },
+      pathRewrite: function(path, req) {
+        // Get the deployment name and API version from the request body
+        const deploymentName = req.body.deploymentName;
+        const apiVersion = req.body.apiVersion || '2024-02-15-preview';
+        
+        // Construct the Azure OpenAI path
+        return `/openai/deployments/${deploymentName}/chat/completions?api-version=${apiVersion}`;
+      },
+      onProxyReq: function(proxyReq, req) {
+        if (req.method === 'POST' && req.body) {
+          const apiKey = req.body.azureApiKey;
+          const deploymentName = req.body.deploymentName;
+
+          if (!apiKey || !deploymentName) {
+            global.console.error('Missing required Azure OpenAI parameters:', {
+              hasApiKey: !!apiKey,
+              hasDeploymentName: !!deploymentName
+            });
+            return;
+          }
+
+          // Set the API key header
+          proxyReq.setHeader('api-key', apiKey);
+          proxyReq.setHeader('Content-Type', 'application/json');
+
+          // Remove Azure-specific fields from the body
+          const modifiedBody = { ...req.body };
+          delete modifiedBody.azureApiKey;
+          delete modifiedBody.azureEndpoint;
+          delete modifiedBody.deploymentName;
+          delete modifiedBody.apiVersion;
+
+          // Convert the modified body to a string
+          const bodyData = JSON.stringify(modifiedBody);
+
+          // Log the modified request (without sensitive data)
+          global.console.log('Azure OpenAI request:', {
+            deploymentName: deploymentName,
+            bodyLength: bodyData.length,
+            hasMessages: !!modifiedBody.messages
+          });
+
+          // Set the correct content length
+          proxyReq.setHeader('Content-Length', Buffer.byteLength(bodyData));
+
+          // Write the body to the request
+          proxyReq.write(bodyData);
+        }
+      },
+      onProxyRes: function(proxyRes) {
+        // Add CORS headers
+        proxyRes.headers['Access-Control-Allow-Origin'] = '*';
+        proxyRes.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS';
+        proxyRes.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, api-key';
+
+        // Log response status
+        global.console.log('Azure OpenAI response status:', proxyRes.statusCode);
+
+        // Log error responses
+        if (proxyRes.statusCode !== 200) {
+          let responseBody = '';
+          proxyRes.on('data', chunk => {
+            responseBody += chunk;
+          });
+
+          proxyRes.on('end', () => {
+            try {
+              if (responseBody.trim().startsWith('{')) {
+                const parsedBody = JSON.parse(responseBody);
+                if (parsedBody.error) {
+                  global.console.error('Azure OpenAI API error:', parsedBody.error);
+                }
+              }
+            } catch (e) {
+              global.console.error('Error parsing Azure OpenAI response:', e);
+            }
+          });
+        }
+      },
+      onError: function(err, req, res) {
+        global.console.error('Azure OpenAI Proxy Error:', err);
+        res.status(500).json({ error: 'Proxy error', message: err.message });
+      },
+      proxyTimeout: 30000,
+      timeout: 30000,
+      logLevel: 'debug'
+    })
+  );
 }; 

@@ -80,11 +80,11 @@ const EmbeddingQualityAnalysis = ({
   const [rowsPerPage, setRowsPerPage] = useState(10);
   const [previousResults, setPreviousResults] = useState(null);
 
-  // Calculate cosine similarity between two vectors
-  const cosineSimilarity = (vec1, vec2) => {
-    const dotProduct = vec1.reduce((acc, val, i) => acc + val * vec2[i], 0);
-    const norm1 = Math.sqrt(vec1.reduce((acc, val) => acc + val * val, 0));
-    const norm2 = Math.sqrt(vec2.reduce((acc, val) => acc + val * val, 0));
+  // Helper function to calculate cosine similarity
+  const calculateCosineSimilarity = (vector1, vector2) => {
+    const dotProduct = vector1.reduce((sum, val, i) => sum + val * vector2[i], 0);
+    const norm1 = Math.sqrt(vector1.reduce((sum, val) => sum + val * val, 0));
+    const norm2 = Math.sqrt(vector2.reduce((sum, val) => sum + val * val, 0));
     return dotProduct / (norm1 * norm2);
   };
 
@@ -107,7 +107,7 @@ const EmbeddingQualityAnalysis = ({
       const pairs = [];
       for (let i = 0; i < embeddings.length; i++) {
         for (let j = i + 1; j < embeddings.length; j++) {
-          const similarity = cosineSimilarity(embeddings[i], embeddings[j]);
+          const similarity = calculateCosineSimilarity(embeddings[i], embeddings[j]);
           pairs.push({
             i,
             j,

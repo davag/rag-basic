@@ -175,8 +175,7 @@ const ResponseComparison = ({
     // OpenAI models (green)
     'gpt-4o': '#10a37f',
     'gpt-4o-mini': '#10a37f',
-    'o1-mini': '#10a37f',
-    'o1-preview': '#10a37f',
+    'o3-mini': '#10a37f',
     
     // Anthropic models (purple)
     'claude-3-5-sonnet-latest': '#5436da',
@@ -190,7 +189,7 @@ const ResponseComparison = ({
 
   const getModelVendor = (model) => {
     if (model.includes('azure-')) return 'AzureOpenAI';
-    if (model.startsWith('gpt') || model.startsWith('o1') || model.startsWith('o3')) return 'OpenAI';
+    if (model.startsWith('gpt') || model.startsWith('o3')) return 'OpenAI';
     if (model.startsWith('claude')) return 'Anthropic';
     if (model.includes('llama') || model.includes('mistral') || model.includes('gemma')) return 'Ollama';
     

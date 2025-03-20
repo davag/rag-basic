@@ -195,7 +195,7 @@ const getReliableValidatorModel = (preferredModel) => {
   ];
   
   // Avoid using problematic models for validation
-  const problematicModels = ['o3-mini', 'o1-mini'];
+  const problematicModels = ['o3-mini'];
   
   // Check if preferred model is problematic
   if (preferredModel && problematicModels.includes(preferredModel)) {
@@ -1866,22 +1866,28 @@ const ResponseValidation = ({
                                   const baseModel = setMatch[2]; // e.g., "gpt-4o-mini"
                                   
                                   // Try to get response from nested structure
-                                  if (responses[setName] && responses[setName][baseModel]) {
+                                  if (responses && responses[setName] && responses[setName][baseModel]) {
                                     response = responses[setName][baseModel];
                                     console.log(`Found response in ${setName} for ${baseModel}`);
                                   }
-                                  // Fallback to direct lookup
-                                  else if (responses[model]) {
+                                  // Fallback to direct lookup with full model name
+                                  else if (responses && responses[model]) {
                                     response = responses[model];
                                     console.log(`Found response with full model name ${model}`);
                                   }
-                                  else if (responses[baseModel]) {
+                                  // Fallback to base model name
+                                  else if (responses && responses[baseModel]) {
                                     response = responses[baseModel];
                                     console.log(`Found response with base model name ${baseModel}`);
                                   }
+                                  // Try dot notation
+                                  else if (responses && responses[`${setName}.${baseModel}`]) {
+                                    response = responses[`${setName}.${baseModel}`];
+                                    console.log(`Found response with dot notation ${setName}.${baseModel}`);
+                                  }
                                 } else {
                                   // Try direct lookup if no Set prefix
-                                  response = responses[model];
+                                  response = responses && responses[model];
                                   console.log(`Attempting direct lookup for ${model}`);
                                 }
                                 
@@ -1889,7 +1895,8 @@ const ResponseValidation = ({
                                 console.log(`Response lookup for model ${model}:`, {
                                   fullModel: model,
                                   setMatch: setMatch,
-                                  response: response
+                                  response: response,
+                                  responsesKeys: responses ? Object.keys(responses) : []
                                 });
                                 
                                 if (!response) {

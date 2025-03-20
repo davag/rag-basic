@@ -133,18 +133,16 @@ app.post('/api/proxy/openai/:endpoint(*)', async (req, res) => {
 });
 
 // Proxy endpoint for Azure OpenAI API to avoid CORS issues
-app.post('/api/proxy/azure/:endpoint(*)', async (req, res) => {
+app.post('/api/proxy/azure/chat/completions', async (req, res) => {
   try {
     // Extract the Azure OpenAI API key and endpoint from the request
     const apiKey = req.body.azureApiKey;
     const endpoint = req.body.azureEndpoint;
-    const apiVersion = req.body.apiVersion || process.env.REACT_APP_AZURE_OPENAI_API_VERSION || '2023-05-15';
+    const apiVersion = req.body.apiVersion || process.env.REACT_APP_AZURE_OPENAI_API_VERSION || '2024-02-15-preview';
     const deploymentName = req.body.deploymentName;
     
     console.log('[DEBUG] Azure API Proxy Request:');
     console.log(`- Request URL: ${req.originalUrl}`);
-    console.log(`- Request params: ${JSON.stringify(req.params)}`);
-    console.log(`- Endpoint path parameter: ${req.params.endpoint}`);
     console.log(`- Azure endpoint: ${endpoint}`);
     console.log(`- Deployment name: ${deploymentName}`);
     console.log(`- API version: ${apiVersion}`);
@@ -187,14 +185,16 @@ app.post('/api/proxy/azure/:endpoint(*)', async (req, res) => {
       });
     }
     
+    // Special handling for o3-mini-alpha model
+    if (deploymentName === 'o3-mini-alpha') {
+      console.warn('[AZURE WARNING] Using preview model o3-mini-alpha');
+    }
+    
     // Remove the API key, endpoint and other Azure-specific fields from the request body
     const { azureApiKey, azureEndpoint, apiVersion: _, deploymentName: __, ...requestBody } = req.body;
     
-    // Get the endpoint from the URL parameter
-    const endpointPath = req.params.endpoint;
-    
     // Log detailed request info
-    console.log(`Proxying Azure OpenAI request to: ${endpoint}/openai/deployments/${deploymentName}/${endpointPath}?api-version=${apiVersion}`);
+    console.log(`Proxying Azure OpenAI request to: ${endpoint}/openai/deployments/${deploymentName}/chat/completions?api-version=${apiVersion}`);
     console.log('Request body structure:', {
       messagesCount: requestBody.messages?.length,
       maxTokens: requestBody.max_tokens,
@@ -208,7 +208,7 @@ app.post('/api/proxy/azure/:endpoint(*)', async (req, res) => {
     }
     
     // Construct the full target URL
-    const targetUrl = `${formattedEndpoint}/openai/deployments/${deploymentName}/${endpointPath}?api-version=${apiVersion}`;
+    const targetUrl = `${formattedEndpoint}/openai/deployments/${deploymentName}/chat/completions?api-version=${apiVersion}`;
     console.log(`[DEBUG] Final Azure API target URL: ${targetUrl}`);
     
     // Make the request to Azure OpenAI API
@@ -247,13 +247,22 @@ app.post('/api/proxy/azure/:endpoint(*)', async (req, res) => {
         console.error('[AZURE ERROR] Response status:', error.response.status);
         console.error('[AZURE ERROR] Response data:', JSON.stringify(error.response.data, null, 2));
         
+        // Handle 400 Bad Request errors
+        if (error.response.status === 400) {
+          console.error('[AZURE ERROR] Bad Request:', error.response.data);
+          return res.status(400).json(error.response.data);
+        }
+        
+        // Handle 404 Not Found errors
         if (error.response.status === 404) {
-          console.error('[AZURE ERROR] 404 Not Found - Check your deployment name and endpoint URL');
-          console.error(`Deployment name: "${deploymentName}"`);
-          console.error(`Endpoint: "${endpoint}"`);
-          console.error(`API version: "${apiVersion}"`);
-        } else if (error.response.status === 401) {
-          console.error('[AZURE ERROR] 401 Unauthorized - Check your API key');
+          console.error('[AZURE ERROR] Deployment not found:', error.response.data);
+          return res.status(404).json(error.response.data);
+        }
+        
+        // Handle 401 Unauthorized errors
+        if (error.response.status === 401) {
+          console.error('[AZURE ERROR] Unauthorized:', error.response.data);
+          return res.status(401).json(error.response.data);
         }
       } else if (error.request) {
         console.error('[AZURE ERROR] No response received. Request:', error.request);

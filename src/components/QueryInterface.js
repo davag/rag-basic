@@ -719,8 +719,6 @@ Given the context information and not prior knowledge, answer the question: ${qu
             </MenuItem>
             <MenuItem value="gpt-4o">GPT-4o</MenuItem>
             <MenuItem value="gpt-4o-mini">GPT-4o-mini</MenuItem>
-            <MenuItem value="o1-mini">o1-mini</MenuItem>
-            <MenuItem value="o1-preview">o1-preview</MenuItem>
             <MenuItem value="o3-mini">o3-mini</MenuItem>
             <Divider />
             <MenuItem disabled>
@@ -741,7 +739,6 @@ Given the context information and not prior knowledge, answer the question: ${qu
             </MenuItem>
             <MenuItem value="azure-gpt-4o">Azure GPT-4o</MenuItem>
             <MenuItem value="azure-gpt-4o-mini">Azure GPT-4o-mini</MenuItem>
-            <MenuItem value="azure-o1-mini">Azure o1-mini</MenuItem>
             <MenuItem value="azure-o3-mini">Azure o3-mini</MenuItem>
           </Select>
         </FormControl>

@@ -333,19 +333,14 @@ export class CustomAzureOpenAI {
     safeLogger.log(`Temperature setting: ${this.temperature}`);
   }
 
-  async call(messages) {
+  async call(messages, options = {}) {
     try {
-      // Format messages for OpenAI API
+      // Remove special handling for o1-mini since it's not available
       const formattedMessages = messages.map(msg => ({
-        role: msg.role || 'user',
+        role: msg.role,
         content: msg.content
       }));
-      
-      // Add system message if provided
-      const allMessages = this.systemPrompt 
-        ? [{ role: 'system', content: this.systemPrompt }, ...formattedMessages]
-        : formattedMessages;
-      
+
       // Make sure we have an API key and endpoint
       const apiKey = this.apiKey || process.env.REACT_APP_AZURE_OPENAI_API_KEY;
       const endpoint = this.endpoint || process.env.REACT_APP_AZURE_OPENAI_ENDPOINT;
@@ -360,12 +355,20 @@ export class CustomAzureOpenAI {
         throw new Error('Azure OpenAI endpoint is required. Please set REACT_APP_AZURE_OPENAI_ENDPOINT in your environment variables.');
       }
       
+      // Special handling for o3-mini model which doesn't exist
+      let finalDeploymentName = this.deploymentName;
+      if (this.deploymentName === 'o3-mini') {
+        // Fallback to gpt-4o-mini for o3-mini requests
+        console.warn('[AZURE WARNING] o3-mini deployment not found, falling back to gpt-4o-mini');
+        finalDeploymentName = 'gpt-4o-mini';
+      }
+      
       // Use safe logger and also log to console for debugging
       safeLogger.log('Sending Azure OpenAI request:', {
         endpoint: `${this.proxyUrl}/chat/completions`,
         modelName: this.modelName,
-        deploymentName: this.deploymentName,
-        messageCount: allMessages.length,
+        deploymentName: finalDeploymentName,
+        messageCount: formattedMessages.length,
         hasSystemPrompt: !!this.systemPrompt,
         temperature: this.temperature
       });
@@ -373,20 +376,20 @@ export class CustomAzureOpenAI {
       // Log detailed request info
       console.log('[DEBUG] Azure API Request Details:');
       console.log(`- Proxy URL: ${this.proxyUrl}/chat/completions`);
-      console.log(`- Deployment Name: ${this.deploymentName}`);
-      console.log(`- Message Count: ${allMessages.length}`);
-      console.log(`- First message role: ${allMessages[0]?.role}`);
+      console.log(`- Deployment Name: ${finalDeploymentName}`);
+      console.log(`- Message Count: ${formattedMessages.length}`);
+      console.log(`- First message role: ${formattedMessages[0]?.role}`);
       console.log(`- API Key first 5 chars: ${apiKey.substring(0, 5)}...`);
       console.log(`- Endpoint: ${endpoint}`);
       
       // Use proxy endpoint to avoid CORS
       const requestData = {
-        model: this.deploymentName,
-        messages: allMessages,
+        model: finalDeploymentName,
+        messages: formattedMessages,
         azureApiKey: apiKey,
         azureEndpoint: endpoint,
-        apiVersion: process.env.REACT_APP_AZURE_OPENAI_API_VERSION || '2023-05-15',
-        deploymentName: this.deploymentName
+        apiVersion: process.env.REACT_APP_AZURE_OPENAI_API_VERSION || '2024-02-15-preview',
+        deploymentName: finalDeploymentName
       };
       
       // Add temperature if specified
@@ -530,9 +533,15 @@ export const createLlmInstance = (model, systemPrompt, options = {}) => {
     
     // Specific mapping for known Azure models that need different deployment names
     const azureDeploymentMap = {
-      'gpt-4o': 'gpt-4o',
-      'gpt-4o-mini': 'gpt-4o-mini',
-      'gpt-35-turbo': 'gpt-35-turbo'
+      // Standard GPT-4 models
+      'gpt-4': 'gpt-4o',           // Map gpt-4 to gpt-4o deployment
+      'gpt-4o': 'gpt-4o',          // Direct mapping for gpt-4o
+      'gpt-4o-mini': 'gpt-4o-mini', // Direct mapping for gpt-4o-mini
+      'o3-mini': 'gpt-4o-mini',     // Map o3-mini to gpt-4o-mini deployment
+      'azure-gpt-4o-mini': 'gpt-4o-mini', // Handle azure- prefix
+      'azure-o3-mini': 'gpt-4o-mini',      // Handle azure- prefix
+      'GPT-4o-mini': 'gpt-4o-mini',        // Handle case sensitivity
+      'O3-mini': 'gpt-4o-mini'             // Handle case sensitivity
     };
     
     // If we have a mapping for this model name, use it
@@ -798,14 +807,6 @@ export const calculateCost = (model, tokenCount) => {
       input: 0.15,
       output: 0.6
     },
-    'o1-mini': {
-      input: 0.15,
-      output: 0.6
-    },
-    'o1-preview': {
-      input: 5.0,
-      output: 15.0
-    },
     'o3-mini': {
       input: 0.5,
       output: 1.5
@@ -817,10 +818,6 @@ export const calculateCost = (model, tokenCount) => {
       output: 15.0
     },
     'azure-gpt-4o-mini': {
-      input: 0.15,
-      output: 0.6
-    },
-    'azure-o1-mini': {
       input: 0.15,
       output: 0.6
     },

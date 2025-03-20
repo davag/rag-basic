@@ -26,14 +26,11 @@ const MODEL_CONTEXT_SIZES = {
   // OpenAI models
   'gpt-4o': 128000,
   'gpt-4o-mini': 128000,
-  'o1-mini': 128000,
-  'o1-preview': 128000,
   'o3-mini': 128000,  // New O3 model
   
   // Azure OpenAI models (same sizes as their OpenAI counterparts)
   'azure-gpt-4o': 128000,
   'azure-gpt-4o-mini': 128000,
-  'azure-o1-mini': 128000,
   'azure-o3-mini': 128000,
   
   // Anthropic models
