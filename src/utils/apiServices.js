@@ -335,11 +335,22 @@ export class CustomAzureOpenAI {
 
   async call(messages, options = {}) {
     try {
-      // Remove special handling for o1-mini since it's not available
-      const formattedMessages = messages.map(msg => ({
-        role: msg.role,
+      // Format messages ensuring system message is first if present
+      let formattedMessages = [];
+      
+      // Add system message if present
+      if (this.systemPrompt) {
+        formattedMessages.push({
+          role: 'system',
+          content: this.systemPrompt
+        });
+      }
+      
+      // Add user messages
+      formattedMessages = formattedMessages.concat(messages.map(msg => ({
+        role: msg.role || 'user',
         content: msg.content
-      }));
+      })));
 
       // Make sure we have an API key and endpoint
       const apiKey = this.apiKey || process.env.REACT_APP_AZURE_OPENAI_API_KEY;
@@ -537,11 +548,9 @@ export const createLlmInstance = (model, systemPrompt, options = {}) => {
       'gpt-4': 'gpt-4o',           // Map gpt-4 to gpt-4o deployment
       'gpt-4o': 'gpt-4o',          // Direct mapping for gpt-4o
       'gpt-4o-mini': 'gpt-4o-mini', // Direct mapping for gpt-4o-mini
-      'o3-mini': 'gpt-4o-mini',     // Map o3-mini to gpt-4o-mini deployment
       'azure-gpt-4o-mini': 'gpt-4o-mini', // Handle azure- prefix
-      'azure-o3-mini': 'gpt-4o-mini',      // Handle azure- prefix
       'GPT-4o-mini': 'gpt-4o-mini',        // Handle case sensitivity
-      'O3-mini': 'gpt-4o-mini'             // Handle case sensitivity
+      'O3-mini': 'o3-mini'                  // Keep o3-mini as is
     };
     
     // If we have a mapping for this model name, use it
