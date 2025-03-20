@@ -738,7 +738,7 @@ Given the context information and not prior knowledge, answer the question: ${qu
               <Typography variant="subtitle2">Azure OpenAI Models</Typography>
             </MenuItem>
             <MenuItem value="azure-gpt-4o">Azure GPT-4o</MenuItem>
-            <MenuItem value="azure-gpt-4o-mini">Azure GPT-4o-mini</MenuItem>
+            <MenuItem value="azure-gpt-4o-mini">Azure GPT-4o Mini</MenuItem>
             <MenuItem value="azure-o3-mini">Azure o3-mini</MenuItem>
           </Select>
         </FormControl>

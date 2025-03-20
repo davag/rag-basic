@@ -165,7 +165,6 @@ const ModelDropdown = ({ value, onChange, sx = {} }) => (
     <MenuItem disabled>
       <Typography variant="subtitle2">Azure OpenAI Models</Typography>
     </MenuItem>
-    <MenuItem value="azure-gpt-4o">Azure GPT-4o</MenuItem>
     <MenuItem value="azure-gpt-4o-mini">Azure GPT-4o Mini</MenuItem>
     
     <Divider />
@@ -192,7 +191,6 @@ const getReliableValidatorModel = (preferredModel) => {
     'gpt-4o',       // Most reliable but most expensive 
     'gpt-4o-mini',  // Good balance
     'claude-3-5-sonnet-latest', // Good alternative
-    'azure-gpt-4o', // Azure option
     'azure-gpt-4o-mini' // Azure alternative
   ];
   

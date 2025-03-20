@@ -138,6 +138,88 @@ const ResponseComparison = ({
   
   // Add new state variables
   const [selectedTab, setSelectedTab] = useState('comparison');
+  const [sortConfig, setSortConfig] = useState({
+    key: 'responseTime',
+    direction: 'ascending'
+  });
+
+  // Add sort handler function
+  const handleSort = (key) => {
+    let direction = 'ascending';
+    if (sortConfig.key === key && sortConfig.direction === 'ascending') {
+      direction = 'descending';
+    }
+    setSortConfig({ key, direction });
+  };
+
+  // Add sort function
+  const sortData = (data) => {
+    if (!sortConfig.key) return data;
+    
+    return [...data].sort((a, b) => {
+      // Get metrics for both rows
+      let aMetrics = null;
+      let bMetrics = null;
+      
+      // First check for the specific structure seen in the debug panel
+      if (a.setName && metrics[a.setName] && metrics[a.setName][a.displayName]) {
+        aMetrics = metrics[a.setName][a.displayName];
+      } else if (a.setName && metrics[`${a.setName}.${a.displayName}`]) {
+        aMetrics = metrics[`${a.setName}.${a.displayName}`];
+      } else {
+        aMetrics = metrics[a.metricsKey] || metrics[a.displayName] || metrics[`${a.setName}-${a.displayName}`] || metrics[a.setName];
+      }
+      
+      if (b.setName && metrics[b.setName] && metrics[b.setName][b.displayName]) {
+        bMetrics = metrics[b.setName][b.displayName];
+      } else if (b.setName && metrics[`${b.setName}.${b.displayName}`]) {
+        bMetrics = metrics[`${b.setName}.${b.displayName}`];
+      } else {
+        bMetrics = metrics[b.metricsKey] || metrics[b.displayName] || metrics[`${b.setName}-${b.displayName}`] || metrics[b.setName];
+      }
+      
+      let aValue, bValue;
+      
+      // Calculate values based on sort key
+      switch (sortConfig.key) {
+        case 'responseTime':
+          aValue = aMetrics?.responseTime || aMetrics?.elapsedTime || 0;
+          bValue = bMetrics?.responseTime || bMetrics?.elapsedTime || 0;
+          break;
+          
+        case 'tokenUsage':
+          aValue = aMetrics?.tokenUsage?.total || 0;
+          bValue = bMetrics?.tokenUsage?.total || 0;
+          break;
+          
+        case 'cost':
+          const aTokenUsage = aMetrics?.tokenUsage?.total || 0;
+          const bTokenUsage = bMetrics?.tokenUsage?.total || 0;
+          aValue = calculateCost(a.displayName, aTokenUsage);
+          bValue = calculateCost(b.displayName, bTokenUsage);
+          break;
+          
+        default:
+          aValue = 0;
+          bValue = 0;
+      }
+      
+      // Handle numeric comparisons
+      if (typeof aValue === 'number' && typeof bValue === 'number') {
+        if (sortConfig.direction === 'ascending') {
+          return aValue - bValue;
+        }
+        return bValue - aValue;
+      }
+      
+      // Fallback for non-numeric values
+      if (sortConfig.direction === 'ascending') {
+        return aValue > bValue ? 1 : -1;
+      }
+      return aValue < bValue ? 1 : -1;
+    });
+  };
+
   const formatResponseTime = (ms) => {
     if (ms === undefined || ms === null || isNaN(ms)) {
       return 'Unknown';
@@ -882,9 +964,39 @@ const ResponseComparison = ({
                 <TableHead>
                   <TableRow>
                     <TableCell>Model</TableCell>
-                    <TableCell>Response Time</TableCell>
-                    <TableCell>Token Usage</TableCell>
-                    <TableCell>Estimated Cost</TableCell>
+                    <TableCell 
+                      onClick={() => handleSort('responseTime')}
+                      sx={{ cursor: 'pointer' }}
+                    >
+                      Response Time
+                      {sortConfig.key === 'responseTime' && (
+                        <span style={{ marginLeft: '4px' }}>
+                          {sortConfig.direction === 'ascending' ? '↑' : '↓'}
+                        </span>
+                      )}
+                    </TableCell>
+                    <TableCell 
+                      onClick={() => handleSort('tokenUsage')}
+                      sx={{ cursor: 'pointer' }}
+                    >
+                      Token Usage
+                      {sortConfig.key === 'tokenUsage' && (
+                        <span style={{ marginLeft: '4px' }}>
+                          {sortConfig.direction === 'ascending' ? '↑' : '↓'}
+                        </span>
+                      )}
+                    </TableCell>
+                    <TableCell 
+                      onClick={() => handleSort('cost')}
+                      sx={{ cursor: 'pointer' }}
+                    >
+                      Estimated Cost
+                      {sortConfig.key === 'cost' && (
+                        <span style={{ marginLeft: '4px' }}>
+                          {sortConfig.direction === 'ascending' ? '↑' : '↓'}
+                        </span>
+                      )}
+                    </TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
@@ -988,7 +1100,10 @@ const ResponseComparison = ({
                     
                     console.log("Metrics rows to render:", metricRows);
                     
-                    return metricRows.map(({ displayName, setName, metricsKey }) => {
+                    // Sort the metric rows before rendering
+                    const sortedMetricRows = sortData(metricRows);
+                    
+                    return sortedMetricRows.map(({ displayName, setName, metricsKey }) => {
                       // Try a few backup options for finding metrics in case the metricsKey doesn't work
                       let modelMetrics = null;
                       let validMetricsKey = null;
