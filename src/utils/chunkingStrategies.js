@@ -100,7 +100,21 @@ export const recommendChunkingStrategy = (documents) => {
     if (source.endsWith('.md')) docTypes.add('markdown');
     if (source.endsWith('.tex')) docTypes.add('latex');
     if (source.endsWith('.py') || source.endsWith('.js') || source.endsWith('.java') || source.endsWith('.cpp')) docTypes.add('code');
+    if (source.endsWith('.json')) docTypes.add('json');
   });
+
+  // If all documents are JSON, use character splitter with specific settings
+  if (docTypes.has('json') && docTypes.size === 1) {
+    return {
+      strategy: 'character',
+      config: {
+        chunkSize: 2000,
+        chunkOverlap: 200,
+        separator: '\n'
+      },
+      reason: 'All documents are JSON files. Using character-based splitting with newline separator for better structure preservation.'
+    };
+  }
 
   // If all documents are markdown, use markdown splitter
   if (docTypes.has('markdown') && docTypes.size === 1) {

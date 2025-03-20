@@ -26,7 +26,14 @@ import {
   InsertDriveFile as FileIcon,
   Code as CodeIcon,
   HelpOutline as HelpOutlineIcon,
-  ExpandMore as ExpandMoreIcon
+  ExpandMore as ExpandMoreIcon,
+  DataObject as JsonIcon,
+  TextFields as MarkdownIcon,
+  Html as HtmlIcon,
+  TableChart as SpreadsheetIcon,
+  Description as RtfIcon,
+  Code as XmlIcon,
+  DataObject as YamlIcon
 } from '@mui/icons-material';
 import { processFile } from '../utils/documentProcessing';
 
@@ -51,7 +58,16 @@ const DocumentUpload = ({ onDocumentsUploaded, isProcessing, setIsProcessing }) 
       'text/x-python': ['.py'],
       'application/x-python-code': ['.py'],
       'text/x-python-script': ['.py'],
-      'application/octet-stream': ['.py']
+      'application/octet-stream': ['.py'],
+      'application/json': ['.json'],
+      'text/markdown': ['.md', '.markdown'],
+      'text/html': ['.html', '.htm'],
+      'text/csv': ['.csv'],
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'],
+      'application/vnd.ms-excel': ['.xls'],
+      'application/rtf': ['.rtf'],
+      'application/xml': ['.xml'],
+      'text/yaml': ['.yml', '.yaml']
     }
   });
 
@@ -63,6 +79,23 @@ const DocumentUpload = ({ onDocumentsUploaded, isProcessing, setIsProcessing }) 
     } else if (file.name.endsWith('.py') || file.type === 'text/x-python' || 
                file.type === 'application/x-python-code' || file.type === 'text/x-python-script') {
       return <CodeIcon />;
+    } else if (file.type === 'application/json' || file.name.endsWith('.json')) {
+      return <JsonIcon />;
+    } else if (file.name.endsWith('.md') || file.name.endsWith('.markdown')) {
+      return <MarkdownIcon />;
+    } else if (file.type === 'text/html' || file.name.endsWith('.html') || file.name.endsWith('.htm')) {
+      return <HtmlIcon />;
+    } else if (file.type === 'text/csv' || file.name.endsWith('.csv') || 
+               file.type === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' || 
+               file.type === 'application/vnd.ms-excel' || 
+               file.name.endsWith('.xlsx') || file.name.endsWith('.xls')) {
+      return <SpreadsheetIcon />;
+    } else if (file.type === 'application/rtf' || file.name.endsWith('.rtf')) {
+      return <RtfIcon />;
+    } else if (file.type === 'application/xml' || file.name.endsWith('.xml')) {
+      return <XmlIcon />;
+    } else if (file.type === 'text/yaml' || file.name.endsWith('.yml') || file.name.endsWith('.yaml')) {
+      return <YamlIcon />;
     } else {
       return <FileIcon />;
     }
@@ -213,7 +246,7 @@ const DocumentUpload = ({ onDocumentsUploaded, isProcessing, setIsProcessing }) 
           <Typography>Drop the files here...</Typography>
         ) : (
           <Typography>
-            Drag and drop files here, or click to select files (PDF, TXT, DOCX, PY)
+            Drag and drop files here, or click to select files (PDF, TXT, DOCX, PY, JSON, MD, HTML, CSV, XLSX, RTF, XML, YAML)
           </Typography>
         )}
       </Paper>

@@ -1,5 +1,7 @@
 import * as pdfjs from 'pdfjs-dist';
 import mammoth from 'mammoth';
+import * as XLSX from 'xlsx';
+import * as yaml from 'js-yaml';
 
 // Set up PDF.js worker
 pdfjs.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjs.version}/pdf.worker.min.js`;
@@ -68,6 +70,117 @@ export const isPythonFile = (file) => {
 };
 
 /**
+ * Process a JSON file and extract its content
+ * @param {File} file - The JSON file to process
+ * @returns {Promise<string>} - The extracted text
+ */
+export const processJson = async (file) => {
+  const text = await file.text();
+  try {
+    // Parse JSON to validate it's valid JSON
+    const jsonData = JSON.parse(text);
+    // Convert JSON to a formatted string for better readability
+    return JSON.stringify(jsonData, null, 2);
+  } catch (error) {
+    throw new Error(`Invalid JSON file: ${error.message}`);
+  }
+};
+
+/**
+ * Process a Markdown file and extract its content
+ * @param {File} file - The Markdown file to process
+ * @returns {Promise<string>} - The extracted text
+ */
+export const processMarkdown = async (file) => {
+  const text = await file.text();
+  // Markdown files don't need special processing as they are already text
+  // but we can validate that they contain some markdown-like content
+  if (!text.includes('#') && !text.includes('*') && !text.includes('_') && !text.includes('`')) {
+    console.warn(`File ${file.name} has .md extension but doesn't appear to contain markdown syntax`);
+  }
+  return text;
+};
+
+/**
+ * Process an HTML file and extract its text content
+ * @param {File} file - The HTML file to process
+ * @returns {Promise<string>} - The extracted text
+ */
+export const processHtml = async (file) => {
+  const text = await file.text();
+  // Basic HTML to text conversion - remove HTML tags
+  return text.replace(/<[^>]*>/g, ' ')
+             .replace(/\s+/g, ' ')
+             .trim();
+};
+
+/**
+ * Process a CSV/Excel file and extract its content
+ * @param {File} file - The CSV/Excel file to process
+ * @returns {Promise<string>} - The extracted text
+ */
+export const processSpreadsheet = async (file) => {
+  const arrayBuffer = await file.arrayBuffer();
+  const workbook = XLSX.read(arrayBuffer);
+  
+  let text = '';
+  workbook.SheetNames.forEach(sheetName => {
+    const sheet = workbook.Sheets[sheetName];
+    text += `Sheet: ${sheetName}\n`;
+    text += XLSX.utils.sheet_to_txt(sheet, { raw: false });
+    text += '\n\n';
+  });
+  
+  return text;
+};
+
+/**
+ * Process an RTF file and extract its content
+ * @param {File} file - The RTF file to process
+ * @returns {Promise<string>} - The extracted text
+ */
+export const processRtf = async (file) => {
+  const text = await file.text();
+  // Basic RTF to text conversion - remove RTF control words
+  return text.replace(/\\[a-z]{1,32}(-?\d{1,10})?[ ]?/g, '')
+             .replace(/\\'[0-9a-f]{2}/g, '')
+             .replace(/\\[{}]/g, '')
+             .replace(/\\\n/g, '\n')
+             .replace(/\s+/g, ' ')
+             .trim();
+};
+
+/**
+ * Process an XML file and extract its content
+ * @param {File} file - The XML file to process
+ * @returns {Promise<string>} - The extracted text
+ */
+export const processXml = async (file) => {
+  const text = await file.text();
+  // Basic XML to text conversion - remove XML tags
+  return text.replace(/<[^>]*>/g, ' ')
+             .replace(/\s+/g, ' ')
+             .trim();
+};
+
+/**
+ * Process a YAML file and extract its content
+ * @param {File} file - The YAML file to process
+ * @returns {Promise<string>} - The extracted text
+ */
+export const processYaml = async (file) => {
+  const text = await file.text();
+  try {
+    // Parse YAML to validate it's valid YAML
+    const yamlData = yaml.load(text);
+    // Convert YAML to a formatted string for better readability
+    return yaml.dump(yamlData, { indent: 2 });
+  } catch (error) {
+    throw new Error(`Invalid YAML file: ${error.message}`);
+  }
+};
+
+/**
  * Process a file based on its type
  * @param {File} file - The file to process
  * @returns {Promise<{pageContent: string, metadata: {source: string, namespace: string}}>} - The processed document
@@ -84,6 +197,23 @@ export const processFile = async (file) => {
   } else if (file.type === 'text/plain' || file.type === '') {
     // Handle text files or files with no specified MIME type
     text = await processTxt(file);
+  } else if (file.type === 'application/json' || file.name.endsWith('.json')) {
+    text = await processJson(file);
+  } else if (file.name.endsWith('.md')) {
+    text = await processMarkdown(file);
+  } else if (file.type === 'text/html' || file.name.endsWith('.html') || file.name.endsWith('.htm')) {
+    text = await processHtml(file);
+  } else if (file.type === 'text/csv' || file.name.endsWith('.csv') || 
+             file.type === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' || 
+             file.type === 'application/vnd.ms-excel' || 
+             file.name.endsWith('.xlsx') || file.name.endsWith('.xls')) {
+    text = await processSpreadsheet(file);
+  } else if (file.type === 'application/rtf' || file.name.endsWith('.rtf')) {
+    text = await processRtf(file);
+  } else if (file.type === 'application/xml' || file.name.endsWith('.xml')) {
+    text = await processXml(file);
+  } else if (file.type === 'text/yaml' || file.name.endsWith('.yml') || file.name.endsWith('.yaml')) {
+    text = await processYaml(file);
   } else {
     throw new Error(`Unsupported file type: ${file.type} for file ${file.name}`);
   }
@@ -94,7 +224,8 @@ export const processFile = async (file) => {
       source: file.name,
       originalFileName: file.name,
       documentName: file.name,
-      namespace: 'default' // Default namespace, will be updated by the component
+      namespace: 'default', // Default namespace, will be updated by the component
+      fileType: file.name.split('.').pop().toLowerCase()
     }
   };
 }; 
