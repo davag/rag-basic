@@ -808,8 +808,8 @@ export const calculateCost = (model, tokenCount) => {
       output: 0.6
     },
     'o3-mini': {
-      input: 0.5,
-      output: 1.5
+      input: 0.15,
+      output: 0.6
     },
     
     // Azure OpenAI models (same pricing as OpenAI models)
@@ -822,8 +822,8 @@ export const calculateCost = (model, tokenCount) => {
       output: 0.6
     },
     'azure-o3-mini': {
-      input: 0.5,
-      output: 1.5
+      input: 0.15,
+      output: 0.6
     },
     
     // Azure OpenAI embedding models

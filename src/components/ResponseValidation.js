@@ -42,9 +42,11 @@ const calculateCost = (model, tokens) => {
     // OpenAI models
     'gpt-4o': 0.00003,
     'gpt-4o-mini': 0.00002,
+    'o3-mini': 0.00002,
     // Azure models
     'azure-gpt-4o': 0.000025,
     'azure-gpt-4o-mini': 0.000015,
+    'azure-o3-mini': 0.000015,
     // Anthropic models
     'claude-3-5-sonnet-latest': 0.00002,
     'claude-3-7-sonnet-latest': 0.000025,

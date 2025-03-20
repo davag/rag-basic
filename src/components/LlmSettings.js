@@ -61,8 +61,8 @@ const LlmSettings = ({ showAppSettingsOnly = false }) => {
     },
     'o3-mini': {
       vendor: 'OpenAI',
-      input: 0.5,
-      output: 1.5,
+      input: 0.15,
+      output: 0.60,
       active: true,
       description: 'OpenAI\'s newest model with improved reasoning capabilities.'
     },
@@ -94,8 +94,8 @@ const LlmSettings = ({ showAppSettingsOnly = false }) => {
     },
     'azure-o3-mini': {
       vendor: 'AzureOpenAI',
-      input: 0.5,
-      output: 1.5,
+      input: 0.15,
+      output: 0.60,
       active: true,
       description: 'Azure-hosted o3-mini - newest model with improved reasoning capabilities.',
       deploymentName: 'gpt-4o-mini'
@@ -357,8 +357,8 @@ const LlmSettings = ({ showAppSettingsOnly = false }) => {
       },
       'o3-mini': {
         vendor: 'OpenAI',
-        input: 0.5,
-        output: 1.5,
+        input: 0.15,
+        output: 0.60,
         active: true,
         description: 'OpenAI\'s newest model with improved reasoning capabilities.'
       },
@@ -390,8 +390,8 @@ const LlmSettings = ({ showAppSettingsOnly = false }) => {
       },
       'azure-o3-mini': {
         vendor: 'AzureOpenAI',
-        input: 0.5,
-        output: 1.5,
+        input: 0.15,
+        output: 0.60,
         active: true,
         description: 'Azure-hosted o3-mini - newest model with improved reasoning capabilities.',
         deploymentName: 'gpt-4o-mini'
