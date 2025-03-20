@@ -76,6 +76,37 @@ These tools help you:
    PORT=3001
    ```
 
+## Running with Docker
+
+The application can be run using Docker Desktop for a consistent development environment:
+
+1. Make sure Docker Desktop is installed and running on your machine
+2. Build and start the container:
+   ```
+   docker-compose up --build
+   ```
+   This will:
+   - Build the application image
+   - Start the container
+   - Make the application available at:
+     - Frontend: http://localhost:3000
+     - Backend: http://localhost:3001
+
+3. To stop the application:
+   ```
+   docker-compose down
+   ```
+
+### Docker Development Tips
+
+- The application code is mounted as a volume, so changes to the source code will be reflected immediately
+- Environment variables from your `.env` file are automatically loaded into the container
+- The container will automatically restart unless explicitly stopped
+- To view logs:
+  ```
+  docker-compose logs -f
+  ```
+
 ## Running the Application
 
 ### Development Mode
