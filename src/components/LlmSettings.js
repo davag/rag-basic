@@ -47,22 +47,22 @@ const LlmSettings = ({ showAppSettingsOnly = false }) => {
     // OpenAI models
     'gpt-4o': {
       vendor: 'OpenAI',
-      input: 5.0,
-      output: 15.0,
+      input: 0.00465,
+      output: 0.01395,
       active: true,
       description: 'Most capable GPT-4 model optimized for chat at a lower price.'
     },
     'gpt-4o-mini': {
       vendor: 'OpenAI',
-      input: 0.15,
-      output: 0.60,
+      input: 0.0015,
+      output: 0.006,
       active: true,
       description: 'Affordable GPT-4 class model for everyday use.'
     },
     'o3-mini': {
       vendor: 'OpenAI',
-      input: 0.15,
-      output: 0.60,
+      input: 0.0015,
+      output: 0.006,
       active: true,
       description: 'OpenAI\'s newest model with improved reasoning capabilities.'
     },
@@ -70,32 +70,32 @@ const LlmSettings = ({ showAppSettingsOnly = false }) => {
     // Azure OpenAI models
     'azure-gpt-4': {
       vendor: 'AzureOpenAI',
-      input: 5.0,
-      output: 15.0,
+      input: 0.03,
+      output: 0.06,
       active: true,
       description: 'Azure-hosted GPT-4 - most capable model for complex tasks.',
       deploymentName: 'gpt-4o'
     },
     'azure-gpt-4o': {
       vendor: 'AzureOpenAI',
-      input: 5.0,
-      output: 15.0,
+      input: 0.03,
+      output: 0.06,
       active: true,
       description: 'Azure-hosted GPT-4o - optimized version of GPT-4.',
       deploymentName: 'gpt-4o'
     },
     'azure-gpt-4o-mini': {
       vendor: 'AzureOpenAI',
-      input: 0.15,
-      output: 0.60,
+      input: 0.01,
+      output: 0.03,
       active: true,
       description: 'Azure-hosted GPT-4o-mini - affordable, faster version of GPT-4o.',
       deploymentName: 'gpt-4o-mini'
     },
     'azure-o3-mini': {
       vendor: 'AzureOpenAI',
-      input: 0.15,
-      output: 0.60,
+      input: 0.01,
+      output: 0.03,
       active: true,
       description: 'Azure-hosted o3-mini - newest model with improved reasoning capabilities.',
       deploymentName: 'gpt-4o-mini'
@@ -104,16 +104,16 @@ const LlmSettings = ({ showAppSettingsOnly = false }) => {
     // Azure OpenAI embedding models
     'azure-text-embedding-3-small': {
       vendor: 'AzureOpenAI',
-      input: 0.02,
-      output: 0.02,
+      input: 0.0001,
+      output: 0.0001,
       active: true,
       description: 'Azure-hosted text-embedding-3-small - optimized for general text with good performance and cost efficiency.',
       deploymentName: 'text-embedding-3-small'
     },
     'azure-text-embedding-3-large': {
       vendor: 'AzureOpenAI',
-      input: 0.13,
-      output: 0.13,
+      input: 0.00013,
+      output: 0.00013,
       active: true,
       description: 'Azure-hosted text-embedding-3-large - better for complex technical content and longer context.',
       deploymentName: 'text-embedding-3-large'
@@ -122,15 +122,15 @@ const LlmSettings = ({ showAppSettingsOnly = false }) => {
     // Anthropic models
     'claude-3-5-sonnet-latest': {
       vendor: 'Anthropic',
-      input: 3.0,
-      output: 15.0,
+      input: 0.003,
+      output: 0.015,
       active: true,
       description: 'Fast and cost-effective Claude model with excellent performance.'
     },
     'claude-3-7-sonnet-latest': {
       vendor: 'Anthropic',
-      input: 15.0,
-      output: 75.0,
+      input: 0.015,
+      output: 0.075,
       active: true,
       description: 'Anthropic\'s most advanced Claude model with exceptional reasoning capabilities.'
     },
@@ -343,22 +343,22 @@ const LlmSettings = ({ showAppSettingsOnly = false }) => {
       // OpenAI models
       'gpt-4o': {
         vendor: 'OpenAI',
-        input: 5.0,
-        output: 15.0,
+        input: 0.00465,
+        output: 0.01395,
         active: true,
         description: 'Most capable GPT-4 model optimized for chat at a lower price.'
       },
       'gpt-4o-mini': {
         vendor: 'OpenAI',
-        input: 0.15,
-        output: 0.60,
+        input: 0.0015,
+        output: 0.006,
         active: true,
         description: 'Affordable GPT-4 class model for everyday use.'
       },
       'o3-mini': {
         vendor: 'OpenAI',
-        input: 0.15,
-        output: 0.60,
+        input: 0.0015,
+        output: 0.006,
         active: true,
         description: 'OpenAI\'s newest model with improved reasoning capabilities.'
       },
@@ -366,32 +366,32 @@ const LlmSettings = ({ showAppSettingsOnly = false }) => {
       // Azure OpenAI models
       'azure-gpt-4': {
         vendor: 'AzureOpenAI',
-        input: 5.0,
-        output: 15.0,
+        input: 0.03,
+        output: 0.06,
         active: true,
         description: 'Azure-hosted GPT-4 - most capable model for complex tasks.',
         deploymentName: 'gpt-4o'
       },
       'azure-gpt-4o': {
         vendor: 'AzureOpenAI',
-        input: 5.0,
-        output: 15.0,
+        input: 0.03,
+        output: 0.06,
         active: true,
         description: 'Azure-hosted GPT-4o - optimized version of GPT-4.',
         deploymentName: 'gpt-4o'
       },
       'azure-gpt-4o-mini': {
         vendor: 'AzureOpenAI',
-        input: 0.15,
-        output: 0.60,
+        input: 0.01,
+        output: 0.03,
         active: true,
         description: 'Azure-hosted GPT-4o-mini - affordable, faster version of GPT-4o.',
         deploymentName: 'gpt-4o-mini'
       },
       'azure-o3-mini': {
         vendor: 'AzureOpenAI',
-        input: 0.15,
-        output: 0.60,
+        input: 0.01,
+        output: 0.03,
         active: true,
         description: 'Azure-hosted o3-mini - newest model with improved reasoning capabilities.',
         deploymentName: 'gpt-4o-mini'
@@ -400,16 +400,16 @@ const LlmSettings = ({ showAppSettingsOnly = false }) => {
       // Azure OpenAI embedding models
       'azure-text-embedding-3-small': {
         vendor: 'AzureOpenAI',
-        input: 0.02,
-        output: 0.02,
+        input: 0.0001,
+        output: 0.0001,
         active: true,
         description: 'Azure-hosted text-embedding-3-small - optimized for general text with good performance and cost efficiency.',
         deploymentName: 'text-embedding-3-small'
       },
       'azure-text-embedding-3-large': {
         vendor: 'AzureOpenAI',
-        input: 0.13,
-        output: 0.13,
+        input: 0.00013,
+        output: 0.00013,
         active: true,
         description: 'Azure-hosted text-embedding-3-large - better for complex technical content and longer context.',
         deploymentName: 'text-embedding-3-large'
@@ -418,15 +418,15 @@ const LlmSettings = ({ showAppSettingsOnly = false }) => {
       // Anthropic models
       'claude-3-5-sonnet-latest': {
         vendor: 'Anthropic',
-        input: 3.0,
-        output: 15.0,
+        input: 0.003,
+        output: 0.015,
         active: true,
         description: 'Fast and cost-effective Claude model with excellent performance.'
       },
       'claude-3-7-sonnet-latest': {
         vendor: 'Anthropic',
-        input: 15.0,
-        output: 75.0,
+        input: 0.015,
+        output: 0.075,
         active: true,
         description: 'Anthropic\'s most advanced Claude model with exceptional reasoning capabilities.'
       },
