@@ -1856,40 +1856,111 @@ const ResponseValidation = ({
                               {(() => {
                                 // Get answer content from response
                                 let answer = '';
-                                const response = responses[model];
                                 
+                                // Extract set name and base model name
+                                const setMatch = model.match(/^(Set \d+)-(.+)$/);
+                                let response = null;
+                                
+                                if (setMatch) {
+                                  const setName = setMatch[1]; // e.g., "Set 1"
+                                  const baseModel = setMatch[2]; // e.g., "gpt-4o-mini"
+                                  
+                                  // Try to get response from nested structure
+                                  if (responses[setName] && responses[setName][baseModel]) {
+                                    response = responses[setName][baseModel];
+                                    console.log(`Found response in ${setName} for ${baseModel}`);
+                                  }
+                                  // Fallback to direct lookup
+                                  else if (responses[model]) {
+                                    response = responses[model];
+                                    console.log(`Found response with full model name ${model}`);
+                                  }
+                                  else if (responses[baseModel]) {
+                                    response = responses[baseModel];
+                                    console.log(`Found response with base model name ${baseModel}`);
+                                  }
+                                } else {
+                                  // Try direct lookup if no Set prefix
+                                  response = responses[model];
+                                  console.log(`Attempting direct lookup for ${model}`);
+                                }
+                                
+                                // Log the response object for debugging
+                                console.log(`Response lookup for model ${model}:`, {
+                                  fullModel: model,
+                                  setMatch: setMatch,
+                                  response: response
+                                });
+                                
+                                if (!response) {
+                                  console.warn(`No response found for model ${model}`);
+                                  return "No response available";
+                                }
+
+                                // Handle different response formats
                                 if (typeof response === 'object') {
+                                  // Case 1: Direct answer object with text
                                   if (response?.answer?.text) {
+                                    console.log('Found response in answer.text');
                                     answer = response.answer.text;
-                                  } else if (response?.answer) {
-                                    answer = response.answer;
-                                  } else if (response?.response) {
-                                    answer = response.response;
-                                  } else if (response?.text) {
+                                  }
+                                  // Case 2: Direct answer string
+                                  else if (response?.answer) {
+                                    console.log('Found response in answer');
+                                    answer = typeof response.answer === 'string' 
+                                      ? response.answer 
+                                      : JSON.stringify(response.answer, null, 2);
+                                  }
+                                  // Case 3: Response object with text
+                                  else if (response?.response?.text) {
+                                    console.log('Found response in response.text');
+                                    answer = response.response.text;
+                                  }
+                                  // Case 4: Direct response string
+                                  else if (response?.response) {
+                                    console.log('Found response in response');
+                                    answer = typeof response.response === 'string'
+                                      ? response.response
+                                      : JSON.stringify(response.response, null, 2);
+                                  }
+                                  // Case 5: Direct text field
+                                  else if (response?.text) {
+                                    console.log('Found response in text');
                                     answer = response.text;
-                                  } else {
-                                    // Try to stringify the object
+                                  }
+                                  // Case 6: Try to stringify the entire object
+                                  else {
+                                    console.log('Attempting to stringify entire response object');
                                     try {
                                       answer = JSON.stringify(response, null, 2);
                                     } catch (e) {
+                                      console.error('Error stringifying response:', e);
                                       answer = "Could not display response";
                                     }
                                   }
                                 } else if (typeof response === 'string') {
+                                  console.log('Response is a string');
                                   answer = response;
                                 } else {
+                                  console.warn('Response is of unknown type:', typeof response);
                                   answer = "No response available";
                                 }
-                                
+
+                                // If answer is empty after all attempts, show a message
+                                if (!answer || answer.trim() === '') {
+                                  console.warn('No answer content found after processing');
+                                  return "No response content available";
+                                }
+
                                 // Check if it looks like code
                                 const isCode = answer.includes('import ') || 
                                               answer.includes('function ') || 
                                               answer.includes('def ') ||
                                               answer.includes('class ');
-                                
+
                                 // Check if it's JSON
                                 const isJson = answer.trim().startsWith('{') && answer.trim().endsWith('}');
-                                
+
                                 if (isCode || isJson) {
                                   return (
                                     <pre style={{ 
@@ -1902,7 +1973,7 @@ const ResponseValidation = ({
                                     </pre>
                                   );
                                 }
-                                
+
                                 return (
                                   <Typography variant="body2" component="div" sx={{ whiteSpace: 'pre-wrap' }}>
                                     {answer}

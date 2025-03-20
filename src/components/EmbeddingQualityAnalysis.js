@@ -721,7 +721,7 @@ const EmbeddingQualityAnalysis = ({
     let vector = [...initialVector];
     let eigenvalue = 0;
     
-    // Normalize vector
+    // Normalize vector - moved outside the loop
     const normalize = (v) => {
       const norm = Math.sqrt(v.reduce((sum, x) => sum + x * x, 0));
       return v.map(x => x / norm);

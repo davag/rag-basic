@@ -97,36 +97,91 @@ const TokenUsageAnalyzer = ({ metrics, responses, systemPrompts, currentQuery })
     const breakdowns = {};
     const modelWarnings = {};
     
-    // For each model response, estimate the token breakdown
-    Object.entries(responses || {}).forEach(([model, response]) => {
-      if (!response || !response.sources) {
-        return; // Skip this model if response or sources is undefined
+    // Process each set in responses
+    Object.entries(responses || {}).forEach(([setKey, setResponses]) => {
+      // Skip if this is not a set of responses
+      if (['systemPrompts', 'temperatures', 'retrievalTime', 'query'].includes(setKey)) {
+        return;
       }
       
-      // Reconstruct the full prompt that was sent (similar to what's in QueryInterface submitQuery)
-      const context = (response.sources || []).map(s => s?.content || '').join('\n\n');
-      const prompt = `
+      // Process each model in the set
+      Object.entries(setResponses || {}).forEach(([model, response]) => {
+        if (!response || !response.sources) {
+          return; // Skip this model if response or sources is undefined
+        }
+        
+        // Create a composite key for this model in this set
+        const modelKey = `${setKey}-${model}`;
+        
+        // Reconstruct the full prompt that was sent (similar to what's in QueryInterface submitQuery)
+        const context = (response.sources || []).map(s => s?.content || '').join('\n\n');
+        const prompt = `
 Context information is below.
 ---------------------
 ${context}
 ---------------------
 Given the context information and not prior knowledge, answer the question: ${currentQuery || ''}
 `;
-      
-      // Get the system prompt used for this model - safely access system prompts
-      const systemPrompt = systemPrompts && systemPrompts[model] ? systemPrompts[model] : "";
-      
-      // Estimate token breakdown
-      const breakdown = estimateTokenBreakdown(prompt, systemPrompt);
-      breakdowns[model] = breakdown;
-      
-      // Identify potential expensive areas
-      modelWarnings[model] = identifyExpensiveAreas(breakdown);
+        
+        // Get the system prompt used for this model - safely access system prompts
+        const systemPrompt = systemPrompts && systemPrompts[modelKey] ? systemPrompts[modelKey] : "";
+        
+        // Estimate token breakdown
+        const breakdown = estimateTokenBreakdown(prompt, systemPrompt);
+        breakdowns[modelKey] = breakdown;
+        
+        // Identify potential expensive areas
+        modelWarnings[modelKey] = identifyExpensiveAreas(breakdown);
+      });
     });
     
     setTokenBreakdowns(breakdowns);
     setWarnings(modelWarnings);
   }, [responses, systemPrompts, currentQuery]);
+  
+  // Helper to find metrics for a model
+  const findModelMetrics = (metrics, model) => {
+    if (!metrics || !model) return null;
+    
+    // Direct hit - metrics stored directly under the model key
+    if (metrics[model]) {
+      return metrics[model];
+    }
+    
+    // Check if this is a composite key like "Set 1-gpt-4o-mini"
+    if (model.includes('-')) {
+      // Try to extract set name and model name
+      const setMatch = model.match(/^(Set \d+)-(.+)$/);
+      
+      if (setMatch) {
+        const setName = setMatch[1]; // e.g., "Set 2"
+        const modelName = setMatch[2]; // e.g., "gpt-4o-mini"
+        
+        // Case 1: Nested structure - metrics[setName][modelName]
+        if (metrics[setName] && metrics[setName][modelName]) {
+          return metrics[setName][modelName];
+        }
+        
+        // Case 2: Just the model name
+        if (metrics[modelName]) {
+          return metrics[modelName];
+        }
+        
+        // Case 3: Just the set name
+        if (metrics[setName]) {
+          return metrics[setName];
+        }
+        
+        // Case 4: Dot notation - metrics["Set 1.gpt-4o-mini"]
+        const dotKey = `${setName}.${modelName}`;
+        if (metrics[dotKey]) {
+          return metrics[dotKey];
+        }
+      }
+    }
+    
+    return null;
+  };
   
   // Helper to calculate percentage of token usage
   const calculatePercentage = (part, total) => {
@@ -179,134 +234,142 @@ Given the context information and not prior knowledge, answer the question: ${cu
           </Typography>
           
           <Grid container spacing={3}>
-            {Object.entries(responses || {}).map(([model, response]) => {
-              // Skip if model key is not an actual model in metrics
-              if (!metrics || !metrics[model] || ['systemPrompts', 'temperatures', 'retrievalTime', 'query'].includes(model)) {
+            {Object.entries(responses || {}).map(([setKey, setResponses]) => {
+              // Skip if this is not a set of responses
+              if (['systemPrompts', 'temperatures', 'retrievalTime', 'query'].includes(setKey)) {
                 return null;
               }
               
-              const modelMetrics = metrics[model] || {};
-              const tokenUsage = modelMetrics.tokenUsage || { input: 0, output: 0, total: 0 };
-              const breakdown = tokenBreakdowns[model];
-              const modelWarnings = warnings[model] || [];
-              
-              // Get cost for this model
-              const modelCost = calculateCost(model, 
-                tokenUsage.input / 1000, 
-                tokenUsage.output / 1000
-              );
+              return Object.entries(setResponses || {}).map(([model, response]) => {
+                if (!response || !response.sources) {
+                  return null;
+                }
                 
-              if (!breakdown) return null;
-              
-              return (
-                <Grid item xs={12} md={6} key={model}>
-                  <Card variant="outlined">
-                    <CardContent>
-                      <Typography variant="h6" gutterBottom>{model}</Typography>
-                      
-                      {/* Token Summary */}
-                      <Stack direction="row" spacing={2} sx={{ mb: 2, flexWrap: 'wrap', gap: 1 }}>
-                        <Chip 
-                          icon={<TokenIcon />} 
-                          label={`${formatNumber(tokenUsage.total)} Total Tokens`} 
-                          color="primary"
-                        />
-                        <Chip 
-                          icon={<AttachMoneyIcon />} 
-                          label={`$${modelCost.toFixed(6)}`} 
-                          color="secondary"
-                        />
-                        {modelMetrics.elapsedTime && (
-                          <Chip
-                            icon={<AccessTimeIcon />}
-                            label={`${formatElapsedTime(modelMetrics.elapsedTime)}`}
-                            color="info"
+                // Create a composite key for this model in this set
+                const modelKey = `${setKey}-${model}`;
+                
+                const modelMetrics = findModelMetrics(metrics, modelKey) || {};
+                const tokenUsage = modelMetrics.tokenUsage || { input: 0, output: 0, total: 0 };
+                const breakdown = tokenBreakdowns[modelKey];
+                const modelWarnings = warnings[modelKey] || [];
+                
+                // Get cost for this model
+                const modelCost = calculateCost(model, 
+                  tokenUsage.input / 1000, 
+                  tokenUsage.output / 1000
+                );
+                  
+                if (!breakdown) return null;
+                
+                return (
+                  <Grid item xs={12} md={6} key={modelKey}>
+                    <Card variant="outlined">
+                      <CardContent>
+                        <Typography variant="h6" gutterBottom>
+                          {setKey} - {model}
+                        </Typography>
+                        
+                        {/* Token Summary */}
+                        <Stack direction="row" spacing={2} sx={{ mb: 2, flexWrap: 'wrap', gap: 1 }}>
+                          <Chip 
+                            icon={<TokenIcon />} 
+                            label={`${formatNumber(tokenUsage.total)} Total Tokens`} 
+                            color="primary"
                           />
-                        )}
-                      </Stack>
-                      
-                      {/* Input/Output Breakdown */}
-                      <Typography variant="subtitle2" gutterBottom>Input/Output Split</Typography>
-                      <Box sx={{ mb: 2, display: 'flex', alignItems: 'center' }}>
-                        <Box sx={{ flexGrow: 1 }}>
-                          <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                            <Box sx={{ width: `${calculatePercentage(tokenUsage.input, tokenUsage.total)}%`, bgcolor: 'primary.main', height: 10, borderRadius: '4px 0 0 4px' }} />
-                            <Box sx={{ width: `${calculatePercentage(tokenUsage.output, tokenUsage.total)}%`, bgcolor: 'secondary.main', height: 10, borderRadius: '0 4px 4px 0' }} />
-                          </Box>
-                        </Box>
-                        <Box sx={{ ml: 2, display: 'flex', fontSize: '0.75rem' }}>
-                          <Box sx={{ color: 'primary.main', display: 'flex', alignItems: 'center', mr: 1 }}>
-                            <Box sx={{ width: 8, height: 8, bgcolor: 'primary.main', borderRadius: 1, mr: 0.5 }} />
-                            Input {calculatePercentage(tokenUsage.input, tokenUsage.total)}%
-                          </Box>
-                          <Box sx={{ color: 'secondary.main', display: 'flex', alignItems: 'center' }}>
-                            <Box sx={{ width: 8, height: 8, bgcolor: 'secondary.main', borderRadius: 1, mr: 0.5 }} />
-                            Output {calculatePercentage(tokenUsage.output, tokenUsage.total)}%
-                          </Box>
-                        </Box>
-                      </Box>
-                      
-                      {/* Detailed Prompt Breakdown */}
-                      <Typography variant="subtitle2" gutterBottom>Prompt Breakdown</Typography>
-                      <TableContainer component={Paper} variant="outlined" sx={{ mb: 2 }}>
-                        <Table size="small">
-                          <TableHead>
-                            <TableRow>
-                              <TableCell>Component</TableCell>
-                              <TableCell align="right">Est. Tokens</TableCell>
-                              <TableCell align="right">% of Input</TableCell>
-                            </TableRow>
-                          </TableHead>
-                          <TableBody>
-                            {breakdown && breakdown.breakdown && Object.entries(breakdown.breakdown || {}).map(([part, tokens]) => {
-                              const percentage = calculatePercentage(tokens, tokenUsage.input);
-                              return (
-                                <TableRow key={part}>
-                                  <TableCell component="th" scope="row">
-                                    {part.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase())}
-                                  </TableCell>
-                                  <TableCell align="right">{formatNumber(tokens)}</TableCell>
-                                  <TableCell 
-                                    align="right"
-                                    sx={{ 
-                                      color: getColorForPercentage(percentage),
-                                      fontWeight: percentage > 30 ? 'bold' : 'normal'
-                                    }}
-                                  >
-                                    {percentage}%
-                                  </TableCell>
-                                </TableRow>
-                              );
-                            })}
-                          </TableBody>
-                        </Table>
-                      </TableContainer>
-                      
-                      {/* Optimization Warnings */}
-                      {modelWarnings && modelWarnings.length > 0 && (
-                        <Box sx={{ mb: 2 }}>
-                          <Typography variant="subtitle2" gutterBottom>
-                            <Box component="span" sx={{ display: 'flex', alignItems: 'center' }}>
-                              <WarningIcon fontSize="small" sx={{ mr: 0.5, color: 'warning.main' }} />
-                              Optimization Opportunities
+                          <Chip 
+                            icon={<AttachMoneyIcon />} 
+                            label={`$${modelCost.toFixed(6)}`} 
+                            color="secondary"
+                          />
+                          {modelMetrics.elapsedTime && (
+                            <Chip
+                              icon={<AccessTimeIcon />}
+                              label={`${formatElapsedTime(modelMetrics.elapsedTime)}`}
+                              color="info"
+                            />
+                          )}
+                        </Stack>
+                        
+                        {/* Input/Output Breakdown */}
+                        <Typography variant="subtitle2" gutterBottom>Input/Output Split</Typography>
+                        <Box sx={{ mb: 2, display: 'flex', alignItems: 'center' }}>
+                          <Box sx={{ flexGrow: 1 }}>
+                            <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                              <Box sx={{ width: `${calculatePercentage(tokenUsage.input, tokenUsage.total)}%`, bgcolor: 'primary.main', height: 10, borderRadius: '4px 0 0 4px' }} />
+                              <Box sx={{ width: `${calculatePercentage(tokenUsage.output, tokenUsage.total)}%`, bgcolor: 'secondary.main', height: 10, borderRadius: '0 4px 4px 0' }} />
                             </Box>
-                          </Typography>
-                          {modelWarnings.map((warning, index) => (
-                            <Typography 
-                              key={index} 
-                              variant="body2" 
-                              color={warning.severity === 'high' ? 'error' : 'warning.main'}
-                              sx={{ display: 'flex', alignItems: 'center', mt: 0.5 }}
-                            >
-                              • {warning.message}
-                            </Typography>
-                          ))}
+                          </Box>
+                          <Box sx={{ ml: 2, display: 'flex', fontSize: '0.75rem' }}>
+                            <Box sx={{ color: 'primary.main', display: 'flex', alignItems: 'center', mr: 1 }}>
+                              <Box sx={{ width: 8, height: 8, bgcolor: 'primary.main', borderRadius: 1, mr: 0.5 }} />
+                              Input {calculatePercentage(tokenUsage.input, tokenUsage.total)}%
+                            </Box>
+                            <Box sx={{ color: 'secondary.main', display: 'flex', alignItems: 'center' }}>
+                              <Box sx={{ width: 8, height: 8, bgcolor: 'secondary.main', borderRadius: 1, mr: 0.5 }} />
+                              Output {calculatePercentage(tokenUsage.output, tokenUsage.total)}%
+                            </Box>
+                          </Box>
                         </Box>
-                      )}
-                    </CardContent>
-                  </Card>
-                </Grid>
-              );
+                        
+                        {/* Detailed Prompt Breakdown */}
+                        <Typography variant="subtitle2" gutterBottom>Prompt Breakdown</Typography>
+                        <TableContainer component={Paper} variant="outlined" sx={{ mb: 2 }}>
+                          <Table size="small">
+                            <TableHead>
+                              <TableRow>
+                                <TableCell>Component</TableCell>
+                                <TableCell align="right">Est. Tokens</TableCell>
+                                <TableCell align="right">% of Input</TableCell>
+                              </TableRow>
+                            </TableHead>
+                            <TableBody>
+                              {breakdown && breakdown.breakdown && Object.entries(breakdown.breakdown || {}).map(([part, tokens]) => {
+                                const percentage = calculatePercentage(tokens, tokenUsage.input);
+                                return (
+                                  <TableRow key={part}>
+                                    <TableCell component="th" scope="row">
+                                      {part.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase())}
+                                    </TableCell>
+                                    <TableCell align="right">{formatNumber(tokens)}</TableCell>
+                                    <TableCell 
+                                      align="right"
+                                      sx={{ 
+                                        color: getColorForPercentage(percentage),
+                                        fontWeight: percentage > 30 ? 'bold' : 'normal'
+                                      }}
+                                    >
+                                      {percentage}%
+                                    </TableCell>
+                                  </TableRow>
+                                );
+                              })}
+                            </TableBody>
+                          </Table>
+                        </TableContainer>
+                        
+                        {/* Optimization Warnings */}
+                        {modelWarnings.length > 0 && (
+                          <Box sx={{ mt: 2 }}>
+                            <Typography variant="subtitle2" gutterBottom color="warning.main">
+                              <WarningIcon sx={{ mr: 1, verticalAlign: 'middle' }} />
+                              Optimization Suggestions
+                            </Typography>
+                            <Box component="ul" sx={{ pl: 2 }}>
+                              {modelWarnings.map((warning, index) => (
+                                <Box component="li" key={index}>
+                                  <Typography variant="body2" color="text.secondary">
+                                    {warning.message}
+                                  </Typography>
+                                </Box>
+                              ))}
+                            </Box>
+                          </Box>
+                        )}
+                      </CardContent>
+                    </Card>
+                  </Grid>
+                );
+              });
             })}
           </Grid>
           
