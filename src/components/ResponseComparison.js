@@ -526,9 +526,9 @@ const ResponseComparison = ({
           // Get token usage
           const tokenUsage = modelMetrics?.tokenUsage?.total;
           
-          // Calculate cost (default to zero if no token usage available)
-          const cost = tokenUsage 
-            ? calculateCost(modelName, tokenUsage) 
+          // Calculate cost (pass the entire tokenUsage object instead of just total)
+          const cost = modelMetrics?.tokenUsage
+            ? calculateCost(modelName, modelMetrics.tokenUsage) 
             : 0;
           
           tableData.push([
@@ -1161,9 +1161,9 @@ const ResponseComparison = ({
                       // Get token usage
                       const tokenUsage = modelMetrics?.tokenUsage?.total;
                       
-                      // Calculate cost (default to zero if no token usage available)
-                      const cost = tokenUsage 
-                        ? calculateCost(displayName, tokenUsage) 
+                      // Calculate cost (pass the entire tokenUsage object instead of just total)
+                      const cost = modelMetrics?.tokenUsage
+                        ? calculateCost(displayName, modelMetrics.tokenUsage) 
                         : 0;
                       
                       // For debugging - log what's happening with this row's metrics
@@ -1210,12 +1210,15 @@ const ResponseComparison = ({
                             </Box>
                           </TableCell>
                           <TableCell>
-                            <Tooltip title={`Input: ~${modelMetrics?.tokenUsage?.input || 'Unknown'} tokens, Output: ~${modelMetrics?.tokenUsage?.output || 'Unknown'} tokens`}>
+                            <Tooltip title={`Input: ~${modelMetrics?.tokenUsage?.input || modelMetrics?.tokenUsage?.prompt_tokens || 'Unknown'} tokens, Output: ~${modelMetrics?.tokenUsage?.output || modelMetrics?.tokenUsage?.completion_tokens || 'Unknown'} tokens`}>
                               <Stack direction="row" spacing={0.5} alignItems="center">
                                 <TokenIcon fontSize="small" />
                                 <Typography variant="body2">
                                   {modelMetrics?.tokenUsage?.estimated ? '~' : ''}
-                                  {modelMetrics?.tokenUsage?.total || 'Unknown'} tokens
+                                  {modelMetrics?.tokenUsage?.total || 
+                                   (modelMetrics?.tokenUsage?.prompt_tokens && modelMetrics?.tokenUsage?.completion_tokens ? 
+                                     (modelMetrics.tokenUsage.prompt_tokens + modelMetrics.tokenUsage.completion_tokens) : 
+                                     'Unknown')} tokens
                                 </Typography>
                               </Stack>
                             </Tooltip>
@@ -1546,9 +1549,9 @@ const ResponseComparison = ({
                     // Get token usage
                     const tokenUsage = modelMetrics?.tokenUsage?.total;
                     
-                    // Calculate cost (default to zero if no token usage available)
-                    const cost = tokenUsage 
-                      ? calculateCost(displayName, tokenUsage) 
+                    // Calculate cost (pass the entire tokenUsage object instead of just total)
+                    const cost = modelMetrics?.tokenUsage
+                      ? calculateCost(displayName, modelMetrics.tokenUsage) 
                       : 0;
                     
                     // For debugging

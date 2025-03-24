@@ -465,7 +465,7 @@ export class CustomAzureOpenAI {
     this.queryId = options.queryId || null;
     
     // Initialize proxyUrl with default value to prevent undefined errors
-    this.proxyUrl = options.proxyUrl || apiConfig.openAI.proxyUrl || '/api/proxy/openai';
+    this.proxyUrl = options.proxyUrl || '/api/proxy/azure/chat/completions';
     
     // If deployment name is not provided, try to get it from model config
     if (!this.deploymentName) {
@@ -657,136 +657,117 @@ export class CustomAzureOpenAI {
       
       // Use axios to send to proxy
       console.log('[DEBUG] Sending Azure request via proxy:', this.proxyUrl);
-      const apiResponse = await axios.post(this.proxyUrl, requestData);
-      console.log('[DEBUG] Response received from Azure:', typeof apiResponse.data);
+      console.log('[DEBUG] Using Azure endpoint:', this.endpoint);
+      console.log('[DEBUG] Using Azure deployment:', finalDeploymentName);
       
-      // Special handling for o3-mini model which has a different response format
-      if (this.modelName === 'azure-o3-mini' || finalDeploymentName === 'o3-mini-early-access') {
-        console.log('[DEBUG] Processing o3-mini response format');
-        console.log('[DEBUG] Raw response data keys:', Object.keys(apiResponse.data || {}));
+      try {
+        const apiResponse = await axios.post(this.proxyUrl, requestData);
+        console.log('[DEBUG] Response received from Azure:', typeof apiResponse.data);
         
-        // Extract relevant fields from the response
-        const responseData = apiResponse.data;
-        
-        // Extract content from o3-mini response which can have different structures
-        let content = '';
-        
-        if (responseData.choices && responseData.choices.length > 0) {
-          const choice = responseData.choices[0];
+        // Special handling for o3-mini model which has a different response format
+        if (this.modelName === 'azure-o3-mini' || finalDeploymentName === 'o3-mini-early-access') {
+          console.log('[DEBUG] Processing o3-mini response format');
+          console.log('[DEBUG] Raw response data keys:', Object.keys(apiResponse.data || {}));
           
-          console.log('[DEBUG] o3-mini choice:', choice);
+          // Extract relevant fields from the response
+          const responseData = apiResponse.data;
           
-          // Try to get content from message.content first (standard format)
-          if (choice.message && choice.message.content) {
-            content = choice.message.content;
-          } 
-          // Fall back to content directly on the choice (sometimes happens)
-          else if (choice.content) {
-            content = choice.content;
+          // Extract content from o3-mini response which can have different structures
+          let content = '';
+          
+          if (responseData.choices && responseData.choices.length > 0) {
+            const choice = responseData.choices[0];
+            
+            console.log('[DEBUG] o3-mini choice:', choice);
+            
+            // Try to get content from message.content first (standard format)
+            if (choice.message && choice.message.content) {
+              content = choice.message.content;
+            } 
+            // Fall back to content directly on the choice (sometimes happens)
+            else if (choice.content) {
+              content = choice.content;
+            }
+            // If no content but we have finish_reason, check if it's length (truncated)
+            else if (choice.finish_reason === 'length' && responseData.usage) {
+              content = `[Response truncated due to length limit. The model generated ${responseData.usage.completion_tokens} tokens but didn't return content. Try a shorter prompt.]`;
+            }
           }
-          // If no content but we have finish_reason, check if it's length (truncated)
-          else if (choice.finish_reason === 'length' && responseData.usage) {
-            content = `[Response truncated due to length limit. The model generated ${responseData.usage.completion_tokens} tokens but didn't return content. Try a shorter prompt.]`;
+          
+          // If we still don't have content but have usage, provide a helpful message
+          if ((!content || content.trim() === '') && 
+              responseData.usage && 
+              responseData.usage.completion_tokens > 0) {
+            content = `[The model generated ${responseData.usage.completion_tokens} tokens but returned empty content. This may be due to hitting token limits or model constraints. Try a shorter prompt or use azure-gpt-4o-mini instead.]`;
+          }
+          
+          // Return a standardized response object with full data for debugging
+          return {
+            text: content || '[No content returned from the model]',
+            content: content,
+            rawResponse: responseData,
+            tokenUsage: responseData.usage,
+            elapsedTime: Date.now() - options.startTime || 0
+          };
+        }
+        
+        // For standard models, return the formatted response
+        return {
+          text: apiResponse.data.choices[0].message.content,
+          content: apiResponse.data.choices[0].message.content, 
+          tokenUsage: apiResponse.data.usage,
+          rawResponse: apiResponse.data,
+          elapsedTime: Date.now() - options.startTime || 0
+        };
+      } catch (error) {
+        safeLogger.error('Error calling Azure OpenAI API:', error);
+        console.error('[DEBUG] Azure OpenAI API Call Failed:', error.message);
+        
+        // Special handling for o3-mini errors
+        if (this.modelName.includes('o3-mini') || this.deploymentName?.includes('o3-mini')) {
+          console.error('[o3-mini ERROR] Detailed error information:', error);
+          if (error.response) {
+            console.error('[o3-mini ERROR] Response data:', JSON.stringify(error.response.data, null, 2));
           }
         }
         
-        // If we still don't have content but have usage, provide a helpful message
-        if ((!content || content.trim() === '') && 
-            responseData.usage && 
-            responseData.usage.completion_tokens > 0) {
-          content = `[The model generated ${responseData.usage.completion_tokens} tokens but returned empty content. This may be due to hitting token limits or model constraints. Try a shorter prompt or use azure-gpt-4o-mini instead.]`;
-        }
-        
-        // Return a standardized response object
-        return {
-          text: content || '[No content returned from the model]',
-          rawResponse: responseData,
-          tokenUsage: responseData.usage ? {
-            input: responseData.usage.prompt_tokens || 0,
-            output: responseData.usage.completion_tokens || 0,
-            total: responseData.usage.total_tokens || 0
-          } : {
-            estimated: true,
-            input: Math.round((messages[0]?.content?.length || 0) / 4),
-            output: 0,
-            total: Math.round((messages[0]?.content?.length || 0) / 4)
-          }
-        };
-      }
-      
-      // Standard processing for other Azure models
-      const data = apiResponse.data;
-      
-      // Process the response
-      const choice = data.choices && data.choices[0];
-      
-      if (!choice) {
-        console.error('[ERROR] No choices in Azure response:', data);
-        return {
-          text: 'Error: No response was generated.',
-          tokenUsage: {
-            estimated: true,
-            input: Math.round((messages[0]?.content?.length || 0) / 4),
-            output: 0,
-            total: Math.round((messages[0]?.content?.length || 0) / 4)
-          }
-        };
-      }
-      
-      return {
-        text: choice.message.content,
-        tokenUsage: {
-          estimated: true,
-          input: Math.round((messages[0]?.content?.length || 0) / 4),
-          output: Math.round((choice.message.content?.length || 0) / 4),
-          total: Math.round((choice.message.content?.length || 0) / 4)
-        }
-      };
-    } catch (error) {
-      safeLogger.error('Error calling Azure OpenAI API:', error);
-      console.error('[DEBUG] Azure OpenAI API Call Failed:', error.message);
-      
-      // Special handling for o3-mini errors
-      if (this.modelName.includes('o3-mini') || this.deploymentName?.includes('o3-mini')) {
-        console.error('[o3-mini ERROR] Detailed error information:', error);
+        // Log more detailed error information for debugging
         if (error.response) {
-          console.error('[o3-mini ERROR] Response data:', JSON.stringify(error.response.data, null, 2));
-        }
-      }
-      
-      // Log more detailed error information for debugging
-      if (error.response) {
-        safeLogger.error('Response data:', error.response.data);
-        safeLogger.error('Response status:', error.response.status);
-        safeLogger.error('Response headers:', error.response.headers);
-        
-        console.error('[DEBUG] Response Status:', error.response.status);
-        console.error('[DEBUG] Response Data:', JSON.stringify(error.response.data, null, 2));
-        
-        // Provide a more specific error message based on the status code
-        const status = error.response.status;
-        const errorData = error.response.data?.error || {};
-        
-        if (status === 404 && errorData.code === 'DeploymentNotFound') {
-          // Special handling for deployment not found errors
-          if (this.deploymentName === 'o3-mini') {
-            throw new Error(`Azure OpenAI deployment '${this.deploymentName}' not found. The o3-mini model may not be available in your Azure account. Consider using 'gpt-4o-mini' deployment instead or request access to o3-mini.`);
+          safeLogger.error('Response data:', error.response.data);
+          safeLogger.error('Response status:', error.response.status);
+          safeLogger.error('Response headers:', error.response.headers);
+          
+          console.error('[DEBUG] Response Status:', error.response.status);
+          console.error('[DEBUG] Response Data:', JSON.stringify(error.response.data, null, 2));
+          
+          // Provide a more specific error message based on the status code
+          const status = error.response.status;
+          const errorData = error.response.data?.error || {};
+          
+          if (status === 404 && errorData.code === 'DeploymentNotFound') {
+            // Special handling for deployment not found errors
+            if (this.deploymentName === 'o3-mini') {
+              throw new Error(`Azure OpenAI deployment '${this.deploymentName}' not found. The o3-mini model may not be available in your Azure account. Consider using 'gpt-4o-mini' deployment instead or request access to o3-mini.`);
+            } else {
+              throw new Error(`Azure OpenAI deployment '${this.deploymentName}' not found. Please check your deployment name in the Azure portal and ensure it's properly configured.`);
+            }
+          } else if (status === 401) {
+            throw new Error(`Azure OpenAI API error: Authentication failed. Please check your API key.`);
+          } else if (status === 400) {
+            throw new Error(`Azure OpenAI API error: Bad request - ${error.response.data?.error?.message || 'check your request parameters.'}`);
           } else {
-            throw new Error(`Azure OpenAI deployment '${this.deploymentName}' not found. Please check your deployment name in the Azure portal and ensure it's properly configured.`);
+            throw new Error(`Azure OpenAI API error: Request failed with status code ${status} - ${error.response.data?.error?.message || error.message}`);
           }
-        } else if (status === 401) {
-          throw new Error(`Azure OpenAI API error: Authentication failed. Please check your API key.`);
-        } else if (status === 400) {
-          throw new Error(`Azure OpenAI API error: Bad request - ${error.response.data?.error?.message || 'check your request parameters.'}`);
+        } else if (error.request) {
+          console.error('[DEBUG] No response received for request:', error.request);
+          throw new Error(`Azure OpenAI API error: No response received from server. Please check your network connection and Azure endpoint URL.`);
         } else {
-          throw new Error(`Azure OpenAI API error: Request failed with status code ${status} - ${error.response.data?.error?.message || error.message}`);
+          throw new Error(`Azure OpenAI API error: ${error.message}`);
         }
-      } else if (error.request) {
-        console.error('[DEBUG] No response received for request:', error.request);
-        throw new Error(`Azure OpenAI API error: No response received from server. Please check your network connection and Azure endpoint URL.`);
-      } else {
-        throw new Error(`Azure OpenAI API error: ${error.message}`);
       }
+    } catch (error) {
+      safeLogger.error('Error in Azure OpenAI call:', error);
+      throw error;
     }
   }
 
@@ -909,6 +890,9 @@ export const createLlmInstance = (model, systemPrompt, options = {}) => {
   } else if (vendor === 'AzureOpenAI') {
     console.log(`Creating Azure OpenAI instance for ${model} with deployment name ${finalModelConfig.deploymentName || model.replace('azure-', '')}`);
     
+    // Use dedicated Azure proxy URL instead of OpenAI proxy
+    const azureProxyUrl = '/api/proxy/azure/chat/completions';
+    
     // Special handling for o3-mini to allow fallback
     if (model === 'azure-o3-mini') {
       return new CustomAzureOpenAI({
@@ -919,7 +903,7 @@ export const createLlmInstance = (model, systemPrompt, options = {}) => {
         apiKey: options.azureApiKey,
         endpoint: options.azureEndpoint,
         apiVersion: finalModelConfig.apiVersion || '2024-02-01',
-        proxyUrl: openAIProxyUrl,
+        proxyUrl: azureProxyUrl,
         queryId: options.queryId,
         fallbackOnError: true // Enable automatic fallback to gpt-4o-mini if o3-mini fails
       });
@@ -933,7 +917,7 @@ export const createLlmInstance = (model, systemPrompt, options = {}) => {
       apiKey: options.azureApiKey,
       endpoint: options.azureEndpoint,
       apiVersion: finalModelConfig.apiVersion,
-      proxyUrl: openAIProxyUrl,
+      proxyUrl: azureProxyUrl,
       queryId: options.queryId
     });
   } else {
@@ -1028,9 +1012,42 @@ export const executeQuery = async (chain, query) => {
 };
 
 // Calculate cost for token usage with a specific model - use the centralized function
-export const calculateCost = (model, tokenCount) => {
-  // If token count is not a number, return 0
-  if (typeof tokenCount !== 'number' || isNaN(tokenCount)) {
+export const calculateCost = (model, tokenUsage) => {
+  // Handle different ways the token count might be provided
+  let inputTokens = 0;
+  let outputTokens = 0;
+  
+  if (typeof tokenUsage === 'number') {
+    // Simple total token count case
+    inputTokens = tokenUsage / 2;  // Estimate 50/50 split
+    outputTokens = tokenUsage / 2;
+  } else if (tokenUsage && typeof tokenUsage === 'object') {
+    // Detailed token usage object
+    
+    // Handle format with input/output
+    if (tokenUsage.input !== undefined && tokenUsage.output !== undefined) {
+      inputTokens = tokenUsage.input || 0;
+      outputTokens = tokenUsage.output || 0;
+    } 
+    // Handle OpenAI/Azure format with prompt_tokens/completion_tokens
+    else if (tokenUsage.prompt_tokens !== undefined || tokenUsage.completion_tokens !== undefined) {
+      inputTokens = tokenUsage.prompt_tokens || 0;
+      outputTokens = tokenUsage.completion_tokens || 0;
+    }
+    // Just total tokens provided - estimate split
+    else if (tokenUsage.total !== undefined) {
+      inputTokens = tokenUsage.total / 2;
+      outputTokens = tokenUsage.total / 2;
+    }
+    // Handle total_tokens format (some API responses)
+    else if (tokenUsage.total_tokens !== undefined) {
+      inputTokens = tokenUsage.total_tokens / 2;
+      outputTokens = tokenUsage.total_tokens / 2;
+    }
+  }
+  
+  // If no valid token counts, return 0
+  if (isNaN(inputTokens) || isNaN(outputTokens)) {
     return 0;
   }
 
@@ -1044,11 +1061,6 @@ export const calculateCost = (model, tokenCount) => {
   if (!modelConfig.input && !modelConfig.output) {
     return 0;
   }
-
-  // For simplicity, assume a 50/50 split between input and output tokens
-  // if not specified
-  const inputTokens = tokenCount / 2;
-  const outputTokens = tokenCount / 2;
   
   // Calculate cost (price per 1M tokens * token count / 1M)
   const inputCost = (modelConfig.input * inputTokens) / 1000000;

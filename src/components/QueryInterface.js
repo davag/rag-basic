@@ -38,6 +38,7 @@ import { ParallelLLMProcessor } from '../utils/parallelLLMProcessor';
 import AddIcon from '@mui/icons-material/Add';
 import DeleteIcon from '@mui/icons-material/Delete';
 import { v4 as uuidv4 } from 'uuid';
+import { vendorColors, defaultModels, apiConfig } from '../config/llmConfig';
 
 const DEFAULT_SYSTEM_PROMPT = `You are a helpful assistant that answers questions based on the provided context.
 If the answer is not in the context, say that you don't know. 
@@ -45,6 +46,11 @@ Do not make up information that is not in the context.
 Provide detailed reasoning and comprehensive answers when possible, exploring the nuances of the question.
 If there are multiple possible interpretations or perspectives in the context, discuss them.
 Use up to 4000 tokens if necessary to fully explain complex topics.`;
+
+// Helper function to calculate cost per 1K tokens
+const calculateCostPer1K = (model) => {
+  return ((model.input || 0) + (model.output || 0)) / 1000;
+};
 
 const QueryInterface = ({ vectorStore, namespaces = [], onQuerySubmitted, isProcessing, setIsProcessing, initialState }) => {
   const [query, setQuery] = useState(initialState?.query || '');
@@ -261,6 +267,7 @@ const QueryInterface = ({ vectorStore, namespaces = [], onQuerySubmitted, isProc
     setQuery(event.target.value);
   };
 
+  // eslint-disable-next-line no-unused-vars
   const handleModelChange = (event) => {
     setSelectedModels(event.target.value);
   };
@@ -1074,6 +1081,39 @@ Format your response in a clear, structured way. Focus on actionable improvement
     return formattedText;
   };
 
+  // Add an effect to validate Azure models selections
+  useEffect(() => {
+    // Check if any Azure OpenAI models are selected
+    const hasAzureModels = selectedModels.some(model => model.startsWith('azure-'));
+    
+    // If Azure models are selected, check for required configuration
+    if (hasAzureModels) {
+      const azureApiKey = apiConfig.azure.apiKey;
+      const azureEndpoint = apiConfig.azure.endpoint;
+      
+      if (!azureApiKey || !azureEndpoint) {
+        console.warn(
+          'Azure OpenAI models selected but API key or endpoint missing. ' +
+          'Configure these in LLM Settings or add REACT_APP_AZURE_OPENAI_API_KEY and ' +
+          'REACT_APP_AZURE_OPENAI_ENDPOINT to your environment variables.'
+        );
+        
+        // Only show warning if no error exists already
+        if (!error) {
+          setError(
+            'Azure OpenAI configuration incomplete. Please set up Azure OpenAI API key and endpoint ' +
+            'in the LLM Settings page or your environment variables.'
+          );
+        }
+      } else {
+        // Clear any Azure-related errors if configuration is valid
+        if (error && error.includes('Azure OpenAI configuration')) {
+          setError(null);
+        }
+      }
+    }
+  }, [selectedModels, error]);
+
   return (
     <Box>
       <Paper elevation={1} sx={{ p: 3, mb: 3 }}>
@@ -1147,53 +1187,273 @@ Format your response in a clear, structured way. Focus on actionable improvement
           </AccordionDetails>
         </Accordion>
 
-        <FormControl fullWidth sx={{ mb: 3 }}>
-          <InputLabel id="model-select-label">Select Models to Compare</InputLabel>
-          <Select
-            labelId="model-select-label"
-            id="model-select"
-            multiple
-            value={selectedModels}
-            onChange={handleModelChange}
-            renderValue={(selected) => (
-              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
-                {selected.map((value) => (
-                  <Chip key={value} label={value} />
+        <Box sx={{ mb: 3 }}>
+          <Typography variant="subtitle1" gutterBottom>
+            Select Models to Compare
+          </Typography>
+          <Paper elevation={1} sx={{ p: 2 }}>
+            {/* OpenAI Models */}
+            <Box sx={{ mb: 2 }}>
+              <Typography variant="subtitle2" sx={{ mb: 1, color: vendorColors['OpenAI'] }}>
+                OpenAI Models
+              </Typography>
+              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+                {Object.entries(defaultModels)
+                  .filter(([_, model]) => model.vendor === 'OpenAI' && model.active)
+                  .map(([modelId, model]) => (
+                  <Chip
+                    key={modelId}
+                    label={
+                      <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                        <span>{modelId}</span>
+                        {calculateCostPer1K(model) > 0 && (
+                          <Typography 
+                            variant="caption" 
+                            color={selectedModels.includes(modelId) ? "text.secondary" : "text.secondary"}
+                            sx={{ 
+                              ml: 0.5,
+                              opacity: 0.8,
+                              fontWeight: 500
+                            }}
+                          >
+                            ${calculateCostPer1K(model).toFixed(4)}
+                          </Typography>
+                        )}
+                      </Box>
+                    }
+                    clickable
+                    onClick={() => {
+                      const newSelected = selectedModels.includes(modelId)
+                        ? selectedModels.filter(m => m !== modelId)
+                        : [...selectedModels, modelId];
+                      setSelectedModels(newSelected);
+                    }}
+                    color={selectedModels.includes(modelId) ? "default" : "default"}
+                    disabled={isProcessing}
+                    sx={{ 
+                      bgcolor: selectedModels.includes(modelId) ? `${vendorColors['OpenAI']}12` : 'default',
+                      borderColor: selectedModels.includes(modelId) ? vendorColors['OpenAI'] : '#e0e0e0',
+                      borderWidth: 1,
+                      borderStyle: 'solid',
+                      fontWeight: selectedModels.includes(modelId) ? 500 : 400,
+                      boxShadow: selectedModels.includes(modelId) ? 1 : 0,
+                      '& .MuiChip-label': {
+                        color: 'text.primary',
+                      },
+                      '&:hover': {
+                        bgcolor: selectedModels.includes(modelId) ? `${vendorColors['OpenAI']}18` : ''
+                      }
+                    }}
+                  />
                 ))}
               </Box>
+            </Box>
+
+            {/* Anthropic Models */}
+            <Box sx={{ mb: 2 }}>
+              <Typography variant="subtitle2" sx={{ mb: 1, color: vendorColors['Anthropic'] }}>
+                Anthropic Models
+              </Typography>
+              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+                {Object.entries(defaultModels)
+                  .filter(([_, model]) => model.vendor === 'Anthropic' && model.active)
+                  .map(([modelId, model]) => (
+                  <Chip
+                    key={modelId}
+                    label={
+                      <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                        <span>{modelId}</span>
+                        {calculateCostPer1K(model) > 0 && (
+                          <Typography 
+                            variant="caption" 
+                            color={selectedModels.includes(modelId) ? "text.secondary" : "text.secondary"}
+                            sx={{ 
+                              ml: 0.5,
+                              opacity: 0.8,
+                              fontWeight: 500
+                            }}
+                          >
+                            ${calculateCostPer1K(model).toFixed(4)}
+                          </Typography>
+                        )}
+                      </Box>
+                    }
+                    clickable
+                    onClick={() => {
+                      const newSelected = selectedModels.includes(modelId)
+                        ? selectedModels.filter(m => m !== modelId)
+                        : [...selectedModels, modelId];
+                      setSelectedModels(newSelected);
+                    }}
+                    color={selectedModels.includes(modelId) ? "default" : "default"}
+                    disabled={isProcessing}
+                    sx={{ 
+                      bgcolor: selectedModels.includes(modelId) ? `${vendorColors['Anthropic']}12` : 'default',
+                      borderColor: selectedModels.includes(modelId) ? vendorColors['Anthropic'] : '#e0e0e0',
+                      borderWidth: 1,
+                      borderStyle: 'solid',
+                      fontWeight: selectedModels.includes(modelId) ? 500 : 400,
+                      boxShadow: selectedModels.includes(modelId) ? 1 : 0,
+                      '& .MuiChip-label': {
+                        color: 'text.primary',
+                      },
+                      '&:hover': {
+                        bgcolor: selectedModels.includes(modelId) ? `${vendorColors['Anthropic']}18` : ''
+                      }
+                    }}
+                  />
+                ))}
+              </Box>
+            </Box>
+
+            {/* Ollama Models */}
+            <Box sx={{ mb: 2 }}>
+              <Typography variant="subtitle2" sx={{ mb: 1, color: vendorColors['Ollama'] }}>
+                Ollama Models
+              </Typography>
+              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+                {Object.entries(defaultModels)
+                  .filter(([_, model]) => model.vendor === 'Ollama' && model.active)
+                  .map(([modelId, model]) => (
+                  <Chip
+                    key={modelId}
+                    label={
+                      <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                        <span>{modelId}</span>
+                        {calculateCostPer1K(model) > 0 && (
+                          <Typography 
+                            variant="caption" 
+                            color={selectedModels.includes(modelId) ? "text.secondary" : "text.secondary"}
+                            sx={{ 
+                              ml: 0.5,
+                              opacity: 0.8,
+                              fontWeight: 500
+                            }}
+                          >
+                            ${calculateCostPer1K(model).toFixed(4)}
+                          </Typography>
+                        )}
+                      </Box>
+                    }
+                    clickable
+                    onClick={() => {
+                      const newSelected = selectedModels.includes(modelId)
+                        ? selectedModels.filter(m => m !== modelId)
+                        : [...selectedModels, modelId];
+                      setSelectedModels(newSelected);
+                    }}
+                    color={selectedModels.includes(modelId) ? "default" : "default"}
+                    disabled={isProcessing}
+                    sx={{ 
+                      bgcolor: selectedModels.includes(modelId) ? `${vendorColors['Ollama']}12` : 'default',
+                      borderColor: selectedModels.includes(modelId) ? vendorColors['Ollama'] : '#e0e0e0',
+                      borderWidth: 1,
+                      borderStyle: 'solid',
+                      fontWeight: selectedModels.includes(modelId) ? 500 : 400,
+                      boxShadow: selectedModels.includes(modelId) ? 1 : 0,
+                      '& .MuiChip-label': {
+                        color: 'text.primary',
+                      },
+                      '&:hover': {
+                        bgcolor: selectedModels.includes(modelId) ? `${vendorColors['Ollama']}18` : ''
+                      }
+                    }}
+                  />
+                ))}
+              </Box>
+            </Box>
+
+            {/* Azure OpenAI Models */}
+            <Box>
+              <Typography variant="subtitle2" sx={{ mb: 1, color: vendorColors['AzureOpenAI'] }}>
+                Azure OpenAI Models
+                {!apiConfig.azure.apiKey && (
+                  <Tooltip title="Azure OpenAI API key not configured. Visit LLM Settings to set up.">
+                    <span style={{ marginLeft: '8px', cursor: 'help' }}>⚠️</span>
+                  </Tooltip>
+                )}
+              </Typography>
+              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+                {Object.entries(defaultModels)
+                  .filter(([modelId, model]) => 
+                    model.vendor === 'AzureOpenAI' && 
+                    model.active && 
+                    !modelId.includes('embedding'))
+                  .map(([modelId, model]) => (
+                  <Chip
+                    key={modelId}
+                    label={
+                      <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                        <span>{modelId}</span>
+                        {calculateCostPer1K(model) > 0 && (
+                          <Typography 
+                            variant="caption" 
+                            color={selectedModels.includes(modelId) ? "text.secondary" : "text.secondary"}
+                            sx={{ 
+                              ml: 0.5,
+                              opacity: 0.8,
+                              fontWeight: 500
+                            }}
+                          >
+                            ${calculateCostPer1K(model).toFixed(4)}
+                          </Typography>
+                        )}
+                      </Box>
+                    }
+                    clickable
+                    onClick={() => {
+                      // If no Azure credentials, show a warning
+                      if (!apiConfig.azure.apiKey || !apiConfig.azure.endpoint) {
+                        setError('Azure OpenAI API key and endpoint must be configured to use Azure models. Go to LLM Settings to configure.');
+                        return;
+                      }
+                      
+                      const newSelected = selectedModels.includes(modelId)
+                        ? selectedModels.filter(m => m !== modelId)
+                        : [...selectedModels, modelId];
+                      setSelectedModels(newSelected);
+                    }}
+                    color={selectedModels.includes(modelId) ? "default" : "default"}
+                    disabled={isProcessing || !apiConfig.azure.apiKey || !apiConfig.azure.endpoint}
+                    sx={{ 
+                      bgcolor: selectedModels.includes(modelId) ? `${vendorColors['AzureOpenAI']}12` : 'default',
+                      borderColor: selectedModels.includes(modelId) ? vendorColors['AzureOpenAI'] : '#e0e0e0',
+                      borderWidth: 1,
+                      borderStyle: 'solid',
+                      fontWeight: selectedModels.includes(modelId) ? 500 : 400,
+                      boxShadow: selectedModels.includes(modelId) ? 1 : 0,
+                      '& .MuiChip-label': {
+                        color: 'text.primary',
+                      },
+                      '&:hover': {
+                        bgcolor: selectedModels.includes(modelId) ? `${vendorColors['AzureOpenAI']}18` : ''
+                      },
+                      opacity: !apiConfig.azure.apiKey || !apiConfig.azure.endpoint ? 0.6 : 1,
+                    }}
+                  />
+                ))}
+              </Box>
+              {!apiConfig.azure.apiKey && !apiConfig.azure.endpoint && (
+                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
+                  Azure OpenAI requires API key and endpoint configuration.{' '}
+                  <Link href="/settings" underline="hover">
+                    Go to LLM Settings
+                  </Link>{' '}
+                  to set up.
+                </Typography>
+              )}
+            </Box>
+
+            {/* Selected models summary */}
+            {selectedModels.length > 0 && (
+              <Box sx={{ mt: 2, pt: 2, borderTop: '1px solid #eee' }}>
+                <Typography variant="body2" color="text.secondary">
+                  {selectedModels.length} models selected
+                </Typography>
+              </Box>
             )}
-            disabled={isProcessing}
-          >
-            <MenuItem disabled>
-              <Typography variant="subtitle2">OpenAI Models</Typography>
-            </MenuItem>
-            <MenuItem value="gpt-4o">GPT-4o</MenuItem>
-            <MenuItem value="gpt-4o-mini">GPT-4o-mini</MenuItem>
-            <MenuItem value="o3-mini">o3-mini</MenuItem>
-            <Divider />
-            <MenuItem disabled>
-              <Typography variant="subtitle2">Anthropic Models</Typography>
-            </MenuItem>
-            <MenuItem value="claude-3-5-sonnet-latest">Claude 3.5 Sonnet</MenuItem>
-            <MenuItem value="claude-3-7-sonnet-latest">Claude 3.7 Sonnet</MenuItem>
-            <Divider />
-            <MenuItem disabled>
-              <Typography variant="subtitle2">Ollama Models</Typography>
-            </MenuItem>
-            <MenuItem value="llama3.2:latest">Llama 3 (8B)</MenuItem>
-            <MenuItem value="gemma3:12b">Gemma 3 (12B)</MenuItem>
-            <MenuItem value="mistral:latest">Mistral (7B)</MenuItem>
-            <Divider />
-            <MenuItem disabled>
-              <Typography variant="subtitle2">Azure OpenAI Models</Typography>
-            </MenuItem>
-            <MenuItem value="azure-gpt-4o">Azure GPT-4o</MenuItem>
-            <MenuItem value="azure-gpt-4o-mini">Azure GPT-4o Mini</MenuItem>
-            <MenuItem value="azure-o3-mini">
-              <span>Azure o3-mini</span>
-            </MenuItem>
-          </Select>
-        </FormControl>
+          </Paper>
+        </Box>
 
         <FormControl fullWidth sx={{ mb: 3 }}>
           <InputLabel id="namespace-select-label">Select Namespaces</InputLabel>

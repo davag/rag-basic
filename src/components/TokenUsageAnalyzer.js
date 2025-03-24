@@ -16,7 +16,8 @@ import {
   TableRow,
   Accordion,
   AccordionSummary,
-  AccordionDetails
+  AccordionDetails,
+  LinearProgress
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import TokenIcon from '@mui/icons-material/Token';
@@ -183,6 +184,40 @@ Given the context information and not prior knowledge, answer the question: ${cu
     return null;
   };
   
+  // Helper to normalize token usage data from different LLM providers
+  const normalizeTokenUsage = (tokenUsage) => {
+    if (!tokenUsage) return { input: 0, output: 0, total: 0 };
+    
+    // Handle standard format with input/output
+    if (tokenUsage.input !== undefined && tokenUsage.output !== undefined) {
+      return {
+        input: tokenUsage.input || 0,
+        output: tokenUsage.output || 0,
+        total: tokenUsage.total || (tokenUsage.input || 0) + (tokenUsage.output || 0)
+      };
+    }
+    
+    // Handle Azure/OpenAI format with prompt_tokens/completion_tokens
+    if (tokenUsage.prompt_tokens !== undefined || tokenUsage.completion_tokens !== undefined) {
+      return {
+        input: tokenUsage.prompt_tokens || 0,
+        output: tokenUsage.completion_tokens || 0,
+        total: tokenUsage.total_tokens || (tokenUsage.prompt_tokens || 0) + (tokenUsage.completion_tokens || 0)
+      };
+    }
+    
+    // If we somehow have only 'total', make a reasonable guess
+    if (tokenUsage.total) {
+      return {
+        input: Math.floor(tokenUsage.total * 0.6), // Estimate 60% input
+        output: Math.floor(tokenUsage.total * 0.4), // Estimate 40% output
+        total: tokenUsage.total
+      };
+    }
+    
+    return { input: 0, output: 0, total: 0 };
+  };
+  
   // Helper to calculate percentage of token usage
   const calculatePercentage = (part, total) => {
     if (!part || !total) return 0;
@@ -251,17 +286,7 @@ Given the context information and not prior knowledge, answer the question: ${cu
                 const modelKey = `${setKey}-${model}`;
                 
                 const modelMetrics = findModelMetrics(metrics, modelKey) || {};
-                const tokenUsage = {
-                  input: 0,
-                  output: 0,
-                  total: 0,
-                  ...(modelMetrics.tokenUsage || {})
-                };
-                
-                // Make sure total is properly calculated if missing
-                if (!tokenUsage.total && (tokenUsage.input || tokenUsage.output)) {
-                  tokenUsage.total = (tokenUsage.input || 0) + (tokenUsage.output || 0);
-                }
+                const tokenUsage = normalizeTokenUsage(modelMetrics.tokenUsage || {});
                 
                 const breakdown = tokenBreakdowns[modelKey];
                 const modelWarnings = warnings[modelKey] || [];
@@ -269,8 +294,7 @@ Given the context information and not prior knowledge, answer the question: ${cu
                 // Get cost for this model
                 const modelCost = calculateCost(
                   model, 
-                  (tokenUsage.input || 0) / 1000, 
-                  (tokenUsage.output || 0) / 1000
+                  modelMetrics.tokenUsage || {}
                 ) || 0;
                   
                 if (!breakdown) return null;
@@ -306,27 +330,20 @@ Given the context information and not prior knowledge, answer the question: ${cu
                         
                         {/* Input/Output Breakdown */}
                         <Typography variant="subtitle2" gutterBottom>Input/Output Split</Typography>
-                        <Box sx={{ mb: 2, display: 'flex', alignItems: 'center' }}>
-                          <Box sx={{ flexGrow: 1 }}>
-                            <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                              <Box 
-                                sx={{ 
-                                  width: `${tokenUsage.total ? calculatePercentage(tokenUsage.input, tokenUsage.total) : 50}%`, 
-                                  bgcolor: 'primary.main', 
-                                  height: 10, 
-                                  borderRadius: '4px 0 0 4px' 
-                                }} 
-                              />
-                              <Box 
-                                sx={{ 
-                                  width: `${tokenUsage.total ? calculatePercentage(tokenUsage.output, tokenUsage.total) : 50}%`, 
-                                  bgcolor: 'secondary.main', 
-                                  height: 10, 
-                                  borderRadius: '0 4px 4px 0' 
-                                }} 
-                              />
-                            </Box>
-                          </Box>
+                        <Box sx={{ mb: 2 }}>
+                          <LinearProgress
+                            variant="determinate"
+                            value={tokenUsage.total ? (tokenUsage.input / tokenUsage.total) * 100 : 0}
+                            sx={{
+                              height: 10,
+                              borderRadius: 1,
+                              backgroundColor: 'secondary.light',
+                              '& .MuiLinearProgress-bar': {
+                                backgroundColor: 'primary.main',
+                              }
+                            }}
+                          />
+                          
                           <Box sx={{ ml: 2, display: 'flex', fontSize: '0.75rem' }}>
                             <Box sx={{ color: 'primary.main', display: 'flex', alignItems: 'center', mr: 1 }}>
                               <Box sx={{ width: 8, height: 8, bgcolor: 'primary.main', borderRadius: 1, mr: 0.5 }} />

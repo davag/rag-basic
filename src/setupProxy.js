@@ -346,7 +346,7 @@ module.exports = function(app) {
 
   // Proxy Azure OpenAI API requests
   app.use(
-    '/api/proxy/azure',
+    '/api/proxy/azure/chat/completions',
     createProxyMiddleware({
       target: 'https://api.openai.com', // This will be overridden by the actual Azure endpoint
       changeOrigin: true,
