@@ -1335,6 +1335,36 @@ const ResponseComparison = ({
                 {(() => {
                   const modelCards = [];
                   
+                  // Utility function to diagnose o3-mini responses
+                  const diagnoseO3MiniResponse = (modelResponse) => {
+                    console.log(`[O3-MINI DIAGNOSTIC] Examining response:`, modelResponse);
+                    
+                    if (!modelResponse) {
+                      console.log('[O3-MINI DIAGNOSTIC] Response is null or undefined');
+                      return;
+                    }
+                    
+                    // Check for exact format as in example
+                    if (modelResponse.id && modelResponse.choices && modelResponse.choices[0]?.message?.content) {
+                      console.log('[O3-MINI DIAGNOSTIC] Found standard OpenAI format with choices[0].message.content:', 
+                                  modelResponse.choices[0].message.content.substring(0, 100) + '...');
+                    }
+                    
+                    // Check for text field
+                    if (modelResponse.text) {
+                      console.log('[O3-MINI DIAGNOSTIC] Found text field:', modelResponse.text.substring(0, 100) + '...');
+                    }
+                    
+                    // Check for raw response
+                    if (modelResponse.rawResponse) {
+                      console.log('[O3-MINI DIAGNOSTIC] Has rawResponse');
+                      if (modelResponse.rawResponse.choices && modelResponse.rawResponse.choices[0]?.message?.content) {
+                        console.log('[O3-MINI DIAGNOSTIC] Found content in rawResponse.choices[0].message.content:', 
+                                    modelResponse.rawResponse.choices[0].message.content.substring(0, 100) + '...');
+                      }
+                    }
+                  };
+                  
                   // Debug log to understand the structure
                   console.log("Response structure for model cards:", responses);
                   
@@ -1348,13 +1378,21 @@ const ResponseComparison = ({
                         // For each model in the set
                         Object.entries(setModels).forEach(([modelKey, modelResponse]) => {
                           console.log(`Processing model ${modelKey} in ${setKey}`);
+                          
+                          // Special debug for o3-mini
+                          if (modelKey.includes('o3-mini')) {
+                            console.log(`[O3-MINI DEBUG] Found o3-mini model in ${setKey}`);
+                            diagnoseO3MiniResponse(modelResponse);
+                          }
+                          
                           // Check if this is a real model key (not metadata)
                           const isModelKey = 
                             modelKey.includes('gpt-') || 
                             modelKey.includes('claude-') ||
                             modelKey.includes('llama') ||
                             modelKey.includes('mistral') ||
-                            modelKey.includes('gemma');
+                            modelKey.includes('gemma') ||
+                            modelKey.includes('o3-mini');
                             
                           if (isModelKey) {
                             modelCards.push({
@@ -1395,13 +1433,20 @@ const ResponseComparison = ({
                           Object.entries(container.models).forEach(([setKey, setModels]) => {
                             if (typeof setModels === 'object' && !Array.isArray(setModels)) {
                               Object.entries(setModels).forEach(([modelKey, modelResponse]) => {
+                                // Special debug for o3-mini
+                                if (modelKey.includes('o3-mini')) {
+                                  console.log(`[O3-MINI DEBUG] Found o3-mini model in ${setKey} (container)`);
+                                  diagnoseO3MiniResponse(modelResponse);
+                                }
+                                
                                 // Check if this is a real model key (not metadata)
                                 const isModelKey = 
                                   modelKey.includes('gpt-') || 
                                   modelKey.includes('claude-') ||
                                   modelKey.includes('llama') ||
                                   modelKey.includes('mistral') ||
-                                  modelKey.includes('gemma');
+                                  modelKey.includes('gemma') ||
+                                  modelKey.includes('o3-mini');
                                   
                                 if (isModelKey) {
                                   modelCards.push({
@@ -1419,7 +1464,7 @@ const ResponseComparison = ({
                       });
                     } else if (models) {
                       // Process regular legacy format
-                      const modelKeyRegex = /^(gpt-|claude-|llama|mistral|gemma)/;
+                      const modelKeyRegex = /^(gpt-|claude-|llama|mistral|gemma|o3-mini)/;
                       
                       // Handle legacy format or direct model responses
                       Object.entries(models).forEach(([key, value]) => {
@@ -1582,25 +1627,106 @@ const ResponseComparison = ({
                                 
                                 let content = '';
                                 
-                                // Handle different response formats
-                                if (typeof response === 'string') {
-                                  content = response;
-                                } else if (response.text) {
-                                  content = response.text;
-                                } else if (response.answer) {
-                                  content = typeof response.answer === 'object' && response.answer.text
-                                    ? response.answer.text 
-                                    : response.answer;
-                                } else if (response.response) {
-                                  content = response.response;
-                                } else if (response.content) {
-                                  content = response.content;
-                                } else {
-                                  // Handle other potential response structures
-                                  try {
-                                    content = JSON.stringify(response, null, 2);
-                                  } catch (e) {
-                                    content = "Could not display response data";
+                                // Special handling for o3-mini model which has a different response structure
+                                if (displayName.includes('o3-mini')) {
+                                  console.log('[RESPONSE DISPLAY] Processing o3-mini response:', response);
+                                  
+                                  // Function to extract content from o3-mini exact format as in example
+                                  const getO3MiniContent = (resp) => {
+                                    // Check if we have the exact format from the example
+                                    if (resp && resp.choices && 
+                                        resp.choices.length > 0 && 
+                                        resp.choices[0].message && 
+                                        resp.choices[0].message.content) {
+                                      return resp.choices[0].message.content;
+                                    }
+                                    return null;
+                                  };
+                                  
+                                  // First try direct format as in example
+                                  const directContent = getO3MiniContent(response);
+                                  if (directContent) {
+                                    content = directContent;
+                                    console.log('[RESPONSE DISPLAY] Found content directly in choices[0].message.content format:', 
+                                              content.substring(0, 100) + '...');
+                                  }
+                                  // Try text field
+                                  else if (response.text) {
+                                    content = response.text;
+                                    console.log('[RESPONSE DISPLAY] Using text field for o3-mini');
+                                  } 
+                                  // Check for the exact format shown in the example JSON
+                                  else if (response.id && response.choices && response.choices.length > 0 && 
+                                          response.choices[0].message && response.choices[0].message.content) {
+                                    content = response.choices[0].message.content;
+                                    console.log('[RESPONSE DISPLAY] Found content directly in choices[0].message.content format');
+                                  }
+                                  // Check if we have a raw response with choices
+                                  else if (response.rawResponse) {
+                                    const rawContent = getO3MiniContent(response.rawResponse);
+                                    if (rawContent) {
+                                      content = rawContent;
+                                      console.log('[RESPONSE DISPLAY] Found content in rawResponse choices[0].message.content');
+                                    }
+                                    else if (response.rawResponse.choices) {
+                                      const rawChoice = response.rawResponse.choices[0];
+                                      if (rawChoice && rawChoice.message && rawChoice.message.content) {
+                                        content = rawChoice.message.content;
+                                        console.log('[RESPONSE DISPLAY] Using rawResponse.choices[0].message.content for o3-mini');
+                                      }
+                                    }
+                                  }
+                                  // Try standard API response structure
+                                  else if (response.choices && response.choices[0]?.message?.content) {
+                                    content = response.choices[0].message.content;
+                                    console.log('[RESPONSE DISPLAY] Using direct choices[0].message.content for o3-mini');
+                                  }
+                                  // Last resort - try to parse the entire response
+                                  else if (typeof response === 'object') {
+                                    try {
+                                      // Check for content in a nested object
+                                      const objStr = JSON.stringify(response);
+                                      if (objStr.includes('"content"')) {
+                                        // Try to extract content from any nested object
+                                        const matches = objStr.match(/"content"\s*:\s*"([^"]+)"/);
+                                        if (matches && matches[1]) {
+                                          content = matches[1].replace(/\\n/g, '\n').replace(/\\"/g, '"');
+                                          console.log('[RESPONSE DISPLAY] Extracted content from JSON string for o3-mini');
+                                        }
+                                      }
+                                      
+                                      // If still no content found, try using the full JSON response
+                                      if (!content) {
+                                        console.log('[RESPONSE DISPLAY] No content found, displaying full response for o3-mini');
+                                        content = JSON.stringify(response, null, 2);
+                                      }
+                                    } catch (e) {
+                                      console.error('[RESPONSE DISPLAY] Error extracting content:', e);
+                                    }
+                                  }
+                                } 
+                                // Standard handling for other models
+                                else {
+                                  // Handle different response formats
+                                  if (typeof response === 'string') {
+                                    content = response;
+                                  } else if (response.text) {
+                                    content = response.text;
+                                  } else if (response.answer) {
+                                    content = typeof response.answer === 'object' && response.answer.text
+                                      ? response.answer.text 
+                                      : response.answer;
+                                  } else if (response.response) {
+                                    content = response.response;
+                                  } else if (response.content) {
+                                    content = response.content;
+                                  } else {
+                                    // Handle other potential response structures
+                                    try {
+                                      content = JSON.stringify(response, null, 2);
+                                    } catch (e) {
+                                      content = "Could not display response data";
+                                    }
                                   }
                                 }
                                 

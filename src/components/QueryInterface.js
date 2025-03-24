@@ -39,9 +39,12 @@ import AddIcon from '@mui/icons-material/Add';
 import DeleteIcon from '@mui/icons-material/Delete';
 import { v4 as uuidv4 } from 'uuid';
 
-const DEFAULT_SYSTEM_PROMPT = `You are a helpful assistant that answers questions based on the provided context. 
+const DEFAULT_SYSTEM_PROMPT = `You are a helpful assistant that answers questions based on the provided context.
 If the answer is not in the context, say that you don't know. 
-Do not make up information that is not in the context.`;
+Do not make up information that is not in the context.
+Provide detailed reasoning and comprehensive answers when possible, exploring the nuances of the question.
+If there are multiple possible interpretations or perspectives in the context, discuss them.
+Use up to 4000 tokens if necessary to fully explain complex topics.`;
 
 const QueryInterface = ({ vectorStore, namespaces = [], onQuerySubmitted, isProcessing, setIsProcessing, initialState }) => {
   const [query, setQuery] = useState(initialState?.query || '');
@@ -912,6 +915,163 @@ Format your response in a clear, structured way. Focus on actionable improvement
     } finally {
       setIsProcessing(false);
     }
+  };
+
+  // Add a helper method to ensure o3-mini content is properly displayed
+  const extractContentFromResponse = (modelId, responseObj) => {
+    // If it's already a string, just return it
+    if (typeof responseObj === 'string') {
+      return responseObj;
+    }
+    
+    // Handle o3-mini specially
+    if (modelId.includes('o3-mini')) {
+      console.log(`[DISPLAY] Processing o3-mini response:`, JSON.stringify(responseObj, null, 2));
+      
+      // First, check for standard responses
+      if (responseObj?.text) {
+        console.log(`[DISPLAY] Found o3-mini response in .text:`, responseObj.text.substring(0, 100) + '...');
+        return responseObj.text;
+      }
+      
+      // Check for the exact format shown in the user query
+      if (responseObj.id && responseObj.choices && responseObj.choices.length > 0) {
+        const choice = responseObj.choices[0];
+        if (choice.message?.content) {
+          const content = choice.message.content;
+          console.log(`[DISPLAY] Found o3-mini direct response in choices[0].message.content:`, 
+                     content.substring(0, 100) + '...');
+          return content;
+        }
+      }
+      
+      // Check for raw response object with choices
+      if (responseObj?.choices && responseObj.choices.length > 0) {
+        const choice = responseObj.choices[0];
+        const content = choice.message?.content;
+        if (content) {
+          console.log(`[DISPLAY] Found o3-mini response in .choices[0].message.content:`, content.substring(0, 100) + '...');
+          return content;
+        }
+        
+        // Sometimes o3-mini has delta content
+        if (choice.delta?.content) {
+          console.log(`[DISPLAY] Found o3-mini response in .choices[0].delta.content:`, choice.delta.content.substring(0, 100) + '...');
+          return choice.delta.content;
+        }
+        
+        // Check for finish_reason - it might indicate why content is missing
+        if (choice.finish_reason === 'length') {
+          return `[The response was truncated because it reached the token limit. Try a shorter query or a different model.]`;
+        }
+      }
+      
+      // Check for rawResponse which might contain the actual data
+      if (responseObj?.rawResponse) {
+        console.log(`[DISPLAY] Looking deeper in rawResponse:`, JSON.stringify(responseObj.rawResponse, null, 2));
+        
+        // Check for the exact format shown in the user query
+        if (responseObj.rawResponse.id && responseObj.rawResponse.choices && responseObj.rawResponse.choices.length > 0) {
+          const choice = responseObj.rawResponse.choices[0];
+          if (choice.message?.content) {
+            const content = choice.message.content;
+            console.log(`[DISPLAY] Found o3-mini response in rawResponse.choices[0].message.content:`, 
+                       content.substring(0, 100) + '...');
+            return content;
+          }
+        }
+        
+        // Check for completion_tokens_details in the usage data which is unique to o3-mini
+        if (responseObj.rawResponse.usage?.completion_tokens_details) {
+          const details = responseObj.rawResponse.usage.completion_tokens_details;
+          
+          // The key pattern: o3-mini sometimes has reasoning_tokens > 0 but accepted_prediction_tokens = 0
+          if (details.reasoning_tokens > 0 && details.accepted_prediction_tokens === 0) {
+            console.log(`[DISPLAY] Found o3-mini with reasoning (${details.reasoning_tokens} tokens) but no accepted prediction`);
+            return `[The o3-mini model generated reasoning (${details.reasoning_tokens} tokens) but didn't produce a final answer. This is a known limitation of this model. Try a different model like azure-gpt-4o-mini.]`;
+          }
+        }
+        
+        // Try to find content in rawResponse
+        if (responseObj.rawResponse.choices?.[0]?.message?.content) {
+          const content = responseObj.rawResponse.choices[0].message.content;
+          console.log(`[DISPLAY] Found content in rawResponse:`, content.substring(0, 100) + '...');
+          return content;
+        }
+      }
+      
+      // If we found some strings, use those
+      if (responseObj?.content) {
+        console.log(`[DISPLAY] Found o3-mini response in .content:`, responseObj.content.substring(0, 100) + '...');
+        return responseObj.content;
+      }
+      
+      // Try parsing the full response object as JSON to look for content fields
+      try {
+        const objStr = JSON.stringify(responseObj);
+        if (objStr.includes('"content"')) {
+          // Try to extract content from any nested object
+          const matches = objStr.match(/"content"\s*:\s*"([^"]+)"/);
+          if (matches && matches[1]) {
+            const extractedContent = matches[1].replace(/\\n/g, '\n').replace(/\\"/g, '"');
+            console.log('[DISPLAY] Extracted o3-mini content from JSON string:', extractedContent.substring(0, 100) + '...');
+            return extractedContent;
+          }
+        }
+      } catch (e) {
+        console.error('[DISPLAY] Error parsing o3-mini response:', e);
+      }
+    }
+    
+    // Default extraction logic for non-o3-mini models
+    if (responseObj?.text) {
+      return responseObj.text;
+    }
+    
+    if (responseObj?.content) {
+      return responseObj.content;
+    }
+    
+    // Attempt to stringify for raw objects
+    if (typeof responseObj === 'object') {
+      try {
+        return JSON.stringify(responseObj, null, 2);
+      } catch (e) {
+        console.error('Error stringifying response:', e);
+        return 'Error processing response';
+      }
+    }
+    
+    return responseObj?.toString() || 'No content found';
+  };
+  
+  // Update the displayResponse method to use the helper
+  // eslint-disable-next-line no-unused-vars
+  const displayResponse = (modelId, response) => {
+    console.log(`[DISPLAY] displayResponse called for ${modelId}`, response);
+    if (!response) return '';
+    
+    // Extract content using the helper function
+    const content = extractContentFromResponse(modelId, response);
+    console.log(`[DISPLAY] extracted content for ${modelId}:`, content ? content.substring(0, 100) + '...' : 'empty');
+    
+    // Handle special case of missing content for o3-mini
+    if (!content && modelId.includes('o3-mini')) {
+      console.log(`[DISPLAY] o3-mini content is missing, providing fallback message`);
+      // Check if there's any indication of token usage
+      if (response.usage || response.rawResponse?.usage) {
+        const usage = response.usage || response.rawResponse?.usage || {};
+        return `[The o3-mini model processed your query but returned an empty response. ${usage.completion_tokens || 0} tokens were generated. Try a different model.]`;
+      }
+      return '[The o3-mini model did not return content. Try using azure-gpt-4o-mini instead.]';
+    }
+    
+    // Formats citation markers in the text to be highlighted
+    const formattedText = content.replace(/\[\[(.*?)\]\]/g, (match, p1) => {
+      return `<span class="citation-marker">[${p1}]</span>`;
+    });
+    
+    return formattedText;
   };
 
   return (

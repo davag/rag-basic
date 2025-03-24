@@ -162,7 +162,7 @@ class CustomChatAnthropic {
           model: this.modelName,
           messages: formattedMessages,
           system: this.systemPrompt,
-          max_tokens: 1024,
+          max_tokens: 4096,
           temperature: this.temperature,
           anthropicApiKey: apiKey,
           queryId: this.queryId
@@ -375,7 +375,7 @@ class CustomChatOpenAI {
       // Handle special cases for o1 and o3 models
       if (this.modelName.startsWith('o1') || this.modelName.startsWith('o3')) {
         // o1 and o3 models use max_completion_tokens instead of max_tokens
-        requestData.max_completion_tokens = 1024;
+        requestData.max_completion_tokens = 4096;
         
         // Don't set temperature for o1 models, but set it for o3 models if specified
         if (this.modelName.startsWith('o3') && this.temperature !== undefined) {
@@ -383,7 +383,7 @@ class CustomChatOpenAI {
         }
       } else {
         // For other models, use standard parameters
-        requestData.max_tokens = 1024;
+        requestData.max_tokens = 4096;
         if (this.temperature !== undefined) {
           requestData.temperature = this.temperature;
         }
@@ -497,6 +497,55 @@ export class CustomAzureOpenAI {
     safeLogger.log(`Temperature setting: ${this.temperature}`);
   }
 
+  // Helper function to extract any useful content from o3-mini response
+  extractO3MiniContent(response) {
+    if (!response || !response.data) {
+      return null;
+    }
+    
+    // Check in various locations where content might be found
+    if (response.data.choices && response.data.choices.length > 0) {
+      const choice = response.data.choices[0];
+      
+      // Check message.content first
+      if (choice.message?.content) {
+        return choice.message.content;
+      }
+      
+      // Other possible locations
+      if (choice.content) {
+        return choice.content;
+      }
+      
+      if (choice.completion) {
+        return choice.completion;
+      }
+      
+      // Check finish_reason for status info
+      const finishReason = choice.finish_reason;
+      if (finishReason === 'length') {
+        const tokensUsed = response.data.usage?.completion_tokens || 0;
+        return `[Response truncated due to length limit. ${tokensUsed} tokens were generated but the model didn't return content. Try a shorter prompt or different model.]`;
+      }
+      
+      // Fallback message with more information
+      if (finishReason) {
+        return `[Model stopped with reason: ${finishReason}. Try a different prompt or model.]`;
+      }
+    }
+    
+    // Check top-level fields
+    if (response.data.content) {
+      return response.data.content;
+    }
+    
+    if (response.data.completion) {
+      return response.data.completion;
+    }
+    
+    return null;
+  }
+
   async call(messages, options = {}) {
     try {
       // Format messages ensuring system message is first if present
@@ -571,39 +620,139 @@ export class CustomAzureOpenAI {
         requestData.temperature = this.temperature;
       } else if (this.modelName.includes('o3-mini') || finalDeploymentName.includes('o3-mini')) {
         console.log('[DEBUG] Omitting temperature parameter for o3-mini model - not supported');
+        
+        // For o3-mini, use specific parameters known to work better
+        requestData.max_tokens = 2048;
+        requestData.top_p = 0.95;     // Add top_p for better results
+        
+        // Add a system message if not already present to ask for conciseness
+        const hasSystemMessage = formattedMessages.some(msg => msg.role === 'system');
+        if (!hasSystemMessage) {
+          formattedMessages.unshift({
+            role: 'system',
+            content: 'Please provide comprehensive and detailed answers.'
+          });
+          requestData.messages = formattedMessages;
+        } else {
+          // Modify existing system message to encourage detailed reasoning
+          const systemMessageIndex = formattedMessages.findIndex(msg => msg.role === 'system');
+          if (systemMessageIndex !== -1) {
+            const currentContent = formattedMessages[systemMessageIndex].content;
+            // Only append if it doesn't already mention this
+            if (!currentContent.includes('detailed')) {
+              formattedMessages[systemMessageIndex].content += ' Provide detailed reasoning in your answers.';
+            }
+            requestData.messages = formattedMessages;
+          }
+        }
       }
       
-      // Add max tokens
-      requestData.max_tokens = 1024;
+      // Add max tokens (for non-o3-mini models)
+      if (!this.modelName.includes('o3-mini') && !finalDeploymentName.includes('o3-mini')) {
+        requestData.max_tokens = 4096;
+      }
       
       console.log('[DEBUG] About to make Azure API request');
       console.log(`[DEBUG] Request body: ${JSON.stringify(requestData, null, 2)}`);
       
-      // Use direct server endpoint for Azure OpenAI
-      const response = await axios.post(
-        `/api/proxy/azure/chat/completions`,
-        requestData,
-        {
-          headers: {
-            'Content-Type': 'application/json'
+      // Use axios to send to proxy
+      console.log('[DEBUG] Sending Azure request via proxy:', this.proxyUrl);
+      const apiResponse = await axios.post(this.proxyUrl, requestData);
+      console.log('[DEBUG] Response received from Azure:', typeof apiResponse.data);
+      
+      // Special handling for o3-mini model which has a different response format
+      if (this.modelName === 'azure-o3-mini' || finalDeploymentName === 'o3-mini-early-access') {
+        console.log('[DEBUG] Processing o3-mini response format');
+        console.log('[DEBUG] Raw response data keys:', Object.keys(apiResponse.data || {}));
+        
+        // Extract relevant fields from the response
+        const responseData = apiResponse.data;
+        
+        // Extract content from o3-mini response which can have different structures
+        let content = '';
+        
+        if (responseData.choices && responseData.choices.length > 0) {
+          const choice = responseData.choices[0];
+          
+          console.log('[DEBUG] o3-mini choice:', choice);
+          
+          // Try to get content from message.content first (standard format)
+          if (choice.message && choice.message.content) {
+            content = choice.message.content;
+          } 
+          // Fall back to content directly on the choice (sometimes happens)
+          else if (choice.content) {
+            content = choice.content;
+          }
+          // If no content but we have finish_reason, check if it's length (truncated)
+          else if (choice.finish_reason === 'length' && responseData.usage) {
+            content = `[Response truncated due to length limit. The model generated ${responseData.usage.completion_tokens} tokens but didn't return content. Try a shorter prompt.]`;
           }
         }
-      );
-      
-      // Use safe logger and also log to console for debugging
-      safeLogger.log('Azure OpenAI response status:', response.status);
-      console.log('[DEBUG] Azure OpenAI response received with status:', response.status);
-      
-      if (response.data.error) {
-        safeLogger.error('Azure OpenAI API returned an error:', response.data.error);
-        console.error('[DEBUG] Azure OpenAI API Error:', response.data.error);
-        throw new Error(`Azure OpenAI API error: ${response.data.error.message}`);
+        
+        // If we still don't have content but have usage, provide a helpful message
+        if ((!content || content.trim() === '') && 
+            responseData.usage && 
+            responseData.usage.completion_tokens > 0) {
+          content = `[The model generated ${responseData.usage.completion_tokens} tokens but returned empty content. This may be due to hitting token limits or model constraints. Try a shorter prompt or use azure-gpt-4o-mini instead.]`;
+        }
+        
+        // Return a standardized response object
+        return {
+          text: content || '[No content returned from the model]',
+          rawResponse: responseData,
+          tokenUsage: responseData.usage ? {
+            input: responseData.usage.prompt_tokens || 0,
+            output: responseData.usage.completion_tokens || 0,
+            total: responseData.usage.total_tokens || 0
+          } : {
+            estimated: true,
+            input: Math.round((messages[0]?.content?.length || 0) / 4),
+            output: 0,
+            total: Math.round((messages[0]?.content?.length || 0) / 4)
+          }
+        };
       }
       
-      return response.data.choices[0].message.content;
+      // Standard processing for other Azure models
+      const data = apiResponse.data;
+      
+      // Process the response
+      const choice = data.choices && data.choices[0];
+      
+      if (!choice) {
+        console.error('[ERROR] No choices in Azure response:', data);
+        return {
+          text: 'Error: No response was generated.',
+          tokenUsage: {
+            estimated: true,
+            input: Math.round((messages[0]?.content?.length || 0) / 4),
+            output: 0,
+            total: Math.round((messages[0]?.content?.length || 0) / 4)
+          }
+        };
+      }
+      
+      return {
+        text: choice.message.content,
+        tokenUsage: {
+          estimated: true,
+          input: Math.round((messages[0]?.content?.length || 0) / 4),
+          output: Math.round((choice.message.content?.length || 0) / 4),
+          total: Math.round((choice.message.content?.length || 0) / 4)
+        }
+      };
     } catch (error) {
       safeLogger.error('Error calling Azure OpenAI API:', error);
       console.error('[DEBUG] Azure OpenAI API Call Failed:', error.message);
+      
+      // Special handling for o3-mini errors
+      if (this.modelName.includes('o3-mini') || this.deploymentName?.includes('o3-mini')) {
+        console.error('[o3-mini ERROR] Detailed error information:', error);
+        if (error.response) {
+          console.error('[o3-mini ERROR] Response data:', JSON.stringify(error.response.data, null, 2));
+        }
+      }
       
       // Log more detailed error information for debugging
       if (error.response) {
@@ -643,7 +792,55 @@ export class CustomAzureOpenAI {
 
   async invoke(input) {
     if (typeof input === 'string') {
-      return this.call([{ role: 'user', content: input }]);
+      try {
+        // Special handling for o3-mini model
+        if (this.modelName === 'azure-o3-mini') {
+          console.log('[API Services] Using azure-o3-mini model in invoke()');
+          
+          // Use the standard call method but carefully extract content afterward
+          const response = await this.call([
+            { role: 'user', content: input }
+          ], { 
+            temperature: undefined // Explicitly exclude temperature for o3-mini
+          });
+          
+          // Log the response structure
+          console.log('[API Services] o3-mini response structure:', Object.keys(response || {}));
+          
+          // If we got a response but the content is empty, and tokens were used
+          // (this is common with o3-mini), try to extract content from various fields
+          if (
+            (!response.text || response.text.trim() === '') && 
+            response.tokenUsage && 
+            response.tokenUsage.output > 0
+          ) {
+            console.warn('[API Services] o3-mini generated tokens but returned empty content');
+            
+            // Try to extract content from the raw response
+            const extractedContent = this.extractO3MiniContent(response);
+            if (extractedContent) {
+              console.log('[API Services] Extracted alternative content from o3-mini response');
+              response.text = extractedContent;
+            } else {
+              response.text = `[The model generated ${response.tokenUsage.output} tokens but returned empty content. Try using a shorter prompt or a different model.]`;
+            }
+          }
+          
+          return response;
+        }
+        
+        // Standard flow for non-o3-mini models
+        return this.call([{ role: 'user', content: input }]);
+      } catch (error) {
+        console.error(`Error in CustomAzureOpenAI.invoke: ${error.message}`);
+        
+        // For o3-mini, provide a helpful error message
+        if (this.modelName === 'azure-o3-mini' && error.message.includes('does not exist')) {
+          throw new Error(`Azure o3-mini model not available in your deployment. Try using azure-gpt-4o-mini instead.`);
+        }
+        
+        throw error;
+      }
     } else {
       return this.call(input);
     }
@@ -710,13 +907,33 @@ export const createLlmInstance = (model, systemPrompt, options = {}) => {
       queryId: options.queryId
     });
   } else if (vendor === 'AzureOpenAI') {
+    console.log(`Creating Azure OpenAI instance for ${model} with deployment name ${finalModelConfig.deploymentName || model.replace('azure-', '')}`);
+    
+    // Special handling for o3-mini to allow fallback
+    if (model === 'azure-o3-mini') {
+      return new CustomAzureOpenAI({
+        modelName: model,
+        deploymentName: finalModelConfig.deploymentName || 'o3-mini-early-access',
+        systemPrompt,
+        temperature: undefined, // Explicitly undefined since o3-mini doesn't support temperature
+        apiKey: options.azureApiKey,
+        endpoint: options.azureEndpoint,
+        apiVersion: finalModelConfig.apiVersion || '2024-02-01',
+        proxyUrl: openAIProxyUrl,
+        queryId: options.queryId,
+        fallbackOnError: true // Enable automatic fallback to gpt-4o-mini if o3-mini fails
+      });
+    }
+    
     return new CustomAzureOpenAI({
       modelName: model,
+      deploymentName: finalModelConfig.deploymentName || model.replace('azure-', ''),
       systemPrompt,
       temperature: options.temperature,
-      deploymentName: finalModelConfig?.deploymentName,
-      apiVersion: finalModelConfig?.apiVersion,
-      proxyUrl: openAIProxyUrl, // Use OpenAI proxy for Azure
+      apiKey: options.azureApiKey,
+      endpoint: options.azureEndpoint,
+      apiVersion: finalModelConfig.apiVersion,
+      proxyUrl: openAIProxyUrl,
       queryId: options.queryId
     });
   } else {
@@ -812,18 +1029,26 @@ export const executeQuery = async (chain, query) => {
 
 // Calculate cost for token usage with a specific model - use the centralized function
 export const calculateCost = (model, tokenCount) => {
-  // Use the imported defaultModels instead of requiring llmConfig
-  const modelConfig = defaultModels[model];
-  
-  if (!modelConfig) {
-    safeLogger.warn(`Model ${model} not found in configuration`);
+  // If token count is not a number, return 0
+  if (typeof tokenCount !== 'number' || isNaN(tokenCount)) {
     return 0;
   }
-  
-  // Assume a 50/50 split between input and output tokens for simplicity
-  // In a real implementation, you would track input and output tokens separately
-  const inputTokens = Math.round(tokenCount / 2);
-  const outputTokens = tokenCount - inputTokens;
+
+  // Get model config
+  const modelConfig = defaultModels[model] || {
+    input: 0,
+    output: 0
+  };
+
+  // If this model doesn't have pricing info, return 0
+  if (!modelConfig.input && !modelConfig.output) {
+    return 0;
+  }
+
+  // For simplicity, assume a 50/50 split between input and output tokens
+  // if not specified
+  const inputTokens = tokenCount / 2;
+  const outputTokens = tokenCount / 2;
   
   // Calculate cost (price per 1M tokens * token count / 1M)
   const inputCost = (modelConfig.input * inputTokens) / 1000000;

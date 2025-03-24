@@ -14,3 +14,6 @@ alwaysApply: true
 ## Architecture
 - Keep always all LLM definitions in a central place llmConfig.js
 
+
+## Critical rules
+- Server is already started. Never run 'mpn start dev' on your own. The developement server is already started!

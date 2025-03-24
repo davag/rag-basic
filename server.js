@@ -559,7 +559,62 @@ app.post('/api/proxy/azure/chat/completions', async (req, res) => {
     // Special handling for o3-mini model - temperature parameter is not supported
     if (deploymentName.includes('o3-mini')) {
       console.warn(`[AZURE WARNING] Removing temperature parameter for ${deploymentName} as it's not supported`);
-      delete cleanRequestBody.temperature;
+      delete req.body.temperature;
+      
+      // Apply specific settings proven to work with o3-mini
+      if (!cleanRequestBody.max_tokens || cleanRequestBody.max_tokens > 3000) {
+        console.warn(`[AZURE WARNING] Setting max_tokens=2048 for ${deploymentName} to allow deeper reasoning`);
+        cleanRequestBody.max_tokens = 2048;
+      }
+      
+      // Add top_p parameter for better diversity
+      if (!cleanRequestBody.top_p) {
+        cleanRequestBody.top_p = 0.95;
+      }
+      
+      console.log(`[O3-MINI INFO] Using API version ${apiVersion} for o3-mini model`);
+      console.log(`[O3-MINI INFO] Parameters: max_tokens=${cleanRequestBody.max_tokens}, top_p=${cleanRequestBody.top_p}`);
+      console.log(`[O3-MINI INFO] Increased token limit to allow more detailed reasoning`);
+      
+      // Add special handler for o3-mini responses to log token usage details
+      let o3MiniResponseHandler = (response) => {
+        if (response && response.data) {
+          console.log('[O3-MINI RESPONSE] Analyzing response details:');
+          
+          // Log token usage details which are particularly important for o3-mini
+          if (response.data.usage) {
+            const usage = response.data.usage;
+            console.log('[O3-MINI RESPONSE] Token usage:', JSON.stringify(usage, null, 2));
+            
+            // Check for the special case of reasoning tokens without accepted prediction tokens
+            if (usage.completion_tokens_details) {
+              const details = usage.completion_tokens_details;
+              if (details.reasoning_tokens > 0 && details.accepted_prediction_tokens === 0) {
+                console.log(`[O3-MINI WARNING] Model used ${details.reasoning_tokens} reasoning tokens but has 0 accepted prediction tokens`);
+                console.log('[O3-MINI WARNING] This indicates the model generated reasoning but did not produce a final answer');
+              }
+            }
+          }
+          
+          // Check for content in the response
+          if (response.data.choices && response.data.choices.length > 0) {
+            const choice = response.data.choices[0];
+            const content = choice.message?.content;
+            
+            if (content) {
+              console.log(`[O3-MINI RESPONSE] Content found (${content.length} chars)`);
+              console.log(`[O3-MINI RESPONSE] Content preview: ${content.substring(0, 100)}...`);
+            } else {
+              console.log('[O3-MINI WARNING] No content found in message.content field');
+              console.log('[O3-MINI WARNING] Finish reason:', choice.finish_reason);
+            }
+          } else {
+            console.log('[O3-MINI WARNING] No choices array found in response');
+          }
+        }
+        
+        return response;
+      };
     }
     
     // Create a clean request body by removing Azure-specific fields AND the queryId
@@ -600,77 +655,120 @@ app.post('/api/proxy/azure/chat/completions', async (req, res) => {
     console.log(`[DEBUG] About to make Azure API request to: ${targetUrl}`);
     console.log(`[DEBUG] Request body: ${JSON.stringify(cleanRequestBody, null, 2)}`);
     
-    try {
-      const response = await axios.post(
-        targetUrl,
-        cleanRequestBody,
-        {
-          headers: {
-            'Content-Type': 'application/json',
-            'api-key': apiKey
+    // For o3-mini models, add specific logging
+    if (deploymentName.includes('o3-mini')) {
+      console.log(`[O3-MINI REQUEST] Sending request to ${targetUrl} with API version ${apiVersion}`);
+    }
+    
+    const azureResponse = await axios.post(
+      targetUrl,
+      cleanRequestBody,
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          'api-key': apiKey
+        },
+        timeout: 60000 // 60 second timeout
+      }
+    );
+    
+    // Special handling for o3-mini responses for debugging
+    if (deploymentName.includes('o3-mini')) {
+      console.log(`[O3-MINI RESPONSE] Status: ${azureResponse.status}`);
+      console.log(`[O3-MINI RESPONSE] Headers: ${JSON.stringify(azureResponse.headers, null, 2)}`);
+      console.log(`[O3-MINI RESPONSE] Data structure: ${Object.keys(azureResponse.data).join(', ')}`);
+      
+      if (azureResponse.data.choices && azureResponse.data.choices.length > 0) {
+        const firstChoice = azureResponse.data.choices[0];
+        console.log(`[O3-MINI RESPONSE] First choice keys: ${Object.keys(firstChoice).join(', ')}`);
+        console.log(`[O3-MINI RESPONSE] Finish reason: ${firstChoice.finish_reason}`);
+        
+        if (firstChoice.message) {
+          console.log(`[O3-MINI RESPONSE] Message keys: ${Object.keys(firstChoice.message).join(', ')}`);
+          console.log(`[O3-MINI RESPONSE] Content empty?: ${!firstChoice.message.content || firstChoice.message.content.trim() === ''}`);
+          console.log(`[O3-MINI RESPONSE] Content length: ${firstChoice.message.content?.length || 0}`);
+          
+          // If content is empty but we have completion tokens, log a warning
+          if ((!firstChoice.message.content || firstChoice.message.content.trim() === '') && 
+              azureResponse.data.usage && 
+              azureResponse.data.usage.completion_tokens > 0) {
+            console.warn(`[O3-MINI WARNING] Empty content despite using ${azureResponse.data.usage.completion_tokens} completion tokens`);
+            console.warn(`[O3-MINI WARNING] This is a known issue with o3-mini and finish_reason=${firstChoice.finish_reason}`);
           }
         }
-      );
-      
-      // Log response data structure (without the actual content)
-      if (response.data) {
-        console.log('Azure OpenAI response data structure:');
-        if (response.data.choices) {
-          console.log(`- choices: Array with ${response.data.choices.length} items`);
-        }
-        if (response.data.usage) {
-          console.log(`- usage: ${JSON.stringify(response.data.usage)}`);
-        }
       }
       
-      res.json(response.data);
-    } catch (error) {
-      console.error('[AZURE ERROR] Request failed:', error.message);
-      
-      // Log more detailed error information
-      if (error.response) {
-        console.error('[AZURE ERROR] Response status:', error.response.status);
-        console.error('[AZURE ERROR] Response data:', JSON.stringify(error.response.data, null, 2));
+      // Add cost information to the response for client-side handling
+      if (azureResponse.data.usage) {
+        // Calculate cost based on token usage
+        const inputTokens = azureResponse.data.usage.prompt_tokens || 0;
+        const outputTokens = azureResponse.data.usage.completion_tokens || 0;
         
-        // Handle 400 Bad Request errors
-        if (error.response.status === 400) {
-          console.error('[AZURE ERROR] Bad Request:', error.response.data);
-          return res.status(400).json(error.response.data);
-        }
+        // Use o3-mini pricing (very rough estimate)
+        const inputCost = (inputTokens * 1.10) / 1000000;  // $1.10 per 1M tokens
+        const outputCost = (outputTokens * 4.40) / 1000000; // $4.40 per 1M tokens
+        const totalCost = inputCost + outputCost;
         
-        // Handle 404 Not Found errors
-        if (error.response.status === 404) {
-          console.error('[AZURE ERROR] Deployment not found:', error.response.data);
-          return res.status(404).json(error.response.data);
-        }
-        
-        // Handle 401 Unauthorized errors
-        if (error.response.status === 401) {
-          console.error('[AZURE ERROR] Unauthorized:', error.response.data);
-          return res.status(401).json(error.response.data);
-        }
-      } else if (error.request) {
-        console.error('[AZURE ERROR] No response received. Request:', error.request);
+        // Add cost to the response
+        azureResponse.data.cost = totalCost;
+        console.log(`[O3-MINI RESPONSE] Estimated cost: $${totalCost.toFixed(6)}`);
       }
-      
-      res.status(error.response?.status || 500).json({
-        error: error.response?.data || { message: error.message }
-      });
     }
+    
+    // Check if the response data has a specific structure expected for Azure OpenAI
+    if (azureResponse.data && azureResponse.data.choices) {
+      console.log('Azure OpenAI response data structure:');
+      console.log(`- choices: Array with ${azureResponse.data.choices.length} items`);
+      if (azureResponse.data.usage) {
+        console.log(`- usage: ${JSON.stringify(azureResponse.data.usage)}`);
+      }
+      
+      // Track cost if queryId is provided and the request is successful
+      if (queryId && azureResponse.data.usage) {
+        const usage = azureResponse.data.usage;
+        const tokenUsage = {
+          prompt_tokens: usage.prompt_tokens,
+          completion_tokens: usage.completion_tokens,
+          total_tokens: usage.total_tokens
+        };
+        
+        // Normalize model name (removing Azure prefix if present)
+        const modelName = deploymentName.includes('gpt-') ? 
+          deploymentName : 
+          `${deploymentName}-${apiVersion}`;
+        
+        // Track cost
+        costTracker.trackLlmCost(modelName, tokenUsage, 'chat', queryId);
+      }
+    } else {
+      console.warn('Unexpected response structure from Azure OpenAI API');
+      console.log('Response data:', azureResponse.data);
+    }
+    
+    // Return the Azure OpenAI API response
+    res.json(azureResponse.data);
   } catch (error) {
     console.error('Error proxying to Azure OpenAI API:', error.message);
     
-    // Log more detailed error information
-    if (error.response) {
-      console.error('Response status:', error.response.status);
-      console.error('Response data:', error.response.data);
-      console.error('Response headers:', error.response.headers);
-    } else if (error.request) {
-      console.error('No response received. Request:', error.request);
+    // Check if the error is from Azure OpenAI and contains a structured error response
+    if (error.response && error.response.data) {
+      console.error('Azure OpenAI API error response:', error.response.data);
+      
+      // Return the error with the same structure as the Azure OpenAI API
+      return res.status(error.response.status).json({
+        error: error.response.data.error || {
+          message: error.message,
+          code: error.response.status,
+          status: error.response.statusText
+        }
+      });
     }
     
-    res.status(error.response?.status || 500).json({
-      error: error.response?.data || { message: error.message }
+    // Generic error response
+    res.status(500).json({
+      error: {
+        message: `Error proxying to Azure OpenAI API: ${error.message}`
+      }
     });
   }
 });

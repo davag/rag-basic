@@ -305,6 +305,9 @@ Given the context information and not prior knowledge, answer the question: ${qu
     setKey,
     queryId = null // Add queryId parameter with default of null
   }) {
+    // Start timer outside try block so it's available in catch
+    const startTime = Date.now();
+    
     try {
       // Update progress
       this.updateProgress({
@@ -313,21 +316,90 @@ Given the context information and not prior knowledge, answer the question: ${qu
         status: 'pending'
       });
       
-      // Start timer
-      const startTime = Date.now();
-      
       // Create LLM instance with custom options
       const llm = this.createModelInstance(model, systemPrompt, temperature, queryId);
       
       // Call the LLM with the prompt
+      console.log(`[DEBUG] Processing model ${model} with prompt length ${prompt.length}`);
       const answer = await llm.invoke(prompt);
+      console.log(`[DEBUG] Received answer from ${model}:`, typeof answer);
       
       // End timer
       const endTime = Date.now();
       const elapsedTime = endTime - startTime;
       
-      // Get the answer text
-      const answerText = typeof answer === 'object' ? answer.text || answer.content : answer;
+      // Get the answer text with special handling for different return types
+      let answerText;
+      if (answer === null || answer === undefined) {
+        console.error(`[ERROR] ${model} returned null or undefined response`);
+        answerText = `Error: ${model} returned an empty response`;
+      } else if (typeof answer === 'object') {
+        // Log the full object structure for debugging
+        console.log(`[DEBUG] ${model} returned an object:`, JSON.stringify(answer, null, 2));
+        
+        if (model.includes('o3-mini')) {
+          // Use specialized helper for extracting content from o3-mini model responses
+          answerText = this.extractO3MiniContent(answer);
+          
+          // If we still don't have an answer, try directly checking the response structure
+          if (!answerText || answerText.trim() === '') {
+            console.log('[o3-mini DEBUG] Attempting to extract content directly from response structure');
+            
+            // Check for standard OpenAI API response format
+            if (answer.id && answer.choices && answer.choices.length > 0 && answer.choices[0].message?.content) {
+              answerText = answer.choices[0].message.content;
+              console.log('[o3-mini DEBUG] Extracted content directly from choices[0].message.content:', 
+                         answerText.substring(0, 100) + '...');
+            }
+          }
+          
+          // If we still don't have an answer, provide a helpful fallback message
+          if (!answerText || answerText.trim() === '') {
+            answerText = `The model processed your query but returned an empty response. This may indicate the response was truncated due to token limits. Try a shorter prompt or a different model.`;
+          }
+        } else {
+          // Standard extraction for non-o3-mini models
+          answerText = answer.text || answer.content || JSON.stringify(answer);
+        }
+      } else {
+        answerText = answer;
+      }
+      
+      // Special handling for o3-mini model - more detailed logging
+      if (model.includes('o3-mini')) {
+        console.log(`[o3-mini DEBUG] Response type: ${typeof answer}`);
+        
+        // For empty responses with completion tokens (common with o3-mini)
+        if ((!answerText || answerText.trim() === '')) {
+          console.error('[o3-mini ERROR] Empty response content');
+          
+          // Use the special helper to try extracting content from various places
+          const extractedContent = this.extractO3MiniContent(answer);
+          if (extractedContent && extractedContent !== answerText) {
+            console.log('[o3-mini DEBUG] Found alternative content:', extractedContent.substring(0, 100) + '...');
+            answerText = extractedContent;
+          } else {
+            // Try to extract more information from raw response if available
+            let responseInfo = '';
+            if (typeof answer === 'object') {
+              const usage = answer.usage || {};
+              const finishReason = answer.choices?.[0]?.finish_reason;
+              
+              if (finishReason === 'length') {
+                responseInfo = ` The model reached its token limit (${usage.completion_tokens || 'unknown'} tokens used).`;
+              }
+              
+              if (answer.cost) {
+                responseInfo += ` Cost: $${answer.cost.toFixed(4)}.`;
+              }
+            }
+            
+            answerText = `The o3-mini model didn't return a valid response.${responseInfo} Try using a shorter prompt or a different model like azure-gpt-4o-mini.`;
+          }
+        } else {
+          console.log(`[o3-mini DEBUG] Response preview: ${answerText?.substring(0, 100)}...`);
+        }
+      }
       
       // Estimate token usage if not provided by the model
       const tokenUsage = answer.tokenUsage || {
@@ -367,9 +439,31 @@ Given the context information and not prior knowledge, answer the question: ${qu
         sources,
         elapsedTime,
         tokenUsage,
-        cost
+        cost,
+        rawResponse: answer // Add the raw response for more detailed processing downstream
       };
     } catch (error) {
+      // Special logging for o3-mini errors
+      if (model.includes('o3-mini')) {
+        console.error(`[o3-mini ERROR] Failed to process: ${error.message}`);
+        console.error('[o3-mini ERROR] Error details:', error);
+        
+        // Return friendly error message specifically for o3-mini
+        return {
+          text: `The o3-mini model encountered an error: ${error.message}. This model is in preview and may have limitations. Please try again or use a different model like azure-gpt-4o-mini.`,
+          sources,
+          elapsedTime: Date.now() - startTime,
+          error: true,
+          tokenUsage: {
+            estimated: true,
+            input: Math.round(prompt.length / 4),
+            output: 0,
+            total: Math.round(prompt.length / 4)
+          },
+          cost: 0
+        };
+      }
+      
       // Update progress with error
       this.updateProgress({
         model: `${model} / ${setKey}`,
@@ -392,9 +486,118 @@ Given the context information and not prior knowledge, answer the question: ${qu
     if (modelId.includes('o3-mini')) {
       delete options.temperature;
       console.log(`[MODEL PROCESSOR] Omitting temperature parameter for ${modelId} as it's not supported`);
+      
+      // Add a hint to encourage detailed reasoning while being mindful of the model's capabilities
+      if (systemPrompt && !systemPrompt.includes('detailed')) {
+        options.systemPrompt = (systemPrompt || '') + ' Provide detailed reasoning in your answer while staying on topic.';
+      } else {
+        options.systemPrompt = systemPrompt;
+      }
     }
     
     return createLlmInstance(modelId, systemPrompt, options);
+  }
+  
+  /**
+   * Special helper to extract any useful content from o3-mini response
+   * @param {*} answer - The raw model response
+   * @returns {string} - The extracted content or a fallback message
+   */
+  extractO3MiniContent(answer) {
+    if (typeof answer !== 'object') {
+      return answer;
+    }
+    
+    console.log('[o3-mini CONTENT] Starting content extraction from response:', JSON.stringify(answer, null, 2));
+    
+    // First, check for the special case of reasoning tokens without accepted tokens
+    if (answer.usage?.completion_tokens_details) {
+      const details = answer.usage.completion_tokens_details;
+      if (details.reasoning_tokens > 0 && details.accepted_prediction_tokens === 0) {
+        console.log(`[o3-mini CONTENT] Found reasoning tokens (${details.reasoning_tokens}) but no accepted prediction tokens`);
+        return `[The o3-mini model generated reasoning (${details.reasoning_tokens} tokens) but didn't produce a final answer. This is a known limitation of this model. Try a different model like azure-gpt-4o-mini.]`;
+      }
+    }
+    
+    // Check for content in various places the model might return it
+    if (answer.choices && answer.choices.length > 0) {
+      const choice = answer.choices[0];
+      console.log('[o3-mini CONTENT] Examining choice:', JSON.stringify(choice, null, 2));
+      
+      // Check message.content - most common format for o3-mini responses
+      if (choice.message?.content) {
+        const content = choice.message.content;
+        console.log('[o3-mini CONTENT] Found content in message.content field:', content.substring(0, 100) + '...');
+        return content;
+      }
+      
+      // Check for content in other potential places
+      if (choice.content) {
+        console.log('[o3-mini CONTENT] Found content in choice.content field');
+        return choice.content;
+      }
+      
+      // Check for delta content (streaming responses)
+      if (choice.delta?.content) {
+        console.log('[o3-mini CONTENT] Found content in delta field');
+        return choice.delta.content;
+      }
+      
+      // Check completion field (older format)
+      if (choice.completion) {
+        console.log('[o3-mini CONTENT] Found content in completion field');
+        return choice.completion;
+      }
+      
+      // Check finish_reason for clues
+      const finishReason = choice.finish_reason;
+      if (finishReason === 'length') {
+        const tokensUsed = answer.usage?.completion_tokens || 0;
+        console.log(`[o3-mini CONTENT] Response truncated due to length limit. ${tokensUsed} tokens generated`);
+        return `[Response truncated due to length limit. ${tokensUsed} tokens were generated but the model didn't return content. Try a shorter prompt or use azure-gpt-4o-mini instead.]`;
+      }
+    }
+    
+    // Check for full response structure in raw form (for cases where response was wrapped)
+    if (answer.id && answer.choices && answer.choices.length > 0) {
+      const choice = answer.choices[0];
+      if (choice.message?.content) {
+        const content = choice.message.content;
+        console.log('[o3-mini CONTENT] Found content in top-level response structure:', content.substring(0, 100) + '...');
+        return content;
+      }
+    }
+    
+    // Check top-level fields as fallbacks
+    if (answer.content) {
+      console.log('[o3-mini CONTENT] Found content in top-level content field');
+      return answer.content;
+    }
+    
+    if (answer.text) {
+      console.log('[o3-mini CONTENT] Found content in top-level text field');
+      return answer.text;
+    }
+    
+    if (answer.completion) {
+      console.log('[o3-mini CONTENT] Found content in top-level completion field');
+      return answer.completion;
+    }
+    
+    // If we reach here but have token usage, provide informative message
+    if (answer.usage) {
+      const completionTokens = answer.usage.completion_tokens || 0;
+      const reasoningTokens = answer.usage.completion_tokens_details?.reasoning_tokens || 0;
+      
+      if (completionTokens > 0) {
+        console.log(`[o3-mini CONTENT] No content found but ${completionTokens} tokens were used (${reasoningTokens} reasoning tokens)`);
+        return `[The o3-mini model generated ${completionTokens} tokens (including ${reasoningTokens} reasoning tokens) but didn't return structured content. Try a different model like azure-gpt-4o-mini.]`;
+      }
+    }
+    
+    // If we reach here, no content was found
+    console.log('[o3-mini CONTENT] No content found in any expected field');
+    return "[No content was returned from the model. Try using a shorter prompt or switch to azure-gpt-4o-mini.]";
   }
   
   updateProgress(data) {
@@ -402,4 +605,4 @@ Given the context information and not prior knowledge, answer the question: ${qu
       this.onProgressUpdate(data);
     }
   }
-} 
+}

@@ -423,7 +423,8 @@ const ResponseValidation = ({
                   modelKey.includes('claude-') ||
                   modelKey.includes('llama') ||
                   modelKey.includes('mistral') ||
-                  modelKey.includes('gemma');
+                  modelKey.includes('gemma') ||
+                  modelKey.includes('o3-mini');
                   
                 if (isModelKey) {
                   const combinedKey = `${setKey}-${modelKey}`;
@@ -435,7 +436,7 @@ const ResponseValidation = ({
           });
         } else {
           // Handle legacy format
-          const modelKeyRegex = /^(gpt-|claude-|llama|mistral|gemma)/;
+          const modelKeyRegex = /^(gpt-|claude-|llama|mistral|gemma|o3-mini)/;
           
           // Filter entries to include only actual models
           Object.entries(responses).forEach(([key, value]) => {
@@ -1964,43 +1965,80 @@ const ResponseValidation = ({
 
                                 // Handle different response formats
                                 if (typeof response === 'object') {
-                                  // Case 1: Direct answer object with text
-                                  if (response?.answer?.text) {
-                                    console.log('Found response in answer.text');
-                                    answer = response.answer.text;
+                                  // Special handling for o3-mini which has a different response structure
+                                  if (model.includes('o3-mini') || (setMatch && setMatch[2].includes('o3-mini'))) {
+                                    console.log('[VALIDATION] Processing o3-mini response format');
+                                    
+                                    // First try direct format as in example
+                                    if (response.choices && 
+                                        response.choices.length > 0 && 
+                                        response.choices[0].message && 
+                                        response.choices[0].message.content) {
+                                      answer = response.choices[0].message.content;
+                                      console.log('[VALIDATION] Found o3-mini content in choices[0].message.content');
+                                    }
+                                    // Try text field
+                                    else if (response.text) {
+                                      answer = response.text;
+                                      console.log('[VALIDATION] Using text field for o3-mini');
+                                    }
+                                    // Check for rawResponse which might contain the actual data
+                                    else if (response.rawResponse) {
+                                      console.log('[VALIDATION] Looking in rawResponse for o3-mini');
+                                      if (response.rawResponse.choices && 
+                                          response.rawResponse.choices.length > 0 && 
+                                          response.rawResponse.choices[0].message && 
+                                          response.rawResponse.choices[0].message.content) {
+                                        answer = response.rawResponse.choices[0].message.content;
+                                        console.log('[VALIDATION] Found o3-mini content in rawResponse.choices[0].message.content');
+                                      }
+                                    }
+                                    // If still no content, fallback to standard handling
+                                    if (!answer) {
+                                      console.log('[VALIDATION] No o3-mini specific format found, trying standard formats');
+                                    }
                                   }
-                                  // Case 2: Direct answer string
-                                  else if (response?.answer) {
-                                    console.log('Found response in answer');
-                                    answer = typeof response.answer === 'string' 
-                                      ? response.answer 
-                                      : JSON.stringify(response.answer, null, 2);
-                                  }
-                                  // Case 3: Response object with text
-                                  else if (response?.response?.text) {
-                                    console.log('Found response in response.text');
-                                    answer = response.response.text;
-                                  }
-                                  // Case 4: Direct response string
-                                  else if (response?.response) {
-                                    console.log('Found response in response');
-                                    answer = typeof response.response === 'string'
-                                      ? response.response
-                                      : JSON.stringify(response.response, null, 2);
-                                  }
-                                  // Case 5: Direct text field
-                                  else if (response?.text) {
-                                    console.log('Found response in text');
-                                    answer = response.text;
-                                  }
-                                  // Case 6: Try to stringify the entire object
-                                  else {
-                                    console.log('Attempting to stringify entire response object');
-                                    try {
-                                      answer = JSON.stringify(response, null, 2);
-                                    } catch (e) {
-                                      console.error('Error stringifying response:', e);
-                                      answer = "Could not display response";
+                                  
+                                  // If we still don't have an answer, try standard formats
+                                  if (!answer) {
+                                    // Case 1: Direct answer object with text
+                                    if (response?.answer?.text) {
+                                      console.log('Found response in answer.text');
+                                      answer = response.answer.text;
+                                    }
+                                    // Case 2: Direct answer string
+                                    else if (response?.answer) {
+                                      console.log('Found response in answer');
+                                      answer = typeof response.answer === 'string' 
+                                        ? response.answer 
+                                        : JSON.stringify(response.answer, null, 2);
+                                    }
+                                    // Case 3: Response object with text
+                                    else if (response?.response?.text) {
+                                      console.log('Found response in response.text');
+                                      answer = response.response.text;
+                                    }
+                                    // Case 4: Direct response string
+                                    else if (response?.response) {
+                                      console.log('Found response in response');
+                                      answer = typeof response.response === 'string'
+                                        ? response.response
+                                        : JSON.stringify(response.response, null, 2);
+                                    }
+                                    // Case 5: Direct text field
+                                    else if (response?.text) {
+                                      console.log('Found response in text');
+                                      answer = response.text;
+                                    }
+                                    // Case 6: Try to stringify the entire object
+                                    else {
+                                      console.log('Attempting to stringify entire response object');
+                                      try {
+                                        answer = JSON.stringify(response, null, 2);
+                                      } catch (e) {
+                                        console.error('Error stringifying response:', e);
+                                        answer = "Could not display response";
+                                      }
                                     }
                                   }
                                 } else if (typeof response === 'string') {
