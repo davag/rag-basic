@@ -33,7 +33,6 @@ import { recommendEmbeddingModel, getModelChunkConfigs } from '../utils/embeddin
 import { recommendChunkingStrategy, chunkingStrategies, createTextSplitter } from '../utils/chunkingStrategies';
 import axios from 'axios';
 import { v4 as uuidv4 } from 'uuid';
-import { costTracker } from '../utils/costTracker';
 
 // Custom class for Ollama embeddings
 class OllamaEmbeddings {
@@ -41,6 +40,7 @@ class OllamaEmbeddings {
     this.model = options.modelName || 'nomic-embed-text';
     this.ollamaEndpoint = options.ollamaEndpoint || process.env.REACT_APP_OLLAMA_API_URL || 'http://localhost:11434';
     this.dimensions = 768; // nomic-embed-text embeddings are 768-dimensional
+    this.operationId = options.operationId || uuidv4(); // For cost tracking
   }
 
   // Method to embed single text
@@ -50,6 +50,21 @@ class OllamaEmbeddings {
         model: this.model,
         prompt: text
       });
+      
+      // Track embedding cost on server side
+      try {
+        const tokenCount = Math.ceil(text.length / 4);
+        await axios.post('/api/cost-tracking/track-embedding-usage', {
+          model: `ollama-${this.model}`,
+          tokenCount: tokenCount,
+          operation: 'query',
+          queryId: this.operationId
+        });
+        console.log(`[DEBUG] Tracked Ollama embedding cost for ${this.model}`);
+      } catch (costErr) {
+        console.error('Error tracking Ollama embedding cost:', costErr);
+      }
+      
       return response.data.embedding;
     } catch (error) {
       window.console.error('Error generating embedding from Ollama:', error);
@@ -63,6 +78,20 @@ class OllamaEmbeddings {
     for (const doc of documents) {
       const embedding = await this.embedQuery(doc);
       embeddings.push(embedding);
+      
+      // Track embedding cost on server side for each document
+      try {
+        const tokenCount = Math.ceil(doc.length / 4);
+        await axios.post('/api/cost-tracking/track-embedding-usage', {
+          model: `ollama-${this.model}`,
+          tokenCount: tokenCount,
+          operation: 'document',
+          queryId: this.operationId
+        });
+        console.log(`[DEBUG] Tracked Ollama document embedding cost for ${this.model}`);
+      } catch (costErr) {
+        console.error('Error tracking Ollama document embedding cost:', costErr);
+      }
     }
     return embeddings;
   }
@@ -253,7 +282,8 @@ const VectorStoreConfig = ({
         
         embeddings = new OllamaEmbeddings({
           model: embeddingModel.replace('ollama-', ''),
-          baseUrl: ollamaBaseUrl || 'http://localhost:11434'
+          ollamaEndpoint: ollamaBaseUrl || 'http://localhost:11434',
+          operationId: operationId // Pass the operationId for cost tracking
         });
       } else if (embeddingModel.startsWith('azure-')) {
         // ... existing Azure embeddings code ...
@@ -287,7 +317,18 @@ const VectorStoreConfig = ({
               const tokenCount = Math.ceil(text.length / 4);
               
               // Track the cost directly (in case query parameter wasn't handled)
-              costTracker.trackEmbeddingCost('azure-embedding', tokenCount, 'query', operationId);
+              // Track the cost on the server side
+              try {
+                await axios.post('/api/cost-tracking/track-embedding-usage', {
+                  model: `azure-${this.deploymentName}`,
+                  tokenCount: tokenCount,
+                  operation: 'query',
+                  queryId: operationId
+                });
+                console.log(`[DEBUG] Tracked embedding cost for azure-${this.deploymentName}`);
+              } catch (costErr) {
+                console.error('Error tracking embedding cost:', costErr);
+              }
               
               return embedding;
             } catch (error) {
@@ -307,7 +348,19 @@ const VectorStoreConfig = ({
                 
                 // Track cost for each document
                 const tokenCount = Math.ceil(doc.length / 4);
-                costTracker.trackEmbeddingCost('azure-embedding', tokenCount, 'document', operationId);
+                
+                // Track the cost on the server side
+                try {
+                  await axios.post('/api/cost-tracking/track-embedding-usage', {
+                    model: `azure-${this.deploymentName}`,
+                    tokenCount: tokenCount,
+                    operation: 'document',
+                    queryId: operationId
+                  });
+                  console.log(`[DEBUG] Tracked embedding cost for azure-${this.deploymentName}`);
+                } catch (costErr) {
+                  console.error('Error tracking embedding cost:', costErr);
+                }
               } catch (error) {
                 console.error('Error embedding document:', error);
                 throw error;
@@ -341,7 +394,19 @@ const VectorStoreConfig = ({
             
             // Track cost
             const tokenCount = Math.ceil(text.length / 4);
-            costTracker.trackEmbeddingCost(this.model, tokenCount, 'query', operationId);
+            
+            // Track the cost on the server side
+            try {
+              await axios.post('/api/cost-tracking/track-embedding-usage', {
+                model: this.model,
+                tokenCount: tokenCount,
+                operation: 'query',
+                queryId: operationId
+              });
+              console.log(`[DEBUG] Tracked embedding cost for ${this.model}`);
+            } catch (error) {
+              console.error('Error tracking embedding cost:', error);
+            }
             
             return result;
           }
@@ -353,7 +418,19 @@ const VectorStoreConfig = ({
             // Track cost for all documents
             const totalChars = documents.reduce((sum, doc) => sum + doc.length, 0);
             const tokenCount = Math.ceil(totalChars / 4);
-            costTracker.trackEmbeddingCost(this.model, tokenCount, 'document', operationId);
+            
+            // Track the cost on the server side
+            try {
+              await axios.post('/api/cost-tracking/track-embedding-usage', {
+                model: this.model,
+                tokenCount: tokenCount,
+                operation: 'document',
+                queryId: operationId
+              });
+              console.log(`[DEBUG] Tracked embedding cost for ${this.model}`);
+            } catch (error) {
+              console.error('Error tracking embedding cost:', error);
+            }
             
             return result;
           }

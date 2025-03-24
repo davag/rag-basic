@@ -7,6 +7,7 @@
 
 // Imported models/pricing information
 import { calculateCost } from './apiServices';
+import { defaultModels } from '../config/llmConfig';
 
 class CostTracker {
   constructor() {
@@ -20,13 +21,6 @@ class CostTracker {
       llm: {},
       embeddings: {},
       total: 0, // Total accumulated cost
-    };
-    
-    // Embedding model pricing per 1M tokens (in USD)
-    this.embeddingPricing = {
-      'text-embedding-ada-002': 0.0001,
-      'text-embedding-3-small': 0.00002,
-      'text-embedding-3-large': 0.00013
     };
     
     // Flag to enable/disable detailed logging
@@ -191,6 +185,71 @@ class CostTracker {
   }
   
   /**
+   * Find matching embedding model in defaultModels
+   * @param {string} modelName - The embedding model name (may include vendor prefix)
+   * @returns {string} The matched model name from defaultModels or null if not found
+   */
+  findMatchingEmbeddingModel(modelName) {
+    // Direct match
+    if (defaultModels[modelName]) {
+      return modelName;
+    }
+    
+    // If model starts with vendor prefix (e.g., "ollama-" or "azure-")
+    const vendorPrefixes = ['ollama-', 'azure-'];
+    for (const prefix of vendorPrefixes) {
+      if (modelName.startsWith(prefix)) {
+        const baseModelName = modelName.substring(prefix.length);
+        
+        // Try to find exact match for the base model with the same prefix
+        const exactBaseMatch = `${prefix}text-embedding-3-small`;
+        if (defaultModels[exactBaseMatch]) {
+          if (this.detailedLogging) {
+            console.log(`Matched ${modelName} to ${exactBaseMatch}`);
+          }
+          return exactBaseMatch;
+        }
+        
+        // If not found, use default embedding model
+        const defaultMatch = 'text-embedding-3-small';
+        if (defaultModels[defaultMatch]) {
+          if (this.detailedLogging) {
+            console.log(`Matched ${modelName} to ${defaultMatch}`);
+          }
+          return defaultMatch;
+        }
+      }
+    }
+    
+    // If it contains embedding keywords
+    const embeddingKeywords = ['embedding', 'embed'];
+    for (const keyword of embeddingKeywords) {
+      if (modelName.toLowerCase().includes(keyword)) {
+        // Try to find an embedding model
+        const embeddingModels = Object.keys(defaultModels).filter(
+          key => key.includes('text-embedding')
+        );
+        
+        if (embeddingModels.length > 0) {
+          if (this.detailedLogging) {
+            console.log(`Matched ${modelName} to ${embeddingModels[0]}`);
+          }
+          return embeddingModels[0];
+        }
+      }
+    }
+    
+    // Default to the most cost-effective embedding model
+    if (defaultModels['text-embedding-3-small']) {
+      return 'text-embedding-3-small';
+    }
+    
+    // Last resort: couldn't find an embedding model
+    console.warn(`Could not find matching embedding model for ${modelName}`);
+    return null;
+  }
+  
+  /**
    * Track cost for embedding generation
    * @param {string} model - The embedding model name
    * @param {number} tokenCount - Number of tokens processed
@@ -200,11 +259,24 @@ class CostTracker {
    */
   trackEmbeddingCost(model, tokenCount, operation = 'document', queryId = null) {
     if (!model || !tokenCount) {
+      console.warn(`Cost tracker: Missing model or token count for embedding tracking`);
       return { cost: 0, model, operation };
     }
     
-    // Get pricing for this model or use default
-    const pricePerMillion = this.embeddingPricing[model] || 0.10;
+    // Find matching model in defaultModels configuration
+    const matchedModel = this.findMatchingEmbeddingModel(model);
+    
+    // Get embedding model configuration from central defaultModels
+    const modelConfig = matchedModel ? defaultModels[matchedModel] : null;
+    
+    if (!modelConfig) {
+      console.warn(`Cost tracker: No pricing found for embedding model ${model}`);
+      return { cost: 0, model, operation };
+    }
+    
+    // For embeddings, input and output costs are typically the same
+    // Use input cost as the standard cost per token
+    const pricePerMillion = modelConfig.input;
     
     // Calculate cost
     const cost = (pricePerMillion * tokenCount) / 1000000;
@@ -214,6 +286,7 @@ class CostTracker {
     const costEntry = {
       timestamp,
       model,
+      matchedModel, // Keep track of which model configuration was used
       operation,
       usage: {
         tokenCount
@@ -231,7 +304,8 @@ class CostTracker {
     
     // Log if detailed logging is enabled
     if (this.detailedLogging) {
-      console.log(`Cost tracker: Embedding operation logged - ${model}, ${operation}, $${cost.toFixed(6)}`);
+      console.log(`Cost tracker: Embedding operation logged - ${model} (matched to ${matchedModel}), ${operation}, $${cost.toFixed(6)}`);
+      console.log(`Used price per million tokens: $${pricePerMillion}`);
     }
     
     return costEntry;
@@ -257,9 +331,15 @@ class CostTracker {
       modelCosts[model] = this.costs.llm[model].reduce((total, entry) => total + entry.cost, 0);
     }
     
-    // Process embedding costs
+    // Process embedding costs - add to existing model entry if it exists
     for (const model in this.costs.embeddings) {
-      modelCosts[model] = this.costs.embeddings[model].reduce((total, entry) => total + entry.cost, 0);
+      if (modelCosts[model]) {
+        // Model exists in LLM costs, add to it
+        modelCosts[model] += this.costs.embeddings[model].reduce((total, entry) => total + entry.cost, 0);
+      } else {
+        // New model entry
+        modelCosts[model] = this.costs.embeddings[model].reduce((total, entry) => total + entry.cost, 0);
+      }
     }
     
     return modelCosts;
@@ -295,19 +375,40 @@ class CostTracker {
    * @returns {object} Filtered cost data
    */
   getCostsByTimePeriod(startDate, endDate) {
+    // Initialize with empty structure
     const filteredCosts = {
-      llm: this.costs.llm.filter(entry => 
-        entry.timestamp >= startDate && entry.timestamp <= endDate
-      ),
-      embeddings: this.costs.embeddings.filter(entry => 
-        entry.timestamp >= startDate && entry.timestamp <= endDate
-      )
+      llm: {},
+      embeddings: {},
+      total: 0
     };
+    
+    // Filter LLM costs by date
+    for (const model in this.costs.llm) {
+      filteredCosts.llm[model] = this.costs.llm[model].filter(entry => 
+        entry.timestamp >= startDate && entry.timestamp <= endDate
+      );
+    }
+    
+    // Filter embedding costs by date
+    for (const model in this.costs.embeddings) {
+      filteredCosts.embeddings[model] = this.costs.embeddings[model].filter(entry => 
+        entry.timestamp >= startDate && entry.timestamp <= endDate
+      );
+    }
     
     // Calculate total for this period
     let periodTotal = 0;
-    filteredCosts.llm.forEach(entry => periodTotal += entry.cost);
-    filteredCosts.embeddings.forEach(entry => periodTotal += entry.cost);
+    
+    // Sum LLM costs for this period
+    for (const model in filteredCosts.llm) {
+      periodTotal += filteredCosts.llm[model].reduce((total, entry) => total + entry.cost, 0);
+    }
+    
+    // Sum embedding costs for this period
+    for (const model in filteredCosts.embeddings) {
+      periodTotal += filteredCosts.embeddings[model].reduce((total, entry) => total + entry.cost, 0);
+    }
+    
     filteredCosts.total = periodTotal;
     
     return filteredCosts;
@@ -343,7 +444,6 @@ class CostTracker {
     return {
       costs: this.costs,
       detailedLogging: this.detailedLogging,
-      embeddingPricing: this.embeddingPricing,
       exportedAt: new Date().toISOString()
     };
   }
@@ -362,28 +462,28 @@ class CostTracker {
   }
   
   /**
-   * Update embedding pricing
-   * @param {object} pricingData - New pricing data
+   * Get a summary of all cost tracking data
+   * @returns {object} Summary of cost tracking data
    */
-  setEmbeddingPricing(pricingData) {
-    this.embeddingPricing = {
-      ...this.embeddingPricing,
-      ...pricingData
-    };
-    
-    if (this.detailedLogging) {
-      console.log('Updated embedding pricing:', this.embeddingPricing);
+  getCostSummary() {
+    // Convert LLM data from object of arrays to flat array
+    let llmArray = [];
+    for (const model in this.costs.llm) {
+      llmArray = llmArray.concat(this.costs.llm[model]);
     }
     
-    return true;
-  }
-
-  // Get a summary of all cost tracking data
-  getCostSummary() {
+    // Convert embedding data from object of arrays to flat array
+    let embeddingsArray = [];
+    for (const model in this.costs.embeddings) {
+      embeddingsArray = embeddingsArray.concat(this.costs.embeddings[model]);
+    }
+    
     return {
       totalCost: this.getTotalCost(),
       costsByModel: this.getCostsByModel(),
-      costsByOperation: this.getCostsByOperation()
+      costsByOperation: this.getCostsByOperation(),
+      llm: llmArray,
+      embeddings: embeddingsArray
     };
   }
 }

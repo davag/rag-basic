@@ -10,7 +10,7 @@ const { createProxyMiddleware } = require('http-proxy-middleware');
 const costTracker = {
   costs: {
     llm: {},
-    embeddings: {},
+    embeddings: {}, // Will properly track embedding costs by model
     total: 0,
   },
   
@@ -97,10 +97,55 @@ const costTracker = {
   },
   
   trackEmbeddingCost(model, tokenCount, operation = 'document', queryId = null) {
-    // Simple implementation
-    const cost = model.includes('large') ? tokenCount * 0.00001 : tokenCount * 0.0000001;
+    // Get pricing for the model
+    let costPerToken;
+    
+    if (model.includes('large') || model.includes('text-embedding-3-large')) {
+      // text-embedding-3-large pricing
+      costPerToken = 0.00013 / 1000000; // $0.00013 per 1M tokens
+    } else if (model.includes('small') || model.includes('text-embedding-3-small')) {
+      // text-embedding-3-small pricing
+      costPerToken = 0.00002 / 1000000; // $0.00002 per 1M tokens 
+    } else if (model.includes('ada') || model.includes('text-embedding-ada')) {
+      // text-embedding-ada-002 pricing
+      costPerToken = 0.0001 / 1000000; // $0.0001 per 1M tokens
+    } else if (model.includes('ollama')) {
+      // Ollama models are free for local inference
+      costPerToken = 0;
+    } else {
+      // Default pricing for unknown models
+      costPerToken = 0.0001 / 1000000; // $0.0001 per 1M tokens
+    }
+    
+    // Calculate the cost
+    const cost = tokenCount * costPerToken;
+    
+    // Create a proper cost entry
+    const timestamp = new Date();
+    const costEntry = {
+      timestamp,
+      model,
+      operation,
+      usage: {
+        tokenCount
+      },
+      cost,
+      queryId
+    };
+    
+    // Store the embedding cost data by model
+    if (!this.costs.embeddings[model]) {
+      this.costs.embeddings[model] = [];
+    }
+    this.costs.embeddings[model].push(costEntry);
+    
+    // Add to total cost
     this.costs.total += cost;
-    return { cost, model, operation };
+    
+    console.log(`Embedding cost calculated for ${model}: $${cost.toFixed(6)} (${tokenCount} tokens)`);
+    console.log(`Total accumulated cost: $${this.costs.total.toFixed(6)}`);
+    
+    return costEntry;
   },
   
   getCostSummary() {
@@ -112,23 +157,33 @@ const costTracker = {
       llmArray = llmArray.concat(this.costs.llm[model]);
     }
     
-    // Ensure embeddings is an array
-    const embeddings = Array.isArray(this.costs.embeddings) ? this.costs.embeddings : [];
+    // Prepare embeddings data in array format (similar to llm)
+    let embeddingsArray = [];
+    for (const model in this.costs.embeddings) {
+      embeddingsArray = embeddingsArray.concat(this.costs.embeddings[model]);
+    }
     
     return {
       totalCost: this.costs.total,
       costsByModel: this._getCostsByModel(),
       costsByOperation: this._getCostsByOperation(),
       llm: llmArray,
-      embeddings: embeddings
+      embeddings: embeddingsArray
     };
   },
   
   _getCostsByModel() {
     const result = {};
+    // Add LLM costs by model
     for (const model in this.costs.llm) {
       result[model] = this.costs.llm[model].reduce((sum, entry) => sum + entry.cost, 0);
     }
+    
+    // Add embedding costs by model
+    for (const model in this.costs.embeddings) {
+      result[model] = (result[model] || 0) + this.costs.embeddings[model].reduce((sum, entry) => sum + entry.cost, 0);
+    }
+    
     return result;
   },
   
@@ -142,26 +197,30 @@ const costTracker = {
     // Add LLM costs by operation
     for (const model in this.costs.llm) {
       for (const entry of this.costs.llm[model]) {
-        const operation = entry.operation || 'unknown';
-        if (!result[operation]) {
+        const operation = entry.operation || 'chat';
+        
+        // Initialize the operation total if needed
+        if (result[operation] === undefined) {
           result[operation] = 0;
         }
-        result[operation] += entry.cost;
         
+        result[operation] += entry.cost;
         // Also add to the "llm" category total
         result.llm += entry.cost;
       }
     }
     
-    // Add embedding costs
-    if (Array.isArray(this.costs.embeddings)) {
-      for (const entry of this.costs.embeddings) {
-        const operation = entry.operation || 'unknown';
-        if (!result[operation]) {
+    // Add embedding costs by operation
+    for (const model in this.costs.embeddings) {
+      for (const entry of this.costs.embeddings[model]) {
+        const operation = entry.operation || 'document';
+        
+        // Initialize the operation total if needed
+        if (result[operation] === undefined) {
           result[operation] = 0;
         }
-        result[operation] += entry.cost;
         
+        result[operation] += entry.cost;
         // Also add to the "embeddings" category total
         result.embeddings += entry.cost;
       }
@@ -186,7 +245,7 @@ const costTracker = {
   
   setDetailedLogging(enabled) {
     this.detailedLogging = enabled;
-    console.log(`Detailed logging ${enabled ? 'enabled' : 'disabled'}`);
+    console.log(`Cost tracker detailed logging ${enabled ? 'enabled' : 'disabled'}`);
   },
   
   setEmbeddingPricing(pricingData) {
@@ -312,6 +371,7 @@ app.post('/api/openai-proxy/:endpoint(*)', async (req, res) => {
         
         const costInfo = costTracker.trackEmbeddingCost(model, tokenCount, operation, queryId);
         console.log(`Cost tracked for OpenAI embedding: $${costInfo.cost.toFixed(6)}`);
+        console.log(`Tokens processed: ${tokenCount}, Model: ${model}, Operation: ${operation}`);
         
         // Add cost info to response
         response.data.cost = costInfo.cost;
@@ -653,14 +713,10 @@ app.post('/api/cost-tracking/reset', (req, res) => {
 
 app.post('/api/cost-tracking-settings', (req, res) => {
   try {
-    const { detailedLogging, embeddingPricing } = req.body;
+    const { detailedLogging } = req.body;
     
     if (detailedLogging !== undefined) {
       costTracker.setDetailedLogging(detailedLogging);
-    }
-    
-    if (embeddingPricing) {
-      costTracker.setEmbeddingPricing(embeddingPricing);
     }
     
     res.json({ success: true, message: 'Settings updated successfully' });
@@ -673,14 +729,10 @@ app.post('/api/cost-tracking-settings', (req, res) => {
 // Add slash-format endpoint for settings
 app.post('/api/cost-tracking/settings', (req, res) => {
   try {
-    const { detailedLogging, embeddingPricing } = req.body;
+    const { detailedLogging } = req.body;
     
     if (detailedLogging !== undefined) {
       costTracker.setDetailedLogging(detailedLogging);
-    }
-    
-    if (embeddingPricing) {
-      costTracker.setEmbeddingPricing(embeddingPricing);
     }
     
     res.json({ success: true, message: 'Settings updated successfully' });
@@ -715,8 +767,30 @@ app.post('/api/cost-tracking/track-model-usage', (req, res) => {
   }
 });
 
-// Add cost-tracking-by-period endpoint
-// ... existing code ...
+// Add a specific endpoint for tracking embedding costs
+app.post('/api/cost-tracking/track-embedding-usage', (req, res) => {
+  try {
+    const { model, tokenCount, operation, queryId } = req.body;
+    
+    if (!model || !tokenCount) {
+      return res.status(400).json({ error: 'Model and token count are required' });
+    }
+    
+    console.log(`Server tracking embedding cost for model ${model} with ${tokenCount} tokens`);
+    
+    // Track the embedding cost
+    const costInfo = costTracker.trackEmbeddingCost(model, tokenCount, operation || 'document', queryId);
+    
+    console.log(`Server tracked embedding cost for ${model}: $${costInfo.cost.toFixed(6)}`);
+    console.log(`Total cost accumulating: $${costTracker.getTotalCost().toFixed(6)}`);
+    
+    // Return the cost information
+    res.json(costInfo);
+  } catch (error) {
+    console.error('Error tracking embedding usage:', error);
+    res.status(500).json({ error: 'Failed to track embedding usage' });
+  }
+});
 
 // Add OpenAI proxy endpoint with the expected path
 app.post('/api/proxy/openai/:endpoint(*)', async (req, res) => {
@@ -756,6 +830,7 @@ app.post('/api/proxy/openai/:endpoint(*)', async (req, res) => {
         
         const costInfo = costTracker.trackEmbeddingCost(model, tokenCount, operation, queryId);
         console.log(`Cost tracked for OpenAI embedding: $${costInfo.cost.toFixed(6)}`);
+        console.log(`Tokens processed: ${tokenCount}, Model: ${model}, Operation: ${operation}`);
         
         // Add cost info to response
         response.data.cost = costInfo.cost;
@@ -888,6 +963,129 @@ app.post('/api/proxy/anthropic/messages', async (req, res) => {
     res.json(response.data);
   } catch (error) {
     console.error('Error proxying to Anthropic API:', error.response?.data || error.message);
+    res.status(error.response?.status || 500).json({
+      error: error.response?.data || { message: error.message }
+    });
+  }
+});
+
+// Add Azure OpenAI embeddings proxy endpoint
+app.post('/api/proxy/azure/embeddings', async (req, res) => {
+  try {
+    // Extract necessary parameters from the request
+    const apiKey = req.body.azureApiKey || process.env.REACT_APP_AZURE_OPENAI_API_KEY;
+    const endpoint = req.body.azureEndpoint || process.env.REACT_APP_AZURE_OPENAI_ENDPOINT;
+    const apiVersion = req.body.apiVersion || process.env.REACT_APP_AZURE_OPENAI_API_VERSION || '2023-05-15';
+    const deploymentName = req.body.deploymentName;
+    const input = req.body.input;
+    const queryId = req.body.queryId; // For cost tracking
+    
+    console.log('[DEBUG] Azure Embeddings API Proxy Request:');
+    console.log(`- Azure endpoint: ${endpoint}`);
+    console.log(`- Deployment name: ${deploymentName}`);
+    console.log(`- API version: ${apiVersion}`);
+    console.log(`- Has input: ${input ? 'Yes' : 'No'}`);
+    console.log(`- QueryId provided: ${queryId ? 'Yes' : 'No'}`);
+    
+    if (!apiKey) {
+      return res.status(401).json({
+        error: {
+          message: 'Azure OpenAI API key is required'
+        }
+      });
+    }
+    
+    if (!endpoint) {
+      return res.status(400).json({
+        error: {
+          message: 'Azure OpenAI endpoint is required'
+        }
+      });
+    }
+    
+    if (!deploymentName) {
+      return res.status(400).json({
+        error: {
+          message: 'Azure OpenAI deployment name is required'
+        }
+      });
+    }
+    
+    if (!input) {
+      return res.status(400).json({
+        error: {
+          message: 'Input text is required'
+        }
+      });
+    }
+    
+    // Ensure the endpoint URL is properly formatted
+    let formattedEndpoint = endpoint;
+    if (formattedEndpoint.endsWith('/')) {
+      formattedEndpoint = formattedEndpoint.slice(0, -1);
+    }
+    
+    // Create a clean request body without Azure-specific fields
+    const cleanRequestBody = {
+      input: input,
+      model: deploymentName // Include model for Azure endpoints that need it
+    };
+    
+    // Construct the full target URL
+    const targetUrl = `${formattedEndpoint}/openai/deployments/${deploymentName}/embeddings?api-version=${apiVersion}`;
+    console.log(`[DEBUG] Final Azure embeddings API target URL: ${targetUrl}`);
+    
+    // Make the request to Azure OpenAI API
+    const response = await axios.post(
+      targetUrl,
+      cleanRequestBody,
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          'api-key': apiKey
+        }
+      }
+    );
+    
+    console.log('[DEBUG] Azure embeddings API response received');
+    
+    // Track embedding costs
+    if (response.data) {
+      // Calculate token count either from response or estimate from input
+      let tokenCount = 0;
+      
+      if (response.data.usage && response.data.usage.total_tokens) {
+        tokenCount = response.data.usage.total_tokens;
+      } else {
+        // Estimate token count (4 chars per token)
+        tokenCount = Math.ceil(typeof input === 'string' ? input.length / 4 : 
+          Array.isArray(input) ? input.reduce((sum, text) => sum + text.length, 0) / 4 : 0);
+      }
+      
+      // Determine operation type (single query or batch document)
+      const operation = Array.isArray(input) ? 'document' : 'query';
+      
+      // Track the cost with the appropriate model name
+      const model = `azure-${deploymentName}`;
+      const costInfo = costTracker.trackEmbeddingCost(model, tokenCount, operation, queryId);
+      console.log(`Cost tracked for Azure embedding (${operation}): $${costInfo.cost.toFixed(6)}`);
+      console.log(`Tokens processed: ${tokenCount}, Model: ${model}, Operation: ${operation}`);
+      console.log(`Total accumulated cost: $${costTracker.getTotalCost().toFixed(6)}`);
+      
+      // Add cost info to response
+      response.data.cost = costInfo.cost;
+    }
+    
+    res.json(response.data);
+  } catch (error) {
+    console.error('Error proxying to Azure OpenAI Embeddings API:', error.message);
+    
+    // Log more detailed error information
+    if (error.response) {
+      console.error('Response status:', error.response.status);
+      console.error('Response data:', JSON.stringify(error.response.data, null, 2));
+    }
+    
     res.status(error.response?.status || 500).json({
       error: error.response?.data || { message: error.message }
     });

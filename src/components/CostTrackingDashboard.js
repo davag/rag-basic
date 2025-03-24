@@ -29,7 +29,9 @@ import {
   Dialog,
   DialogTitle,
   DialogContent,
-  DialogActions
+  DialogActions,
+  FormControlLabel,
+  Switch
 } from '@mui/material';
 import { 
   DownloadOutlined as DownloadIcon,
@@ -42,6 +44,7 @@ import axios from 'axios';
 import { Bar, Pie } from 'react-chartjs-2';
 import { Chart as ChartJS, registerables } from 'chart.js';
 import { vendorColors, defaultModels } from '../config/llmConfig';
+import { useSnackbar } from 'notistack';
 ChartJS.register(...registerables);
 
 // Format a number as currency
@@ -82,11 +85,12 @@ const CostTrackingDashboard = () => {
   // State for settings dialog
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [detailedLogging, setDetailedLogging] = useState(false);
-  const [embeddingPricing, setEmbeddingPricing] = useState({});
   const [modelDefinitions, setModelDefinitions] = useState(defaultModels);
   
   // State for confirmation dialog
   const [resetDialogOpen, setResetDialogOpen] = useState(false);
+  
+  const { enqueueSnackbar } = useSnackbar();
   
   // Fetch cost data
   const fetchCostData = useCallback(async () => {
@@ -274,25 +278,28 @@ const CostTrackingDashboard = () => {
     return total;
   };
   
-  // Update settings
-  const handleSaveSettings = async () => {
+  // Save settings
+  const saveSettings = async () => {
     try {
       await axios.post('/api/cost-tracking/settings', {
-        detailedLogging,
-        embeddingPricing
+        detailedLogging
       });
+      
       setSettingsOpen(false);
+      enqueueSnackbar('Settings saved successfully', { variant: 'success' });
     } catch (error) {
-      console.error('Failed to update settings:', error);
+      console.error('Failed to save settings:', error);
+      
       // Try alternative endpoint
       try {
         await axios.post('/api/cost-tracking-settings', {
-          detailedLogging,
-          embeddingPricing
+          detailedLogging
         });
         setSettingsOpen(false);
+        enqueueSnackbar('Settings saved successfully', { variant: 'success' });
       } catch (altError) {
-        console.error('Failed to update settings using alternative endpoint:', altError);
+        console.error('Failed to save settings (alternative endpoint):', altError);
+        enqueueSnackbar('Failed to save settings', { variant: 'error' });
       }
     }
   };
@@ -703,84 +710,67 @@ const CostTrackingDashboard = () => {
       </Paper>
       
       {/* Settings Dialog */}
-      <Dialog open={settingsOpen} onClose={() => setSettingsOpen(false)} maxWidth="sm" fullWidth>
+      <Dialog open={settingsOpen} onClose={() => setSettingsOpen(false)} maxWidth="md">
         <DialogTitle>Cost Tracking Settings</DialogTitle>
         <DialogContent>
-          <Box sx={{ pt: 1 }}>
-            <Typography variant="subtitle1" gutterBottom>Logging Settings</Typography>
-            <FormControl fullWidth sx={{ mt: 2, mb: 3 }}>
-              <InputLabel id="detailed-logging-label">Detailed Logging</InputLabel>
-              <Select
-                labelId="detailed-logging-label"
-                id="detailed-logging"
-                value={detailedLogging ? 'enabled' : 'disabled'}
-                label="Detailed Logging"
-                onChange={(e) => setDetailedLogging(e.target.value === 'enabled')}
-              >
-                <MenuItem value="enabled">Enabled</MenuItem>
-                <MenuItem value="disabled">Disabled</MenuItem>
-              </Select>
-              <Typography variant="caption" color="textSecondary" sx={{ mt: 1 }}>
-                When enabled, detailed cost information will be logged to the console for each operation.
-              </Typography>
-            </FormControl>
-            
-            <Typography variant="subtitle1" gutterBottom sx={{ mt: 3 }}>Embedding Models Pricing</Typography>
-            <Typography variant="caption" color="textSecondary" sx={{ display: 'block', mb: 2 }}>
-              Customize pricing per 1M tokens for embedding models
+          <Box mb={3}>
+            <FormControlLabel
+              control={
+                <Switch
+                  checked={detailedLogging}
+                  onChange={(e) => setDetailedLogging(e.target.checked)}
+                  color="primary"
+                />
+              }
+              label="Enable detailed logging"
+            />
+            <Typography variant="body2" color="textSecondary">
+              Logs detailed information about token usage and costs to the console
+            </Typography>
+          </Box>
+          
+          <Box mb={3}>
+            <Typography variant="subtitle1" gutterBottom>
+              Model Pricing Information
+            </Typography>
+            <Typography variant="body2" gutterBottom color="textSecondary">
+              Embedding model pricing is defined in the central LLM configuration (llmConfig.js).
+              To modify pricing, please update the configuration file directly.
             </Typography>
             
-            <Grid container spacing={2}>
-              <Grid item xs={12} md={6}>
-                <TextField
-                  label="text-embedding-3-small"
-                  type="number"
-                  fullWidth
-                  size="small"
-                  value={embeddingPricing['text-embedding-3-small'] || 0.02}
-                  onChange={(e) => setEmbeddingPricing({...embeddingPricing, 'text-embedding-3-small': Number(e.target.value)})}
-                  InputProps={{ inputProps: { min: 0, step: 0.01 } }}
-                />
-              </Grid>
-              <Grid item xs={12} md={6}>
-                <TextField
-                  label="text-embedding-3-large"
-                  type="number"
-                  fullWidth
-                  size="small"
-                  value={embeddingPricing['text-embedding-3-large'] || 0.13}
-                  onChange={(e) => setEmbeddingPricing({...embeddingPricing, 'text-embedding-3-large': Number(e.target.value)})}
-                  InputProps={{ inputProps: { min: 0, step: 0.01 } }}
-                />
-              </Grid>
-              <Grid item xs={12} md={6}>
-                <TextField
-                  label="text-embedding-ada-002"
-                  type="number"
-                  fullWidth
-                  size="small"
-                  value={embeddingPricing['text-embedding-ada-002'] || 0.10}
-                  onChange={(e) => setEmbeddingPricing({...embeddingPricing, 'text-embedding-ada-002': Number(e.target.value)})}
-                  InputProps={{ inputProps: { min: 0, step: 0.01 } }}
-                />
-              </Grid>
-              <Grid item xs={12} md={6}>
-                <TextField
-                  label="azure-embedding"
-                  type="number"
-                  fullWidth
-                  size="small"
-                  value={embeddingPricing['azure-embedding'] || 0.10}
-                  onChange={(e) => setEmbeddingPricing({...embeddingPricing, 'azure-embedding': Number(e.target.value)})}
-                  InputProps={{ inputProps: { min: 0, step: 0.01 } }}
-                />
-              </Grid>
-            </Grid>
+            <TableContainer component={Paper} sx={{ mt: 2 }}>
+              <Table size="small">
+                <TableHead>
+                  <TableRow>
+                    <TableCell>Model</TableCell>
+                    <TableCell align="right">Input (per 1M tokens)</TableCell>
+                    <TableCell align="right">Output (per 1M tokens)</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {Object.entries(modelDefinitions)
+                    .filter(([_, model]) => model.vendor === 'AzureOpenAI' && 
+                            (model.description?.toLowerCase().includes('embedding') || 
+                             _.toLowerCase().includes('embedding')))
+                    .map(([id, model]) => (
+                      <TableRow key={id}>
+                        <TableCell component="th" scope="row">
+                          {id}
+                        </TableCell>
+                        <TableCell align="right">${model.input.toFixed(5)}</TableCell>
+                        <TableCell align="right">${model.output.toFixed(5)}</TableCell>
+                      </TableRow>
+                    ))}
+                </TableBody>
+              </Table>
+            </TableContainer>
           </Box>
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setSettingsOpen(false)}>Cancel</Button>
-          <Button onClick={handleSaveSettings} variant="contained">Save</Button>
+          <Button onClick={saveSettings} color="primary">
+            Save
+          </Button>
         </DialogActions>
       </Dialog>
       
