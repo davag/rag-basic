@@ -474,20 +474,30 @@ Format your response in a clear, structured way. Focus on actionable improvement
       }
     } catch (error) {
       console.error('Error processing query:', error);
-      // Provide more specific error messages based on the error type
-      if (error.message?.includes('rate limit')) {
-        setError('Rate limit exceeded. Please wait a moment before trying again.');
-      } else if (error.message?.includes('timeout')) {
-        setError('Request timed out. Please try again or check your connection.');
-      } else if (error.message?.includes('unauthorized') || error.message?.includes('401')) {
-        setError('Authentication error. Please check your API keys and permissions.');
-      } else if (error.message?.includes('vector store')) {
-        setError('Error accessing the vector store. Please check if your documents are properly indexed.');
-      } else if (error.message?.includes('llm')) {
-        setError('Error communicating with the language model. Please check your model configuration.');
-      } else {
-        setError(`Error: ${error.message || 'An unexpected error occurred. Please try again.'}`);
+      // Enhanced error handling for common issues
+      let errorMessage = error.message;
+      
+      // Special handling for common errors
+      if (error.message?.includes('Rate limit')) {
+        errorMessage = 'Rate limit exceeded. Please wait a moment before trying again.';
       }
+      else if (error.message?.includes('timeout') || error.message?.includes('timed out')) {
+        errorMessage = 'Request timed out. Please try again or check your connection.';
+      }
+      else if (error.message?.includes('Authentication') || error.message?.includes('API key')) {
+        errorMessage = 'Authentication error. Please check your API keys and permissions.';
+      }
+      else if (error.message?.includes('vector store')) {
+        errorMessage = 'Error accessing the vector store. Please check if your documents are properly indexed.';
+      }
+      else if (error.message?.includes('llm')) {
+        errorMessage = 'Error communicating with the language model. Please check your model configuration.';
+      }
+      else {
+        errorMessage = `Error: ${error.message || 'An unexpected error occurred. Please try again.'}`;
+      }
+      
+      setError(errorMessage);
     } finally {
       setIsProcessing(false);
       setCurrentProcessingModel(null);
@@ -874,7 +884,31 @@ Format your response in a clear, structured way. Focus on actionable improvement
       
     } catch (error) {
       console.error("Error processing parallel query:", error);
-      setError(error.message);
+      
+      // Enhanced error handling for common issues
+      let errorMessage = error.message;
+      
+      // Special handling for common errors
+      if (error.message?.includes('Rate limit')) {
+        errorMessage = 'Rate limit exceeded. Please wait a moment before trying again.';
+      }
+      else if (error.message?.includes('timeout') || error.message?.includes('timed out')) {
+        errorMessage = 'Request timed out. Please try again or check your connection.';
+      }
+      else if (error.message?.includes('Authentication') || error.message?.includes('API key')) {
+        errorMessage = 'Authentication error. Please check your API keys and permissions.';
+      }
+      else if (error.message?.includes('vector store')) {
+        errorMessage = 'Error accessing the vector store. Please check if your documents are properly indexed.';
+      }
+      else if (error.message?.includes('llm')) {
+        errorMessage = 'Error communicating with the language model. Please check your model configuration.';
+      }
+      else {
+        errorMessage = `Error: ${error.message || 'An unexpected error occurred. Please try again.'}`;
+      }
+      
+      setError(errorMessage);
     } finally {
       setIsProcessing(false);
     }
@@ -995,7 +1029,9 @@ Format your response in a clear, structured way. Focus on actionable improvement
             </MenuItem>
             <MenuItem value="azure-gpt-4o">Azure GPT-4o</MenuItem>
             <MenuItem value="azure-gpt-4o-mini">Azure GPT-4o Mini</MenuItem>
-            <MenuItem value="azure-o3-mini">Azure o3-mini</MenuItem>
+            <MenuItem value="azure-o3-mini">
+              <span>Azure o3-mini</span>
+            </MenuItem>
           </Select>
         </FormControl>
 

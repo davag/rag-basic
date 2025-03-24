@@ -317,11 +317,7 @@ Given the context information and not prior knowledge, answer the question: ${qu
       const startTime = Date.now();
       
       // Create LLM instance with custom options
-      const llm = createLlmInstance(model, systemPrompt, {
-        ollamaEndpoint,
-        temperature,
-        queryId // Pass queryId to the LLM instance
-      });
+      const llm = this.createModelInstance(model, systemPrompt, temperature, queryId);
       
       // Call the LLM with the prompt
       const answer = await llm.invoke(prompt);
@@ -384,6 +380,21 @@ Given the context information and not prior knowledge, answer the question: ${qu
       // Re-throw the error to be handled by the caller
       throw error;
     }
+  }
+  
+  createModelInstance(modelId, systemPrompt, temperature, queryId) {
+    const options = {
+      temperature,
+      queryId
+    };
+    
+    // For o3-mini models, omit temperature parameter as it's not supported
+    if (modelId.includes('o3-mini')) {
+      delete options.temperature;
+      console.log(`[MODEL PROCESSOR] Omitting temperature parameter for ${modelId} as it's not supported`);
+    }
+    
+    return createLlmInstance(modelId, systemPrompt, options);
   }
   
   updateProgress(data) {

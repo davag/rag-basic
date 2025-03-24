@@ -18,7 +18,6 @@ import BuildIcon from '@mui/icons-material/Build';
 import SpeedIcon from '@mui/icons-material/Speed';
 import AttachMoneyIcon from '@mui/icons-material/AttachMoney';
 import RagIntroduction from './components/RagIntroduction';
-
 import DocumentUpload from './components/DocumentUpload';
 import VectorStoreConfig from './components/VectorStoreConfig';
 import QueryInterface from './components/QueryInterface';

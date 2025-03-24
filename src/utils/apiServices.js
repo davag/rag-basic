@@ -113,7 +113,7 @@ class CustomChatAnthropic {
     this.queryId = options.queryId || null;
     
     // Use a proxy server URL if available, otherwise use the default proxy
-    this.proxyUrl = apiConfig.anthropic.proxyUrl;
+    this.proxyUrl = options.proxyUrl || apiConfig.anthropic.proxyUrl || '/api/proxy/anthropic';
     
     // Add compatibility properties
     this._modelType = () => 'anthropic';
@@ -232,7 +232,8 @@ class CustomChatOpenAI {
     this.queryId = options.queryId || null;
     
     // Use a proxy server URL if available, otherwise use the default proxy
-    this.proxyUrl = apiConfig.openAI.proxyUrl;
+    // Added explicit fallback to ensure proxyUrl is never undefined
+    this.proxyUrl = options.proxyUrl || apiConfig.openAI.proxyUrl || '/api/proxy/openai';
     
     // Add compatibility properties
     this._modelType = () => 'openai';
@@ -243,6 +244,16 @@ class CustomChatOpenAI {
     safeLogger.log(`CustomChatOpenAI initialized with model: ${this.modelName}`);
     safeLogger.log(`API key provided in constructor: ${this.apiKey ? 'Yes' : 'No'}`);
     safeLogger.log(`Environment API key available: ${apiConfig.openAI.apiKey ? 'Yes' : 'No'}`);
+
+    safeLogger.log(`Proxy URL: ${this.proxyUrl}`);
+    
+    // Additional debug for gpt-4o-mini specifically
+    if (this.modelName === 'gpt-4o-mini') {
+      console.log('DEBUG: Initializing gpt-4o-mini model');
+      console.log('DEBUG: Using proxy URL:', this.proxyUrl);
+      console.log('DEBUG: API key available:', this.apiKey ? 'Yes' : 'No');
+    }
+    
     if (this.modelName.startsWith('o1') || this.modelName.startsWith('o3')) {
       safeLogger.log(`Note: ${this.modelName.startsWith('o1') ? 'o1' : 'o3'} models use max_completion_tokens instead of max_tokens`);
       if (this.modelName.startsWith('o1')) {
@@ -257,6 +268,60 @@ class CustomChatOpenAI {
 
   async call(messages) {
     try {
+      // Special handling for gpt-4o-mini
+      if (this.modelName === 'gpt-4o-mini') {
+        console.log('DIRECT DEBUG: Using direct server endpoint for gpt-4o-mini');
+        
+        // Format messages
+        const formattedMessages = messages.map(msg => ({
+          role: msg.role || 'user',
+          content: msg.content
+        }));
+        
+        // Add system message if provided
+        const allMessages = this.systemPrompt 
+          ? [{ role: 'system', content: this.systemPrompt }, ...formattedMessages]
+          : formattedMessages;
+        
+        // Make sure we have an API key
+        const apiKey = this.apiKey || apiConfig.openAI.apiKey;
+        
+        if (!apiKey) {
+          throw new Error('OpenAI API key is required for gpt-4o-mini');
+        }
+        
+        // Ensure proxyUrl is not undefined and use a fallback if needed
+        const proxyUrl = this.proxyUrl || '/api/proxy/openai';
+        console.log('DIRECT DEBUG: Using proxy URL for gpt-4o-mini:', proxyUrl);
+        
+        const response = await axios.post(
+          `${proxyUrl}/chat/completions`,
+          {
+            model: 'gpt-4o-mini',
+            messages: allMessages,
+            max_tokens: 1024,
+            temperature: this.temperature !== undefined ? this.temperature : 0.7,
+            openaiApiKey: apiKey,
+            queryId: this.queryId
+          },
+          {
+            headers: {
+              'Content-Type': 'application/json'
+            }
+          }
+        );
+        
+        console.log('DIRECT DEBUG: gpt-4o-mini response received:', response.status);
+        
+        if (response.data.error) {
+          console.error('DIRECT DEBUG: Error in response:', response.data.error);
+          throw new Error(`OpenAI API error: ${response.data.error.message}`);
+        }
+        
+        return response.data.choices[0].message.content;
+      }
+      
+      // Regular handling for other models
       // Format messages for OpenAI API
       const formattedMessages = messages.map(msg => ({
         role: msg.role || 'user',
@@ -330,6 +395,8 @@ class CustomChatOpenAI {
         requestData
       });
       
+      console.log('DEBUG: Sending request to:', `${this.proxyUrl}/chat/completions`);
+      
       const response = await axios.post(
         `${this.proxyUrl}/chat/completions`,
         requestData,
@@ -351,10 +418,25 @@ class CustomChatOpenAI {
       return response.data.choices[0].message.content;
     } catch (error) {
       safeLogger.error('Error calling OpenAI API:', error);
+      
+      // Enhanced error logging for gpt-4o-mini
+      if (this.modelName === 'gpt-4o-mini') {
+        console.error('DEBUG: Error with gpt-4o-mini request:', error.message);
+      }
+      
       if (error.response) {
         safeLogger.error('Response data:', error.response.data);
         safeLogger.error('Response status:', error.response.status);
         safeLogger.error('Response headers:', error.response.headers);
+        
+        // Enhanced error debug for gpt-4o-mini
+        if (this.modelName === 'gpt-4o-mini') {
+          console.error('DEBUG: gpt-4o-mini error response:', {
+            status: error.response.status,
+            statusText: error.response.statusText,
+            data: error.response.data,
+          });
+        }
       }
       throw new Error(`OpenAI API error: ${error.message || 'Unknown error'}`);
     }
@@ -378,14 +460,23 @@ export class CustomAzureOpenAI {
     this.systemPrompt = options.systemPrompt || '';
     this.apiKey = options.apiKey || apiConfig.azure.apiKey;
     this.endpoint = options.endpoint || apiConfig.azure.endpoint;
+    // Use model-specific API version if available, otherwise fallback to the global one
     this.apiVersion = options.apiVersion || apiConfig.azure.apiVersion || '2023-05-15';
     this.queryId = options.queryId || null;
+    
+    // Initialize proxyUrl with default value to prevent undefined errors
+    this.proxyUrl = options.proxyUrl || apiConfig.openAI.proxyUrl || '/api/proxy/openai';
     
     // If deployment name is not provided, try to get it from model config
     if (!this.deploymentName) {
       const modelConfig = defaultModels[this.modelName];
       if (modelConfig && modelConfig.deploymentName) {
         this.deploymentName = modelConfig.deploymentName;
+        
+        // If model config has a specific API version, use that
+        if (modelConfig.apiVersion) {
+          this.apiVersion = modelConfig.apiVersion;
+        }
       } else {
         // Default to using the model name without the azure- prefix
         this.deploymentName = this.modelName.replace('azure-', '');
@@ -439,19 +530,15 @@ export class CustomAzureOpenAI {
         throw new Error('Azure OpenAI endpoint is required. Please set REACT_APP_AZURE_OPENAI_ENDPOINT in your environment variables.');
       }
       
-      // Special handling for o3-mini model which doesn't exist
+      // Use the specified deployment name directly
       let finalDeploymentName = this.deploymentName;
-      if (this.deploymentName === 'o3-mini') {
-        // Fallback to gpt-4o-mini for o3-mini requests
-        console.warn('[AZURE WARNING] o3-mini deployment not found, falling back to gpt-4o-mini');
-        finalDeploymentName = 'gpt-4o-mini';
-      }
       
       // Use safe logger and also log to console for debugging
       safeLogger.log('Sending Azure OpenAI request:', {
-        endpoint: `${this.proxyUrl}`,
+        endpoint: this.endpoint,
         modelName: this.modelName,
         deploymentName: finalDeploymentName,
+        apiVersion: this.apiVersion,
         messageCount: formattedMessages.length,
         hasSystemPrompt: !!this.systemPrompt,
         temperature: this.temperature
@@ -459,12 +546,12 @@ export class CustomAzureOpenAI {
       
       // Log detailed request info
       console.log('[DEBUG] Azure API Request Details:');
-      console.log(`- Proxy URL: ${this.proxyUrl}`);
+      console.log(`- Azure Endpoint: ${endpoint}`);
       console.log(`- Deployment Name: ${finalDeploymentName}`);
+      console.log(`- API Version: ${this.apiVersion}`);
       console.log(`- Message Count: ${formattedMessages.length}`);
       console.log(`- First message role: ${formattedMessages[0]?.role}`);
       console.log(`- API Key first 5 chars: ${apiKey.substring(0, 5)}...`);
-      console.log(`- Endpoint: ${endpoint}`);
       
       // Use proxy endpoint to avoid CORS
       const requestData = {
@@ -477,9 +564,13 @@ export class CustomAzureOpenAI {
         queryId: this.queryId
       };
       
-      // Add temperature if specified
-      if (this.temperature !== undefined) {
+      // Add temperature if specified and not o3-mini model
+      if (this.temperature !== undefined && 
+          !this.modelName.includes('o3-mini') && 
+          !finalDeploymentName.includes('o3-mini')) {
         requestData.temperature = this.temperature;
+      } else if (this.modelName.includes('o3-mini') || finalDeploymentName.includes('o3-mini')) {
+        console.log('[DEBUG] Omitting temperature parameter for o3-mini model - not supported');
       }
       
       // Add max tokens
@@ -488,9 +579,9 @@ export class CustomAzureOpenAI {
       console.log('[DEBUG] About to make Azure API request');
       console.log(`[DEBUG] Request body: ${JSON.stringify(requestData, null, 2)}`);
       
-      // Make the API call
+      // Use direct server endpoint for Azure OpenAI
       const response = await axios.post(
-        `${this.proxyUrl}/chat/completions`,
+        `/api/proxy/azure/chat/completions`,
         requestData,
         {
           headers: {
@@ -525,8 +616,15 @@ export class CustomAzureOpenAI {
         
         // Provide a more specific error message based on the status code
         const status = error.response.status;
-        if (status === 404) {
-          throw new Error(`Azure OpenAI API error: Deployment '${this.deploymentName}' not found. Please check your deployment name and endpoint URL.`);
+        const errorData = error.response.data?.error || {};
+        
+        if (status === 404 && errorData.code === 'DeploymentNotFound') {
+          // Special handling for deployment not found errors
+          if (this.deploymentName === 'o3-mini') {
+            throw new Error(`Azure OpenAI deployment '${this.deploymentName}' not found. The o3-mini model may not be available in your Azure account. Consider using 'gpt-4o-mini' deployment instead or request access to o3-mini.`);
+          } else {
+            throw new Error(`Azure OpenAI deployment '${this.deploymentName}' not found. Please check your deployment name in the Azure portal and ensure it's properly configured.`);
+          }
         } else if (status === 401) {
           throw new Error(`Azure OpenAI API error: Authentication failed. Please check your API key.`);
         } else if (status === 400) {
@@ -569,6 +667,31 @@ export const createLlmInstance = (model, systemPrompt, options = {}) => {
     'Ollama'
   );
   
+  // Ensure we have proxy URLs with fallbacks
+  const openAIProxyUrl = apiConfig.openAI.proxyUrl || '/api/proxy/openai';
+  const anthropicProxyUrl = apiConfig.anthropic.proxyUrl || '/api/proxy/anthropic';
+  
+  // Load custom Azure model configurations from localStorage if available
+  let customAzureConfig = null;
+  try {
+    const savedConfig = localStorage.getItem('azureModelsConfig');
+    if (savedConfig) {
+      customAzureConfig = JSON.parse(savedConfig);
+    }
+  } catch (e) {
+    console.error('Error loading custom Azure config from localStorage:', e);
+  }
+  
+  // Merge default model config with custom config if available
+  let finalModelConfig = { ...modelConfig };
+  if (customAzureConfig && customAzureConfig[model]) {
+    console.log(`Using custom configuration for ${model} from localStorage:`, customAzureConfig[model]);
+    finalModelConfig = {
+      ...finalModelConfig,
+      ...customAzureConfig[model]
+    };
+  }
+  
   // Create the appropriate LLM instance based on vendor
   if (vendor === 'Ollama') {
     return new ChatOllama({
@@ -583,6 +706,7 @@ export const createLlmInstance = (model, systemPrompt, options = {}) => {
       systemPrompt,
       temperature: options.temperature,
       anthropicApiKey: options.anthropicApiKey,
+      proxyUrl: anthropicProxyUrl,
       queryId: options.queryId
     });
   } else if (vendor === 'AzureOpenAI') {
@@ -590,7 +714,9 @@ export const createLlmInstance = (model, systemPrompt, options = {}) => {
       modelName: model,
       systemPrompt,
       temperature: options.temperature,
-      deploymentName: modelConfig?.deploymentName,
+      deploymentName: finalModelConfig?.deploymentName,
+      apiVersion: finalModelConfig?.apiVersion,
+      proxyUrl: openAIProxyUrl, // Use OpenAI proxy for Azure
       queryId: options.queryId
     });
   } else {
@@ -599,6 +725,7 @@ export const createLlmInstance = (model, systemPrompt, options = {}) => {
       systemPrompt,
       temperature: options.temperature,
       openAIApiKey: options.openAIApiKey,
+      proxyUrl: openAIProxyUrl,
       queryId: options.queryId
     });
   }

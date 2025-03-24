@@ -44,7 +44,8 @@ export const defaultModels = {
     output: 0.06,
     active: true,
     description: 'Azure-hosted GPT-4o - optimized version of GPT-4.',
-    deploymentName: 'gpt-4o'
+    deploymentName: 'gpt-4o',
+    apiVersion: '2023-05-15'
   },
   'azure-gpt-4o-mini': {
     vendor: 'AzureOpenAI',
@@ -52,15 +53,17 @@ export const defaultModels = {
     output: 0.60,
     active: true,
     description: 'Azure-hosted GPT-4o-mini - affordable, faster version of GPT-4o.',
-    deploymentName: 'gpt-4o-mini'
+    deploymentName: 'gpt-4o-mini',
+    apiVersion: '2023-05-15'
   },
   'azure-o3-mini': {
     vendor: 'AzureOpenAI',
     input: 1.10,
     output: 4.40,
     active: true,
-    description: 'Azure-hosted o3-mini - newest model with improved reasoning capabilities.',
-    deploymentName: 'gpt-4o-mini'
+    description: 'Azure-hosted o3-mini model',
+    deploymentName: 'o3-mini',
+    apiVersion: '2025-01-31'
   },
   
   // Azure OpenAI embedding models
@@ -70,7 +73,8 @@ export const defaultModels = {
     output: 0.00002,
     active: true,
     description: 'Azure-hosted text-embedding-3-small - optimized for general text with good performance and cost efficiency.',
-    deploymentName: 'text-embedding-3-small'
+    deploymentName: 'text-embedding-3-small',
+    apiVersion: '2023-05-15'
   },
   'azure-text-embedding-3-large': {
     vendor: 'AzureOpenAI',
@@ -78,7 +82,8 @@ export const defaultModels = {
     output: 0.00013,
     active: true,
     description: 'Azure-hosted text-embedding-3-large - better for complex technical content and longer context.',
-    deploymentName: 'text-embedding-3-large'
+    deploymentName: 'text-embedding-3-large',
+    apiVersion: '2023-05-15'
   },
   
   // Anthropic models

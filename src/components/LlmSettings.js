@@ -38,7 +38,7 @@ import VisibilityIcon from '@mui/icons-material/Visibility';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import ErrorIcon from '@mui/icons-material/Error';
 import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
-import { createLlmInstance, CustomAzureOpenAI } from '../utils/apiServices';
+import { createLlmInstance } from '../utils/apiServices';
 import {
   defaultModels,
   defaultSettings,
@@ -104,7 +104,9 @@ const LlmSettings = ({ showAppSettingsOnly = false }) => {
       images: false,
       vision: false,
       json: false
-    }
+    },
+    apiVersion: '',
+    deploymentName: ''
   });
   
   // State for Azure deployments dialog
@@ -112,6 +114,21 @@ const LlmSettings = ({ showAppSettingsOnly = false }) => {
   const [showDeploymentDialog, setShowDeploymentDialog] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [showError, setShowError] = useState(false);
+
+  // Add snackbar state management
+  const [snackbar, setSnackbar] = useState({
+    open: false,
+    message: '',
+    severity: 'success'
+  });
+  
+  // Handle snackbar close
+  const handleSnackbarClose = () => {
+    setSnackbar({
+      ...snackbar,
+      open: false
+    });
+  };
 
   // Load parallel processing preference from localStorage on mount
   useEffect(() => {
@@ -141,11 +158,17 @@ const LlmSettings = ({ showAppSettingsOnly = false }) => {
     
     try {
       const options = {};
-      if (models[modelId].vendor === 'Ollama') {
+      const modelData = models[modelId];
+      
+      // Configure options based on model vendor
+      if (modelData.vendor === 'Ollama') {
         options.ollamaEndpoint = ollamaEndpoint;
       }
 
+      // Create and test LLM instance using the unified createLlmInstance function
       const llm = createLlmInstance(modelId, 'You are a helpful assistant.', options);
+      console.log(`Testing model ${modelId} using standard interface`);
+      
       const response = await llm.invoke('Hello, can you respond with a short greeting?');
       
       setTestResults(prev => ({
@@ -157,76 +180,6 @@ const LlmSettings = ({ showAppSettingsOnly = false }) => {
       }));
     } catch (err) {
       window.console.error(`Error testing model ${modelId}:`, err);
-      setTestResults(prev => ({
-        ...prev, 
-        [modelId]: { 
-          status: 'error', 
-          error: err.message 
-        }
-      }));
-    }
-  };
-
-  // Test Azure LLM connectivity specifically
-  const testAzureLlmConnection = async (modelId) => {
-    // Update test results for this model to show "testing" status
-    setTestResults(prev => ({...prev, [modelId]: 'testing'}));
-    
-    try {
-      const modelData = models[modelId];
-      if (!modelData || modelData.vendor !== 'AzureOpenAI') {
-        throw new Error('Not an Azure model');
-      }
-      
-      // Get the deployment name
-      const deploymentName = modelData.deploymentName || modelId.replace('azure-', '');
-      
-      // Get the Azure API key and endpoint from environment variables
-      const azureApiKey = process.env.REACT_APP_AZURE_OPENAI_API_KEY;
-      const azureEndpoint = process.env.REACT_APP_AZURE_OPENAI_ENDPOINT;
-      
-      console.log('[AZURE TEST] Testing Azure Model:', {
-        modelId,
-        deploymentName,
-        hasApiKey: !!azureApiKey,
-        hasEndpoint: !!azureEndpoint,
-        apiKeyLength: azureApiKey ? azureApiKey.length : 0,
-        apiKeyFirstFiveChars: azureApiKey ? azureApiKey.substring(0, 5) : '',
-        endpoint: azureEndpoint
-      });
-      
-      if (!azureApiKey) {
-        throw new Error('Azure API key is not set in environment variables');
-      }
-      
-      if (!azureEndpoint) {
-        throw new Error('Azure endpoint is not set in environment variables');
-      }
-      
-      // Create the Azure LLM instance directly
-      const llm = new CustomAzureOpenAI({
-        azureApiKey,
-        azureEndpoint,
-        modelName: modelId, 
-        deploymentName,
-        temperature: 0,
-        systemPrompt: 'You are a helpful assistant.',
-        apiVersion: process.env.REACT_APP_AZURE_OPENAI_API_VERSION
-      });
-      
-      // Test with a simple query
-      const response = await llm.invoke('Hello, can you respond with a short greeting?');
-      
-      // Update test results on success
-      setTestResults(prev => ({
-        ...prev, 
-        [modelId]: { 
-          status: 'success', 
-          response: typeof response === 'object' ? response.text : response 
-        }
-      }));
-    } catch (err) {
-      window.console.error(`[AZURE TEST] Error testing Azure model ${modelId}:`, err);
       setTestResults(prev => ({
         ...prev, 
         [modelId]: { 
@@ -460,79 +413,80 @@ const LlmSettings = ({ showAppSettingsOnly = false }) => {
         images: false,
         vision: false,
         json: false
-      }
+      },
+      apiVersion: '',
+      deploymentName: ''
     });
     setShowModelDialog(true);
   };
 
   const handleEditModel = (modelId) => {
     const model = models[modelId];
-    if (model) {
-      setEditingModel(modelId);
-      setEditModelData({
-        modelId: modelId,
-        name: model.name || '',
-        vendor: model.vendor || '',
-        maxTokens: model.maxTokens || 4096,
-        contextLength: model.contextLength || 8192,
-        inputPrice: model.input || 0,
-        outputPrice: model.output || 0,
-        capabilities: model.capabilities || {
-          chat: true,
-          images: false,
-          vision: false,
-          json: false
-        }
-      });
-      setShowModelDialog(true);
-    }
+    setEditingModel(modelId);
+    setEditModelData({
+      modelId,
+      name: model.name || modelId,
+      vendor: model.vendor || '',
+      inputPrice: model.input || 0,
+      outputPrice: model.output || 0,
+      maxTokens: model.maxTokens || 4096,
+      contextLength: model.contextLength || 8192,
+      capabilities: model.capabilities || {
+        chat: true,
+        images: false,
+        vision: false,
+        json: false
+      },
+      apiVersion: model.apiVersion || '',
+      deploymentName: model.deploymentName || ''
+    });
+    setShowModelDialog(true);
   };
 
   const handleSaveModel = () => {
-    const newModels = { ...models };
+    const updatedModels = { ...models };
     
-    // If editing existing model
     if (editingModel) {
-      newModels[editingModel] = {
+      // Update existing model
+      updatedModels[editingModel] = {
+        ...updatedModels[editingModel],
         name: editModelData.name,
         vendor: editModelData.vendor,
-        maxTokens: editModelData.maxTokens,
-        contextLength: editModelData.contextLength,
-        input: editModelData.inputPrice,
-        output: editModelData.outputPrice,
+        input: parseFloat(editModelData.inputPrice),
+        output: parseFloat(editModelData.outputPrice),
+        maxTokens: parseInt(editModelData.maxTokens),
+        contextLength: parseInt(editModelData.contextLength),
         capabilities: editModelData.capabilities,
-        active: editModelData.active,
-        description: editModelData.description
+        apiVersion: editModelData.apiVersion,
+        deploymentName: editModelData.deploymentName
       };
-      
-      // Add deploymentName only for Azure models
-      if (editModelData.vendor === 'AzureOpenAI' && editModelData.deploymentName) {
-        newModels[editingModel].deploymentName = editModelData.deploymentName;
-      }
-    } 
-    // If adding new model
-    else if (editModelData.modelId) {
-      newModels[editModelData.modelId] = {
+    } else {
+      // Create new model
+      updatedModels[editModelData.modelId] = {
         name: editModelData.name,
         vendor: editModelData.vendor,
-        maxTokens: editModelData.maxTokens,
-        contextLength: editModelData.contextLength,
-        input: editModelData.inputPrice,
-        output: editModelData.outputPrice,
+        input: parseFloat(editModelData.inputPrice),
+        output: parseFloat(editModelData.outputPrice),
+        active: true,
+        maxTokens: parseInt(editModelData.maxTokens),
+        contextLength: parseInt(editModelData.contextLength),
         capabilities: editModelData.capabilities,
-        active: editModelData.active,
-        description: editModelData.description
+        apiVersion: editModelData.apiVersion,
+        deploymentName: editModelData.deploymentName
       };
-      
-      // Add deploymentName only for Azure models
-      if (editModelData.vendor === 'AzureOpenAI' && editModelData.deploymentName) {
-        newModels[editModelData.modelId].deploymentName = editModelData.deploymentName;
-      }
     }
     
-    setModels(newModels);
-    localStorage.setItem('llmModels', JSON.stringify(newModels));
+    setModels(updatedModels);
+    localStorage.setItem('modelSettings', JSON.stringify(updatedModels));
     setShowModelDialog(false);
+    setEditingModel(null);
+    
+    // Show success message
+    setSnackbar({
+      open: true,
+      message: `Model ${editingModel ? 'updated' : 'added'} successfully`,
+      severity: 'success'
+    });
   };
 
   const handleDeleteModel = () => {
@@ -688,6 +642,44 @@ const LlmSettings = ({ showAppSettingsOnly = false }) => {
                 />
               </FormControl>
             </Grid>
+            
+            {(editModelData.vendor === 'AzureOpenAI' || 
+              (editModelData.modelId && editModelData.modelId.startsWith('azure-'))) && (
+              <>
+                <Grid item xs={12} md={6}>
+                  <TextField
+                    fullWidth
+                    label="API Version"
+                    value={editModelData.apiVersion || ''}
+                    onChange={(e) => 
+                      setEditModelData({
+                        ...editModelData,
+                        apiVersion: e.target.value
+                      })
+                    }
+                    helperText="API version (e.g., 2023-05-15 or 2025-01-31 for o3-mini)"
+                    margin="normal"
+                    variant="outlined"
+                  />
+                </Grid>
+                <Grid item xs={12} md={6}>
+                  <TextField
+                    fullWidth
+                    label="Deployment Name"
+                    value={editModelData.deploymentName || ''}
+                    onChange={(e) => 
+                      setEditModelData({
+                        ...editModelData,
+                        deploymentName: e.target.value
+                      })
+                    }
+                    helperText="The deployment name in your Azure account"
+                    margin="normal"
+                    variant="outlined"
+                  />
+                </Grid>
+              </>
+            )}
           </Grid>
         </DialogContent>
         <DialogActions>
@@ -919,6 +911,20 @@ const LlmSettings = ({ showAppSettingsOnly = false }) => {
                                 ~${costPerK} per 1K tokens
                               </Typography>
                             </Box>
+                            
+                            {/* Display API version and deployment name for Azure models */}
+                            {model.vendor === 'AzureOpenAI' && (
+                              <>
+                                <Typography variant="caption" color={textColor} component="div" mb={0.5}>
+                                  API Version: {model.apiVersion || '2023-05-15'}
+                                </Typography>
+                                {model.deploymentName && (
+                                  <Typography variant="caption" color={textColor} component="div" mb={0.5}>
+                                    Deployment: {model.deploymentName}
+                                  </Typography>
+                                )}
+                              </>
+                            )}
                           </CardContent>
                           
                           <CardActions>
@@ -932,25 +938,6 @@ const LlmSettings = ({ showAppSettingsOnly = false }) => {
                                 Edit
                               </Button>
                               <Box>
-                                {model.vendor === 'AzureOpenAI' && (
-                                  <Button
-                                    size="small"
-                                    onClick={() => testAzureLlmConnection(modelId)}
-                                    startIcon={
-                                      testResults[modelId] === 'testing' ? 
-                                        <CircularProgress size={16} /> : 
-                                        <VisibilityIcon />
-                                    }
-                                    color="info"
-                                    disabled={
-                                      !model.active || 
-                                      testResults[modelId] === 'testing'
-                                    }
-                                    sx={{ mr: 1 }}
-                                  >
-                                    Test Azure
-                                  </Button>
-                                )}
                                 <Button
                                   size="small"
                                   onClick={() => testLlmConnection(modelId)}
@@ -1154,6 +1141,22 @@ const LlmSettings = ({ showAppSettingsOnly = false }) => {
           </Box>
         </>
       )}
+
+      {/* Success/error snackbar */}
+      <Snackbar
+        open={snackbar.open}
+        autoHideDuration={6000}
+        onClose={handleSnackbarClose}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
+        <Alert
+          onClose={handleSnackbarClose}
+          severity={snackbar.severity}
+          variant="filled"
+        >
+          {snackbar.message}
+        </Alert>
+      </Snackbar>
     </Box>
   );
 };

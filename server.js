@@ -556,9 +556,10 @@ app.post('/api/proxy/azure/chat/completions', async (req, res) => {
       });
     }
     
-    // Special handling for o3-mini-alpha model
-    if (deploymentName === 'o3-mini-alpha') {
-      console.warn('[AZURE WARNING] Using preview model o3-mini-alpha');
+    // Special handling for o3-mini model - temperature parameter is not supported
+    if (deploymentName.includes('o3-mini')) {
+      console.warn(`[AZURE WARNING] Removing temperature parameter for ${deploymentName} as it's not supported`);
+      delete cleanRequestBody.temperature;
     }
     
     // Create a clean request body by removing Azure-specific fields AND the queryId
