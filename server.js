@@ -105,10 +105,22 @@ const costTracker = {
   
   getCostSummary() {
     console.log('Returning cost summary with total:', this.costs.total.toFixed(6));
+    
+    // Prepare llm data in array format
+    let llmArray = [];
+    for (const model in this.costs.llm) {
+      llmArray = llmArray.concat(this.costs.llm[model]);
+    }
+    
+    // Ensure embeddings is an array
+    const embeddings = Array.isArray(this.costs.embeddings) ? this.costs.embeddings : [];
+    
     return {
       totalCost: this.costs.total,
       costsByModel: this._getCostsByModel(),
-      costsByOperation: this._getCostsByOperation()
+      costsByOperation: this._getCostsByOperation(),
+      llm: llmArray,
+      embeddings: embeddings
     };
   },
   
@@ -121,7 +133,13 @@ const costTracker = {
   },
   
   _getCostsByOperation() {
-    const result = {};
+    const result = {
+      // Initialize with 0 values for expected categories
+      llm: 0,
+      embeddings: 0
+    };
+    
+    // Add LLM costs by operation
     for (const model in this.costs.llm) {
       for (const entry of this.costs.llm[model]) {
         const operation = entry.operation || 'unknown';
@@ -129,8 +147,26 @@ const costTracker = {
           result[operation] = 0;
         }
         result[operation] += entry.cost;
+        
+        // Also add to the "llm" category total
+        result.llm += entry.cost;
       }
     }
+    
+    // Add embedding costs
+    if (Array.isArray(this.costs.embeddings)) {
+      for (const entry of this.costs.embeddings) {
+        const operation = entry.operation || 'unknown';
+        if (!result[operation]) {
+          result[operation] = 0;
+        }
+        result[operation] += entry.cost;
+        
+        // Also add to the "embeddings" category total
+        result.embeddings += entry.cost;
+      }
+    }
+    
     return result;
   },
   
