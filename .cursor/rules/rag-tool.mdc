@@ -3,11 +3,14 @@ description:
 globs: 
 alwaysApply: true
 ---
+# App principles
 
-# Goal of the app
-
+## Target users
 - Help people not familar with RAG and LLM to understand and test those patterns
 - Guidance should be provided hence for begineers or average users
 - Advanced users will still benefit from the feature set
+- The app will help to improve Documents for RAG, prompts and LLM selection
 
-The app will help to improve Documents for RAG, prompts and LLM selection
+## Architecture
+- Keep always all LLM definitions in a central place llmConfig.js
+

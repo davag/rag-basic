@@ -644,27 +644,6 @@ function App() {
                 label="Validate Responses"
                 disabled={Object.keys(llmResponses).length === 0}
               />
-              <Tab 
-                icon={
-                  <Box sx={{ 
-                    width: 36, 
-                    height: 36, 
-                    bgcolor: tabValue >= 5 ? 'primary.main' : 'grey.300', 
-                    color: 'white',
-                    borderRadius: '50%',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    fontWeight: 'bold',
-                    mb: 1,
-                    boxShadow: tabValue >= 5 ? 2 : 0
-                  }}>
-                    6
-                  </Box>
-                } 
-                label="Document Analytics"
-                disabled={documents.length === 0}
-              />
             </Tabs>
           </Box>
 
@@ -827,15 +806,6 @@ function App() {
                 Start New RAG Session
               </Button>
             </Box>
-          </TabPanel>
-
-          <TabPanel value={tabValue} index={5}>
-            <DocumentAnalytics 
-              documents={documents}
-              vectorStore={vectorStore}
-              chunkSize={chunkSize}
-              chunkOverlap={chunkOverlap}
-            />
           </TabPanel>
         </Paper>
         

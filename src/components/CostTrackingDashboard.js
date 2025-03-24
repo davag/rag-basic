@@ -93,16 +93,30 @@ const CostTrackingDashboard = () => {
     setIsLoading(true);
     try {
       const response = await axios.get('/api/cost-tracking/summary');
-      setCostData(response.data);
+      // Ensure the response data has all required properties
+      const responseData = {
+        ...response.data,
+        llm: Array.isArray(response.data.llm) ? response.data.llm : [],
+        embeddings: Array.isArray(response.data.embeddings) ? response.data.embeddings : []
+      };
+      setCostData(responseData);
       
       // If using a time filter, get specific period data
       if (timeFilter === 'custom' && startDate && endDate) {
         const periodResponse = await axios.get('/api/cost-tracking/by-period', {
           params: { startDate, endDate }
         });
+        
+        // Ensure period response has all required properties
+        const periodData = {
+          ...periodResponse.data,
+          llm: Array.isArray(periodResponse.data.llm) ? periodResponse.data.llm : [],
+          embeddings: Array.isArray(periodResponse.data.embeddings) ? periodResponse.data.embeddings : []
+        };
+        
         setCostData(prevData => ({
           ...prevData,
-          ...periodResponse.data
+          ...periodData
         }));
       }
     } catch (error) {
@@ -111,9 +125,23 @@ const CostTrackingDashboard = () => {
       try {
         console.log('Attempting to use alternative API endpoints...');
         const response = await axios.get('/api/cost-tracking-summary');
-        setCostData(response.data);
+        // Ensure the response data has all required properties
+        const responseData = {
+          ...response.data,
+          llm: Array.isArray(response.data.llm) ? response.data.llm : [],
+          embeddings: Array.isArray(response.data.embeddings) ? response.data.embeddings : []
+        };
+        setCostData(responseData);
       } catch (altError) {
         console.error('Failed to fetch cost data from alternative endpoint:', altError);
+        // Set empty data structure if everything fails
+        setCostData({
+          totalCost: 0,
+          costsByModel: {},
+          costsByOperation: {},
+          llm: [],
+          embeddings: []
+        });
       }
     } finally {
       setIsLoading(false);
@@ -205,8 +233,12 @@ const CostTrackingDashboard = () => {
   
   // Filter cost data based on selected filters
   const getFilteredData = () => {
-    let filteredLlm = [...(costData.llm || [])];
-    let filteredEmbeddings = [...(costData.embeddings || [])];
+    // Make sure costData.llm and costData.embeddings exist before creating copies
+    const llmData = Array.isArray(costData.llm) ? costData.llm : [];
+    const embeddingsData = Array.isArray(costData.embeddings) ? costData.embeddings : [];
+    
+    let filteredLlm = [...llmData];
+    let filteredEmbeddings = [...embeddingsData];
     
     // Apply model filter
     if (modelFilter !== 'all') {
@@ -235,8 +267,9 @@ const CostTrackingDashboard = () => {
     const { llm, embeddings } = getFilteredData();
     let total = 0;
     
-    llm.forEach(entry => { total += entry.cost });
-    embeddings.forEach(entry => { total += entry.cost });
+    // Ensure we're working with valid cost values
+    llm.forEach(entry => { total += Number(entry.cost) || 0 });
+    embeddings.forEach(entry => { total += Number(entry.cost) || 0 });
     
     return total;
   };
@@ -280,7 +313,11 @@ const CostTrackingDashboard = () => {
   // Get chart data for costs by model
   const getCostByModelChartData = () => {
     const filteredData = getFilteredData();
-    const combinedData = [...filteredData.llm, ...filteredData.embeddings];
+    // Ensure we're working with arrays
+    const llmData = Array.isArray(filteredData.llm) ? filteredData.llm : [];
+    const embeddingsData = Array.isArray(filteredData.embeddings) ? filteredData.embeddings : [];
+    
+    const combinedData = [...llmData, ...embeddingsData];
     
     const costsByModel = {};
     combinedData.forEach(entry => {
@@ -318,17 +355,15 @@ const CostTrackingDashboard = () => {
   
   // Get chart data for cost by operation
   const getCostByOperationChartData = () => {
-    const { costsByOperation } = costData;
-    
-    // No normalization needed for operation types, but ensure we handle null/undefined data
-    const safeData = costsByOperation || {};
+    // Ensure costsByOperation exists and is an object
+    const costsByOperation = costData.costsByOperation || {};
     
     return {
-      labels: Object.keys(safeData),
+      labels: Object.keys(costsByOperation),
       datasets: [
         {
           label: 'Cost by Operation',
-          data: Object.values(safeData),
+          data: Object.values(costsByOperation),
           backgroundColor: [
             'rgba(54, 162, 235, 0.6)',
             'rgba(255, 99, 132, 0.6)',
@@ -341,7 +376,11 @@ const CostTrackingDashboard = () => {
   
   // Get unique models from the data, grouped by vendor
   const getUniqueModels = () => {
-    const allModels = [...costData.llm, ...costData.embeddings].map(entry => entry.model);
+    // Make sure costData.llm and costData.embeddings exist before trying to spread them
+    const llmData = Array.isArray(costData.llm) ? costData.llm : [];
+    const embeddingsData = Array.isArray(costData.embeddings) ? costData.embeddings : [];
+    
+    const allModels = [...llmData, ...embeddingsData].map(entry => entry.model);
     const uniqueModels = [...new Set(allModels)];
     
     // Group models by vendor
@@ -363,8 +402,12 @@ const CostTrackingDashboard = () => {
   const getUniqueOperations = () => {
     const operations = new Set();
     
-    (costData.llm || []).forEach(entry => operations.add(entry.operation));
-    (costData.embeddings || []).forEach(entry => operations.add(entry.operation));
+    // Make sure costData.llm and costData.embeddings exist before iterating
+    const llmData = Array.isArray(costData.llm) ? costData.llm : [];
+    const embeddingsData = Array.isArray(costData.embeddings) ? costData.embeddings : [];
+    
+    llmData.forEach(entry => operations.add(entry.operation));
+    embeddingsData.forEach(entry => operations.add(entry.operation));
     
     return Array.from(operations);
   };
@@ -624,8 +667,8 @@ const CostTrackingDashboard = () => {
                       <TableCell>{entry.model}</TableCell>
                       <TableCell>{entry.operation}</TableCell>
                       <TableCell>
-                        {entry.usage.totalTokens} tokens
-                        <Tooltip title={`Prompt: ${entry.usage.promptTokens}, Completion: ${entry.usage.completionTokens}`}>
+                        {entry.usage?.totalTokens || 0} tokens
+                        <Tooltip title={`Prompt: ${entry.usage?.promptTokens || 0}, Completion: ${entry.usage?.completionTokens || 0}`}>
                           <InfoIcon fontSize="small" sx={{ ml: 1, fontSize: 16, color: 'text.secondary' }} />
                         </Tooltip>
                       </TableCell>
@@ -642,7 +685,7 @@ const CostTrackingDashboard = () => {
                       </TableCell>
                       <TableCell>{entry.model}</TableCell>
                       <TableCell>{entry.operation}</TableCell>
-                      <TableCell>{entry.usage.tokenCount} tokens</TableCell>
+                      <TableCell>{entry.usage?.tokenCount || 0} tokens</TableCell>
                       <TableCell align="right">{formatCurrency(entry.cost)}</TableCell>
                     </TableRow>
                   ))}

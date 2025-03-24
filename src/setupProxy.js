@@ -249,6 +249,7 @@ module.exports = function(app) {
       changeOrigin: true,
       pathRewrite: {
         '^/api/proxy/anthropic/messages': '/v1/messages',
+        '^/api/proxy/anthropic': '/v1',  // Default path rewrite for other endpoints
       },
       onProxyReq: function(proxyReq, req) {
         if (req.method === 'POST' && req.body) {
@@ -298,6 +299,7 @@ module.exports = function(app) {
       onProxyRes: function(proxyRes) {
         // Log response status
         global.console.log('Anthropic response status:', proxyRes.statusCode);
+        global.console.log('Anthropic response headers:', proxyRes.headers);
         
         // Add CORS headers
         proxyRes.headers['Access-Control-Allow-Origin'] = '*';
@@ -317,15 +319,17 @@ module.exports = function(app) {
               // Only try to parse as JSON if it looks like JSON
               if (responseBody.trim().startsWith('{')) {
                 const parsedBody = JSON.parse(responseBody);
+                global.console.log('Anthropic API response body:', parsedBody);
                 if (parsedBody.error) {
                   global.console.error('Anthropic API error:', parsedBody.error);
                 }
               } else {
                 global.console.log('Anthropic API response is not JSON format');
+                global.console.log('Raw response body (first 300 chars):', responseBody.substring(0, 300));
               }
             } catch (e) {
               global.console.error('Error parsing Anthropic response:', e);
-              global.console.log('Raw response body (first 100 chars):', responseBody.substring(0, 100));
+              global.console.log('Raw response body (first 300 chars):', responseBody.substring(0, 300));
             }
           });
         }

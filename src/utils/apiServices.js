@@ -98,6 +98,15 @@ class ChatOllama {
 class CustomChatAnthropic {
   constructor(options) {
     this.modelName = options.modelName || 'claude-3-haiku-20240307';
+    
+    // Ensure the model name is correctly formatted for the API
+    if (this.modelName === 'claude-3-5-sonnet-latest') {
+      // Use the specific dated model name from the Anthropic API
+      this.modelName = 'claude-3-5-sonnet-20241022';
+    } else if (this.modelName === 'claude-3-7-sonnet-latest') {
+      this.modelName = 'claude-3-7-sonnet-20250219';
+    }
+    
     this.temperature = options.temperature !== undefined ? options.temperature : 0;
     this.systemPrompt = options.systemPrompt || '';
     this.apiKey = options.anthropicApiKey || apiConfig.anthropic.apiKey;
@@ -133,17 +142,20 @@ class CustomChatAnthropic {
         throw new Error('Anthropic API key is required. Please set REACT_APP_ANTHROPIC_API_KEY in your environment variables.');
       }
       
-      // Use safe logger
-      safeLogger.log('Sending Anthropic request:', {
+      // Use safe logger and browser console for debugging
+      console.log('Sending Anthropic request:', {
         endpoint: `${this.proxyUrl}/messages`,
         model: this.modelName,
         messageCount: formattedMessages.length,
         hasSystemPrompt: !!this.systemPrompt,
-        temperature: this.temperature
+        temperature: this.temperature,
+        proxyUrl: this.proxyUrl
       });
       
       // Use proxy endpoint to avoid CORS
-      // Update to include '/messages' in the URL path
+      console.log('Full Anthropic request URL:', `${this.proxyUrl}/messages`);
+      
+      // Use proxy endpoint to avoid CORS
       const response = await axios.post(
         `${this.proxyUrl}/messages`,
         {
@@ -158,15 +170,18 @@ class CustomChatAnthropic {
         {
           headers: {
             'Content-Type': 'application/json'
-          }
+          },
+          timeout: 60000 // 60 second timeout
         }
       );
       
       // Use safe logger
       safeLogger.log('Anthropic response status:', response.status);
+      console.log('Anthropic API response:', response.data);
       
       if (response.data.error) {
         safeLogger.error('Anthropic API returned an error:', response.data.error);
+        console.error('Anthropic API error:', response.data.error);
         throw new Error(`Anthropic API error: ${response.data.error.message}`);
       }
       
@@ -187,6 +202,12 @@ class CustomChatAnthropic {
         safeLogger.error('Response data:', error.response.data);
         safeLogger.error('Response status:', error.response.status);
         safeLogger.error('Response headers:', error.response.headers);
+      } else if (error.request) {
+        // The request was made but no response was received
+        safeLogger.error('No response received from Anthropic API. Request details:', error.request);
+      } else {
+        // Something happened in setting up the request
+        safeLogger.error('Error setting up Anthropic API request:', error.message);
       }
       throw new Error(`Anthropic API error: ${error.message || 'Unknown error'}`);
     }
