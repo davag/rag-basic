@@ -31,8 +31,8 @@ COPY --from=build /app/build ./build
 COPY --from=build /app/server.js ./server.js
 
 # Expose ports
-EXPOSE 3000
-EXPOSE 3001
+EXPOSE ${FRONTEND_PORT:-3000}
+EXPOSE ${BACKEND_PORT:-3002}
 
 # Start the application
 CMD ["npm", "run", "server"] 

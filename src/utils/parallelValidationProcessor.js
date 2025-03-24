@@ -21,98 +21,125 @@ export const validateResponsesInParallel = async (
 ) => {
   // Prepare the validation tasks array
   const validationTasks = [];
+  const processedModels = new Set(); // Track which models we've already processed
   
-  // Generate validation tasks for each model response
-  Object.keys(responses).forEach(model => {
-    // Handle models inside Sets differently
-    if (model.startsWith('Set ') && 
-        typeof responses[model] === 'object' && 
-        !Array.isArray(responses[model])) {
-      
-      const setContent = responses[model];
-      
-      // Check if this set contains model keys
-      const modelKeys = Object.keys(setContent).filter(key => 
-        typeof setContent[key] === 'object' || 
-        typeof setContent[key] === 'string'
-      );
-      
-      if (modelKeys.length > 0) {
-        // We have nested models inside this set
-        modelKeys.forEach(modelKey => {
-          const nestedModel = setContent[modelKey];
-          // Create result key in the format the rest of the app expects
-          const resultKey = `${model}-${modelKey}`;
-          const displayKey = `${modelKey} / ${model}`;
-          
-          // Extract the response content for this nested model
-          let answer = '';
-          if (typeof nestedModel === 'string') {
-            answer = nestedModel;
-          } else if (nestedModel) {
-            if (nestedModel.answer) {
-              answer = typeof nestedModel.answer === 'object' ? nestedModel.answer.text : nestedModel.answer;
-            } else if (nestedModel.response) {
-              answer = nestedModel.response;
-            } else if (nestedModel.text) {
-              answer = nestedModel.text;
-            } else {
-              answer = JSON.stringify(nestedModel);
-            }
-          }
-          
-          // Add this validation task
-          validationTasks.push({
-            modelKey: resultKey,
-            displayKey,
-            answer
-          });
-        });
-      }
-    } else {
-      // Handle regular models and sets without nested models
-      const response = responses[model];
-      
-      // Get answer content regardless of response format
-      let answer = '';
-      if (typeof response === 'object') {
-        if (response.answer && typeof response.answer === 'object' && response.answer.text) {
-          answer = response.answer.text;
-        } else if (response.answer) {
-          answer = response.answer;
-        } else if (response.response) {
-          answer = response.response;
-        } else if (response.text) {
-          answer = response.text;
-        } else {
-          // Try to extract content from any property that might contain the response
-          const possibleFields = ['content', 'result', 'output', 'message', 'value'];
-          for (const field of possibleFields) {
-            if (response[field]) {
-              answer = typeof response[field] === 'object' ? JSON.stringify(response[field]) : response[field];
-              break;
-            }
-          }
-          
-          // If still no content, stringify the entire object
-          if (!answer) {
-            answer = JSON.stringify(response);
+  console.log("Starting validation task generation with responses:", Object.keys(responses));
+  
+  // Helper function to determine if a key is a valid model key
+  const isModelKey = (key) => {
+    return key.includes('gpt-') || 
+           key.includes('claude-') ||
+           key.includes('llama') ||
+           key.includes('mistral') ||
+           key.includes('gemma');
+  };
+  
+  // Helper function to extract the answer content from a model response
+  const extractAnswer = (response) => {
+    let answer = '';
+    if (typeof response === 'object') {
+      if (response.answer && typeof response.answer === 'object' && response.answer.text) {
+        answer = response.answer.text;
+      } else if (response.answer) {
+        answer = response.answer;
+      } else if (response.response) {
+        answer = response.response;
+      } else if (response.text) {
+        answer = response.text;
+      } else {
+        // Try to extract content from any property that might contain the response
+        const possibleFields = ['content', 'result', 'output', 'message', 'value'];
+        for (const field of possibleFields) {
+          if (response[field]) {
+            answer = typeof response[field] === 'object' ? JSON.stringify(response[field]) : response[field];
+            break;
           }
         }
-      } else if (typeof response === 'string') {
-        answer = response;
-      } else {
-        answer = "Unable to extract response content";
+        
+        // If still no content, stringify the entire object
+        if (!answer) {
+          answer = JSON.stringify(response);
+        }
       }
-      
-      // Add regular model validation task
-      validationTasks.push({
-        modelKey: model,
-        displayKey: model,
-        answer
-      });
+    } else if (typeof response === 'string') {
+      answer = response;
+    } else {
+      answer = "Unable to extract response content";
     }
+    return answer;
+  };
+  
+  // Generate validation tasks for each model response
+  Object.keys(responses).forEach(key => {
+    // Parse the key to extract model information
+    let modelKey = key;
+    let modelName = key;
+    let setName = '';
+    
+    // Check if the key format indicates a set-based model (e.g., "Set 1-gpt-4o-mini")
+    if (key.includes('-')) {
+      const parts = key.split('-');
+      const possibleSetName = parts[0];
+      const possibleModelName = parts.slice(1).join('-');
+      
+      if (possibleSetName.startsWith('Set ') && isModelKey(possibleModelName)) {
+        setName = possibleSetName;
+        modelName = possibleModelName;
+        modelKey = key; // Keep the combined key
+      }
+    }
+    
+    // Skip if we've already processed this model
+    const uniqueModelId = `${setName}-${modelName}`.trim();
+    if (processedModels.has(uniqueModelId)) {
+      console.log(`Skipping duplicate model: ${key} (already processed as ${uniqueModelId})`);
+      return;
+    }
+    
+    // Skip if key isn't a model key and doesn't follow the Set X-model pattern
+    if (!isModelKey(key) && !key.match(/^Set \d+-/)) {
+      // Non-model property, skip it
+      console.log(`Skipping non-model key: ${key}`);
+      return;
+    }
+    
+    const response = responses[key];
+    
+    // Skip if response is not a string or object, or if it's a property name
+    if (response === null || typeof response !== 'object' && typeof response !== 'string') {
+      console.log(`Skipping invalid response type for key: ${key}`);
+      return;
+    }
+    
+    // Skip keys like "text", "sources", "tokenUsage" when they're standalone properties
+    // These should be part of a model response object, not validated separately
+    if (['text', 'sources', 'tokenUsage', 'elapsedTime'].includes(key)) {
+      console.log(`Skipping property key: ${key}`);
+      return;
+    }
+    
+    // Extract the answer content
+    const answer = extractAnswer(response);
+    
+    // Skip empty answers
+    if (!answer || answer.trim() === '') {
+      console.log(`Skipping empty answer for: ${key}`);
+      return;
+    }
+    
+    // Add this model to processed set
+    processedModels.add(uniqueModelId);
+    
+    console.log(`Creating validation task for: ${key} (${uniqueModelId})`);
+    // Add validation task
+    validationTasks.push({
+      modelKey: key,
+      displayKey: setName ? `${modelName} / ${setName}` : modelName,
+      answer
+    });
   });
+  
+  console.log(`Generated ${validationTasks.length} validation tasks`);
   
   // Create validation promises for parallel execution
   const validationPromises = validationTasks.map(async ({ modelKey, displayKey, answer }) => {

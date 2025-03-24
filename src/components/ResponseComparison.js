@@ -65,38 +65,61 @@ const ResponseComparison = ({
   // Reference to the file input element
   const fileInputRef = useRef(null);
   
-  // Get sources from the first model (they're the same for all models)
+  // Get sources from the response structure
   let sources = [];
   
-  // Try to extract sources from various possible structures
+  console.log("Full response structure:", responses);
+  
+  // Try to extract sources from the new nested response structure
   if (responses) {
-    // Case 1: Direct top-level access
-    if (Array.isArray(responses.sources)) {
-      sources = responses.sources;
-      console.log("Found sources at top level:", sources.length);
-    } 
-    // Case 2: First model in a standard structure
-    else if (Object.values(responses)[0]?.sources) {
-      sources = Object.values(responses)[0].sources;
-      console.log("Found sources in first model:", sources.length);
-    }
-    // Case 3: Within a Set structure
-    else {
-      const setKeys = Object.keys(responses).filter(key => key.startsWith('Set '));
-      for (const setKey of setKeys) {
-        if (responses[setKey] && typeof responses[setKey] === 'object') {
-          // Look through all models in the set for sources
-          const modelsInSet = Object.values(responses[setKey]);
-          for (const model of modelsInSet) {
-            if (model && Array.isArray(model.sources)) {
-              sources = model.sources;
-              console.log(`Found sources in a model within set ${setKey}:`, sources.length);
-              break;
-            }
+    // Check if we have the new structured format with models
+    if (responses.models) {
+      console.log("Found new structure with models key");
+      
+      // Try to find sources in any model response
+      const modelSets = Object.values(responses.models);
+      for (const setObj of modelSets) {
+        // Each set contains model responses
+        for (const modelResponse of Object.values(setObj)) {
+          if (modelResponse && Array.isArray(modelResponse.sources) && modelResponse.sources.length > 0) {
+            sources = modelResponse.sources;
+            console.log("Found sources in model response:", sources.length);
+            break;
           }
-          
-          // If sources were found, break out of the outer loop too
-          if (sources.length > 0) break;
+        }
+        if (sources.length > 0) break;
+      }
+    } 
+    // Check for legacy structure formats
+    else {
+      // Case 1: Direct top-level access
+      if (Array.isArray(responses.sources)) {
+        sources = responses.sources;
+        console.log("Found sources at top level:", sources.length);
+      } 
+      // Case 2: First model in a standard structure
+      else if (Object.values(responses)[0]?.sources) {
+        sources = Object.values(responses)[0].sources;
+        console.log("Found sources in first model:", sources.length);
+      }
+      // Case 3: Within a Set structure
+      else {
+        const setKeys = Object.keys(responses).filter(key => key.startsWith('Set '));
+        for (const setKey of setKeys) {
+          if (responses[setKey] && typeof responses[setKey] === 'object') {
+            // Look through all models in the set for sources
+            const modelsInSet = Object.values(responses[setKey]);
+            for (const model of modelsInSet) {
+              if (model && Array.isArray(model.sources)) {
+                sources = model.sources;
+                console.log(`Found sources in a model within set ${setKey}:`, sources.length);
+                break;
+              }
+            }
+            
+            // If sources were found, break out of the outer loop too
+            if (sources.length > 0) break;
+          }
         }
       }
     }
@@ -106,12 +129,12 @@ const ResponseComparison = ({
   
   // Debug log to inspect responses structure
   console.log("RESPONSES DEBUG:", responses);
-  console.log("RESPONSES MODELS:", Object.keys(responses || {}));
+  console.log("RESPONSES KEYS:", Object.keys(responses || {}));
   console.log("METRICS:", metrics);
+  console.log("MODEL/METRICS MATCHING:");
   
   // More detailed debug for finding metrics that match model keys
   if (responses && metrics) {
-    console.log("MODEL/METRICS MATCHING:");
     Object.keys(responses).forEach(responseKey => {
       // Check if there's a direct match in metrics
       if (metrics[responseKey]) {
@@ -590,7 +613,11 @@ const ResponseComparison = ({
       // Add one model response per page (max 5 models)
       if (responses) {
         // First handle set-based responses
-        const setKeys = Object.keys(responses).filter(key => key.startsWith('Set '));
+        const setKeys = Object.keys(responses).filter(key => 
+          key.startsWith('Set ') && 
+          !key.startsWith('query Set') && 
+          !key.startsWith('retrievalTime Set')
+        );
         
         // Process each set and its models
         setKeys.forEach(setKey => {
@@ -856,6 +883,66 @@ const ResponseComparison = ({
     }
   };
 
+  // Update the separateModelsAndMetadata function to properly handle the new nested structure
+  const separateModelsAndMetadata = (responseData) => {
+    if (!responseData || typeof responseData !== 'object') {
+      return { models: {}, metadata: {} };
+    }
+    
+    // If we already have a proper structure with metadata and models separated, use it directly
+    if (responseData.metadata && responseData.models) {
+      console.log("Using existing metadata/models separation!");
+      return {
+        metadata: responseData.metadata || {},
+        models: responseData.models || {}
+      };
+    }
+    
+    // Otherwise, create the separation (for backward compatibility)
+    const result = {
+      models: {},
+      metadata: {}
+    };
+    
+    // Process response structure
+    Object.entries(responseData || {}).forEach(([key, value]) => {
+      if (key === 'query' || key === 'retrievalTime') {
+        result.metadata[key] = value;
+      } else if (key.startsWith('Set ')) {
+        // Set-based data goes to models
+        result.models[key] = value;
+      } else if (
+        key.startsWith('gpt-') || 
+        key.startsWith('claude-') || 
+        key.includes('llama') || 
+        key.includes('mistral')
+      ) {
+        // Model data goes to models
+        result.models[key] = value;
+      } else if (typeof value === 'object' && (
+        value.answer || 
+        value.response || 
+        value.text
+      )) {
+        // Objects with response-like properties go to models
+        result.models[key] = value;
+      } else {
+        // Everything else is metadata
+        result.metadata[key] = value;
+      }
+    });
+    
+    console.log("PROCESSED DATA:", {
+      models: Object.keys(result.models),
+      metadata: Object.keys(result.metadata)
+    });
+    
+    return result;
+  };
+
+  // Extract models and metadata
+  const { models, metadata } = separateModelsAndMetadata(responses);
+
   return (
     <Box>
       <Paper elevation={1} sx={{ p: 2, mb: 3 }}>
@@ -1001,55 +1088,17 @@ const ResponseComparison = ({
                 </TableHead>
                 <TableBody>
                   {(() => {
-                    // Extract all models from responses, similar to the model cards approach
                     const metricRows = [];
                     
-                    if (typeof responses === 'object' && !Array.isArray(responses)) {
-                      // Handle normal model keys at the top level
-                      const standardModelKeys = Object.keys(responses).filter(key => 
-                        !key.startsWith('Set ') && 
-                        (typeof responses[key] === 'string' || 
-                         responses[key]?.answer || 
-                         responses[key]?.response ||
-                         responses[key]?.text)
-                      );
-                      
-                      // Add standard models
-                      standardModelKeys.forEach(modelKey => {
-                        metricRows.push({
-                          displayName: modelKey,
-                          setName: '',
-                          metricsKey: modelKey
-                        });
-                      });
-                      
-                      // Now handle set-based responses
-                      const setKeys = Object.keys(responses).filter(key => key.startsWith('Set '));
-                      
-                      // Process each set
-                      setKeys.forEach(setKey => {
-                        const setContent = responses[setKey];
-                        
-                        // If the set content is an object with model keys
-                        if (typeof setContent === 'object' && !Array.isArray(setContent)) {
-                          Object.entries(setContent).forEach(([modelKey, modelResponse]) => {
-                            // Try multiple metrics keys
-                            const possibleMetricsKeys = [
-                              `${setKey}-${modelKey}`,  // Composite key
-                              modelKey,                 // Just the model name
-                              setKey                    // Just the set key
-                            ];
+                    if (models) {
+                      // Handle the new nested structure
+                      Object.entries(models).forEach(([setKey, setModels]) => {
+                        if (typeof setModels === 'object' && !Array.isArray(setModels)) {
+                          // For each model in the set
+                          Object.entries(setModels).forEach(([modelKey, modelResponse]) => {
+                            // The metrics key format is typically "Set N-modelName"
+                            const metricsKey = `${setKey}-${modelKey}`;
                             
-                            // Find the first metrics key with data
-                            const metricsKey = possibleMetricsKeys.find(key => 
-                              metrics && metrics[key] && (
-                                !isNaN(metrics[key]?.responseTime) || 
-                                (metrics[key]?.tokenUsage && 
-                                 typeof metrics[key]?.tokenUsage?.total !== 'undefined')
-                              )
-                            ) || modelKey;
-                            
-                            // Add this model to the metrics rows
                             metricRows.push({
                               displayName: modelKey,
                               setName: setKey,
@@ -1057,48 +1106,22 @@ const ResponseComparison = ({
                             });
                           });
                         }
-                        // If the set content is directly a response
-                        else {
-                          // Look for potential models inside the direct response
-                          let foundModels = false;
-                          
-                          // Check if this is a response that contains multiple models
-                          if (typeof setContent === 'object' && !Array.isArray(setContent)) {
-                            // Try to extract model keys from this response
-                            const potentialModelKeys = Object.keys(setContent).filter(key =>
-                              availableModels?.includes(key) || 
-                              key.startsWith('gpt-') || 
-                              key.startsWith('claude-') ||
-                              key.includes('llama') ||
-                              key.includes('mistral')
-                            );
-                            
-                            if (potentialModelKeys.length > 0) {
-                              // We found model keys within this response
-                              potentialModelKeys.forEach(modelKey => {
-                                metricRows.push({
-                                  displayName: modelKey,
-                                  setName: setKey,
-                                  metricsKey: modelKey
-                                });
-                              });
-                              foundModels = true;
-                            }
-                          }
-                          
-                          // If we didn't find any models inside, treat the set itself as a model
-                          if (!foundModels) {
-                            metricRows.push({
-                              displayName: setKey,
-                              setName: '',
-                              metricsKey: setKey
-                            });
-                          }
-                        }
                       });
                     }
                     
                     console.log("Metrics rows to render:", metricRows);
+                    
+                    if (metricRows.length === 0) {
+                      return (
+                        <TableRow>
+                          <TableCell colSpan={4}>
+                            <Alert severity="warning">
+                              No metrics data found. The metrics structure may be in an unexpected format.
+                            </Alert>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    }
                     
                     // Sort the metric rows before rendering
                     const sortedMetricRows = sortData(metricRows);
@@ -1310,99 +1333,125 @@ const ResponseComparison = ({
             <Box sx={{ mb: 4 }}>
               <Grid container spacing={3}>
                 {(() => {
-                  // Using a simpler, more direct approach
                   const modelCards = [];
                   
-                  // Handle standard responses first (direct model keys at top level)
-                  if (responses) {
-                    // Handle normal model keys at the top level
-                    const standardModelKeys = Object.keys(responses).filter(key => 
-                      !key.startsWith('Set ') && 
-                      (typeof responses[key] === 'string' || 
-                       responses[key]?.answer || 
-                       responses[key]?.response ||
-                       responses[key]?.text)
-                    );
+                  // Debug log to understand the structure
+                  console.log("Response structure for model cards:", responses);
+                  
+                  // First check if we have the new nested structure with 'models' key
+                  if (responses && responses.models) {
+                    console.log("Using new nested models structure");
                     
-                    console.log("Standard model keys:", standardModelKeys);
-                    
-                    // Add standard models
-                    standardModelKeys.forEach(modelKey => {
-                      modelCards.push({
-                        key: modelKey,
-                        displayName: modelKey,
-                        setName: '',
-                        response: responses[modelKey],
-                        metricsKey: modelKey
-                      });
-                    });
-                    
-                    // Now handle set-based responses
-                    const setKeys = Object.keys(responses).filter(key => key.startsWith('Set '));
-                    console.log("Set keys:", setKeys);
-                    
-                    // Process each set
-                    setKeys.forEach(setKey => {
-                      const setContent = responses[setKey];
-                      
-                      // If the set content is an object with model keys
-                      if (typeof setContent === 'object' && !Array.isArray(setContent)) {
-                        Object.entries(setContent).forEach(([modelKey, modelResponse]) => {
-                          console.log(`Found model ${modelKey} in ${setKey}:`, modelResponse);
-                          
-                          // Add this model to the cards
-                          modelCards.push({
-                            key: `${setKey}-${modelKey}`,
-                            displayName: modelKey,
-                            setName: setKey,
-                            response: modelResponse,
-                            metricsKey: modelKey
-                          });
+                    // For each set in the models object
+                    Object.entries(responses.models).forEach(([setKey, setModels]) => {
+                      if (typeof setModels === 'object' && !Array.isArray(setModels)) {
+                        // For each model in the set
+                        Object.entries(setModels).forEach(([modelKey, modelResponse]) => {
+                          console.log(`Processing model ${modelKey} in ${setKey}`);
+                          // Check if this is a real model key (not metadata)
+                          const isModelKey = 
+                            modelKey.includes('gpt-') || 
+                            modelKey.includes('claude-') ||
+                            modelKey.includes('llama') ||
+                            modelKey.includes('mistral') ||
+                            modelKey.includes('gemma');
+                            
+                          if (isModelKey) {
+                            modelCards.push({
+                              key: `${setKey}-${modelKey}`,
+                              displayName: modelKey,
+                              setName: setKey,
+                              response: modelResponse,
+                              metricsKey: `${setKey}-${modelKey}`
+                            });
+                          } else {
+                            console.log(`Skipping non-model key: ${modelKey}`);
+                          }
                         });
                       }
-                      // If the set content is directly a response
-                      else {
-                        // Look for potential models inside the direct response
-                        let foundModels = false;
-                        
-                        // Check if this is a response that contains multiple models
-                        if (typeof setContent === 'object' && !Array.isArray(setContent)) {
-                          // Try to extract model keys from this response
-                          const potentialModelKeys = Object.keys(setContent).filter(key =>
-                            availableModels?.includes(key) || 
-                            key.startsWith('gpt-') || 
-                            key.startsWith('claude-') ||
-                            key.includes('llama') ||
-                            key.includes('mistral')
-                          );
-                          
-                          if (potentialModelKeys.length > 0) {
-                            // We found model keys within this response
-                            potentialModelKeys.forEach(modelKey => {
-                              modelCards.push({
-                                key: `${setKey}-${modelKey}`,
-                                displayName: modelKey,
-                                setName: setKey,
-                                response: setContent[modelKey],
-                                metricsKey: modelKey
-                              });
-                            });
-                            foundModels = true;
-                          }
-                        }
-                        
-                        // If we didn't find any models inside, treat the set itself as a model
-                        if (!foundModels) {
-                          modelCards.push({
-                            key: setKey,
-                            displayName: setKey,
-                            setName: '',
-                            response: setContent,
-                            metricsKey: setKey
-                          });
-                        }
+                    });
+                  } 
+                  // Handle legacy format
+                  else if (responses) {
+                    // Define the models directly from responses for legacy formats
+                    const models = responses;
+                    
+                    // For validation results, handle the case where responses might have a 'models' property
+                    // but it might not be at the top level (could be nested under a validation key)
+                    const potentialModelsContainers = [];
+                    
+                    // Check if any property of responses contains a 'models' object
+                    Object.entries(responses).forEach(([key, value]) => {
+                      if (value && typeof value === 'object' && value.models) {
+                        console.log(`Found nested models structure in ${key}`);
+                        potentialModelsContainers.push(value);
                       }
                     });
+                    
+                    // If we found potential containers with models, process them
+                    if (potentialModelsContainers.length > 0) {
+                      potentialModelsContainers.forEach(container => {
+                        if (container.models) {
+                          Object.entries(container.models).forEach(([setKey, setModels]) => {
+                            if (typeof setModels === 'object' && !Array.isArray(setModels)) {
+                              Object.entries(setModels).forEach(([modelKey, modelResponse]) => {
+                                // Check if this is a real model key (not metadata)
+                                const isModelKey = 
+                                  modelKey.includes('gpt-') || 
+                                  modelKey.includes('claude-') ||
+                                  modelKey.includes('llama') ||
+                                  modelKey.includes('mistral') ||
+                                  modelKey.includes('gemma');
+                                  
+                                if (isModelKey) {
+                                  modelCards.push({
+                                    key: `${setKey}-${modelKey}`,
+                                    displayName: modelKey,
+                                    setName: setKey,
+                                    response: modelResponse,
+                                    metricsKey: `${setKey}-${modelKey}`
+                                  });
+                                }
+                              });
+                            }
+                          });
+                        }
+                      });
+                    } else if (models) {
+                      // Process regular legacy format
+                      const modelKeyRegex = /^(gpt-|claude-|llama|mistral|gemma)/;
+                      
+                      // Handle legacy format or direct model responses
+                      Object.entries(models).forEach(([key, value]) => {
+                        if (modelKeyRegex.test(key)) {
+                          // Direct model response
+                          modelCards.push({
+                            key: key,
+                            displayName: key,
+                            setName: '',
+                            response: value,
+                            metricsKey: key
+                          });
+                        } else if (key.startsWith('Set ')) {
+                          // Set-based responses in legacy format
+                          const setContent = value;
+                          if (typeof setContent === 'object' && !Array.isArray(setContent)) {
+                            Object.entries(setContent).forEach(([modelKey, modelResponse]) => {
+                              // Filter out metadata keys that aren't models
+                              if (modelKeyRegex.test(modelKey)) {
+                                modelCards.push({
+                                  key: `${key}-${modelKey}`,
+                                  displayName: modelKey,
+                                  setName: key,
+                                  response: modelResponse,
+                                  metricsKey: `${key}-${modelKey}`
+                                });
+                              }
+                            });
+                          }
+                        }
+                      });
+                    }
                   }
                   
                   console.log("Final model cards to render:", modelCards);

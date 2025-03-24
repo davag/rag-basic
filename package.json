@@ -45,7 +45,7 @@
     "xlsx": "^0.18.5"
   },
   "scripts": {
-    "start": "react-app-rewired start",
+    "start": "PORT=${FRONTEND_PORT:-3001} react-app-rewired start",
     "build": "react-app-rewired build",
     "test": "react-app-rewired test",
     "eject": "react-scripts eject",

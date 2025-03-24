@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
-import { Container, Box, Paper, Tabs, Tab, Typography, Alert, Snackbar, IconButton, Dialog, DialogContent, AppBar, Toolbar, Button, Menu, MenuItem, Tooltip } from '@mui/material';
+import { Container, Box, Paper, Tabs, Tab, Typography, Alert, Snackbar, IconButton, Dialog, DialogContent, AppBar, Toolbar, Button, Menu, MenuItem, Tooltip, ListItemIcon, ListItemText, Divider } from '@mui/material';
 import SettingsIcon from '@mui/icons-material/Settings';
 import CloseIcon from '@mui/icons-material/Close';
 import CheckIcon from '@mui/icons-material/Check';
@@ -25,6 +25,7 @@ import InsertChartIcon from '@mui/icons-material/InsertChart';
 import DashboardIcon from '@mui/icons-material/Dashboard';
 import BuildIcon from '@mui/icons-material/Build';
 import SpeedIcon from '@mui/icons-material/Speed';
+import AttachMoneyIcon from '@mui/icons-material/AttachMoney';
 import RagIntroduction from './components/RagIntroduction';
 
 import DocumentUpload from './components/DocumentUpload';
@@ -37,6 +38,8 @@ import DocumentAnalytics from './components/DocumentAnalytics';
 import QualityDashboard from './components/QualityAnalysisHub/Monitoring/QualityDashboard';
 import OptimizationRecommendations from './components/QualityAnalysisHub/Optimization/OptimizationRecommendations';
 import QualityTestSuite from './components/QualityAnalysisHub/Testing/QualityTestSuite';
+import SourceContentAnalysis from './components/SourceContentAnalysis';
+import CostTrackingDashboard from './components/CostTrackingDashboard';
 
 const theme = createTheme({
   palette: {
@@ -94,6 +97,7 @@ function App() {
   const [chunkOverlap, setChunkOverlap] = useState(200);
   const [menuAnchorEl, setMenuAnchorEl] = useState(null);
   const [helpDialogOpen, setHelpDialogOpen] = useState(false);
+  const [costTrackingDialogOpen, setCostTrackingDialogOpen] = useState(false);
   
   // Store query interface state to preserve it when navigating back
   const [lastQueryState, setLastQueryState] = useState({
@@ -406,6 +410,17 @@ function App() {
               </span>
             </Tooltip>
             
+            {/* Cost Tracking button */}
+            <Tooltip title="Cost Tracking">
+              <IconButton 
+                color="inherit" 
+                onClick={() => setCostTrackingDialogOpen(true)}
+                sx={{ mr: 1, color: 'warning.main' }}
+              >
+                <AttachMoneyIcon />
+              </IconButton>
+            </Tooltip>
+            
             {/* Settings button */}
             <IconButton 
               color="inherit" 
@@ -639,10 +654,37 @@ function App() {
                 label="Validate Responses"
                 disabled={Object.keys(llmResponses).length === 0}
               />
+              <Tab 
+                icon={
+                  <Box sx={{ 
+                    width: 36, 
+                    height: 36, 
+                    bgcolor: tabValue >= 5 ? 'primary.main' : 'grey.300', 
+                    color: 'white',
+                    borderRadius: '50%',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontWeight: 'bold',
+                    mb: 1,
+                    boxShadow: tabValue >= 5 ? 2 : 0
+                  }}>
+                    6
+                  </Box>
+                } 
+                label="Document Analytics"
+                disabled={documents.length === 0}
+              />
             </Tabs>
           </Box>
 
           <TabPanel value={tabValue} index={0}>
+            <RagIntroduction 
+              open={showWelcome}
+              onClose={dismissWelcome}
+              showApiKeyNotice={showApiKeyNotice}
+              onDismissApiKeyNotice={dismissApiKeyNotice}
+            />
             <DocumentUpload 
               onDocumentsUploaded={handleDocumentsUploaded} 
               isProcessing={isProcessing}
@@ -795,6 +837,15 @@ function App() {
                 Start New RAG Session
               </Button>
             </Box>
+          </TabPanel>
+
+          <TabPanel value={tabValue} index={5}>
+            <DocumentAnalytics 
+              documents={documents}
+              vectorStore={vectorStore}
+              chunkSize={chunkSize}
+              chunkOverlap={chunkOverlap}
+            />
           </TabPanel>
         </Paper>
         
@@ -961,6 +1012,33 @@ function App() {
             {snackbarMessage}
           </Alert>
         </Snackbar>
+
+        {/* Cost Tracking Dialog */}
+        <Dialog 
+          open={costTrackingDialogOpen} 
+          onClose={() => setCostTrackingDialogOpen(false)}
+          fullWidth
+          maxWidth="lg"
+        >
+          <AppBar position="static" color="default" elevation={0}>
+            <Toolbar>
+              <Typography variant="h6" style={{ flexGrow: 1 }}>
+                Cost Tracking Dashboard
+              </Typography>
+              <IconButton
+                edge="end"
+                color="inherit"
+                onClick={() => setCostTrackingDialogOpen(false)}
+                aria-label="close"
+              >
+                <CloseIcon />
+              </IconButton>
+            </Toolbar>
+          </AppBar>
+          <DialogContent dividers>
+            <CostTrackingDashboard />
+          </DialogContent>
+        </Dialog>
       </Container>
     </ThemeProvider>
   );

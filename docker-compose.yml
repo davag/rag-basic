@@ -4,10 +4,12 @@ services:
   app:
     build: .
     ports:
-      - "3000:3000"  # Frontend
-      - "3001:3001"  # Backend
+      - "${FRONTEND_PORT:-3000}:${FRONTEND_PORT:-3000}"  # Frontend
+      - "${BACKEND_PORT:-3002}:${BACKEND_PORT:-3002}"  # Backend
     environment:
       - NODE_ENV=production
+      - FRONTEND_PORT=${FRONTEND_PORT:-3000}
+      - BACKEND_PORT=${BACKEND_PORT:-3002}
     env_file:
       - .env
     volumes:

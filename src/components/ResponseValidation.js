@@ -391,35 +391,93 @@ const ResponseValidation = ({
   }, []);
 
   const validateResponses = async () => {
-    if (!responses || Object.keys(responses || {}).length === 0) {
-      console.error("No responses to validate");
-      return;
-    }
-    
-    setIsProcessing(true);
-    setCurrentValidatingModel(null);
-    setParallelProgress({
-      completed: 0,
-      pending: Object.keys(responses).length,
-      total: Object.keys(responses).length,
-      models: {}
-    });
-
     try {
-      // Get the validator model to use
+      setIsProcessing(true);
+      
+      // Get the selected validator model or use a default reliable one
       const validatorModelToUse = getReliableValidatorModel(validatorModel);
       console.log(`Using validator model: ${validatorModelToUse}`);
       
       // Get the validation preference from localStorage
       const useParallelValidation = localStorage.getItem('useParallelProcessing') === 'true';
       console.log(`Parallel validation preference: ${useParallelValidation ? 'ENABLED' : 'DISABLED'}`);
+
+      // Filter out metadata entries from responses before validation
+      const filteredResponses = {};
+      
+      if (responses) {
+        console.log("Original responses structure:", Object.keys(responses));
+        
+        // Check if the new nested structure (responses.models) exists
+        if (responses.models && typeof responses.models === 'object') {
+          console.log("Using new nested models structure for validation");
+          
+          // Process each set in the models object
+          Object.entries(responses.models).forEach(([setKey, setModels]) => {
+            if (typeof setModels === 'object' && !Array.isArray(setModels)) {
+              // Process each model in the set
+              Object.entries(setModels).forEach(([modelKey, modelResponse]) => {
+                // Check if this is a real model key (not metadata)
+                const isModelKey = 
+                  modelKey.includes('gpt-') || 
+                  modelKey.includes('claude-') ||
+                  modelKey.includes('llama') ||
+                  modelKey.includes('mistral') ||
+                  modelKey.includes('gemma');
+                  
+                if (isModelKey) {
+                  const combinedKey = `${setKey}-${modelKey}`;
+                  console.log(`Including model response for validation: ${combinedKey}`);
+                  filteredResponses[combinedKey] = modelResponse;
+                }
+              });
+            }
+          });
+        } else {
+          // Handle legacy format
+          const modelKeyRegex = /^(gpt-|claude-|llama|mistral|gemma)/;
+          
+          // Filter entries to include only actual models
+          Object.entries(responses).forEach(([key, value]) => {
+            if (modelKeyRegex.test(key)) {
+              // Direct model response
+              console.log(`Including direct model response for validation: ${key}`);
+              filteredResponses[key] = value;
+            } else if (key.startsWith('Set ')) {
+              // Set-based responses
+              const setKey = key;
+              const setContent = value;
+              
+              if (typeof setContent === 'object' && !Array.isArray(setContent)) {
+                Object.entries(setContent).forEach(([modelKey, modelResponse]) => {
+                  // Only include real model keys, not metadata
+                  if (modelKeyRegex.test(modelKey)) {
+                    const combinedKey = `${setKey}-${modelKey}`;
+                    console.log(`Including set-based model for validation: ${combinedKey}`);
+                    filteredResponses[combinedKey] = modelResponse;
+                  }
+                });
+              }
+            }
+          });
+        }
+      }
+      
+      console.log("Filtered responses for validation:", Object.keys(filteredResponses));
+      
+      if (Object.keys(filteredResponses).length === 0) {
+        console.warn("No valid model responses found to validate");
+        onValidationComplete({});
+        setIsProcessing(false);
+        return;
+      }
       
       if (useParallelValidation) {
         console.log("Starting parallel validation processing");
         
-        // Process all validations in parallel
+        // Process all validations in parallel with filtered responses
         const parallelResults = await validateResponsesInParallel(
-          responses,
+          filteredResponses,
           currentQuery,
           customCriteria,
           validatorModelToUse,

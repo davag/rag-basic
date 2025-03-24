@@ -1,10 +1,160 @@
 const { createProxyMiddleware } = require('http-proxy-middleware');
 const bodyParser = require('body-parser');
+require('dotenv').config();
+
+const BACKEND_PORT = process.env.BACKEND_PORT || 3002;
+const BACKEND_URL = `http://localhost:${BACKEND_PORT}`;
 
 module.exports = function(app) {
   // Add body parsing middleware before the proxy
   app.use(bodyParser.json());
   app.use(bodyParser.urlencoded({ extended: true }));
+
+  // Add generic proxy for all API requests
+  app.use(
+    '/api',
+    createProxyMiddleware({
+      target: BACKEND_URL,
+      changeOrigin: true,
+      logLevel: 'debug',
+      onProxyReq: function(proxyReq, req) {
+        console.log(`Proxying API request: ${req.method} ${req.path}`);
+
+        // For POST requests, we need to restream the body
+        if (req.method === 'POST' && req.body) {
+          const bodyData = JSON.stringify(req.body);
+          proxyReq.setHeader('Content-Type', 'application/json');
+          proxyReq.setHeader('Content-Length', Buffer.byteLength(bodyData));
+          proxyReq.write(bodyData);
+          proxyReq.end();
+        }
+      },
+      onError: function(err, req, res) {
+        console.error('API Proxy Error:', err);
+        res.status(500).json({ error: 'Proxy error', message: err.message });
+      }
+    })
+  );
+
+  // Proxy cost tracking and other API endpoints
+  app.use(
+    '/api/cost-tracking',
+    createProxyMiddleware({
+      target: BACKEND_URL,
+      changeOrigin: true,
+      logLevel: 'debug',
+      onProxyReq: function(proxyReq, req) {
+        console.log(`Proxying cost tracking request: ${req.method} ${req.path}`);
+
+        // For POST requests, we need to restream the body
+        if (req.method === 'POST' && req.body) {
+          const bodyData = JSON.stringify(req.body);
+          proxyReq.setHeader('Content-Type', 'application/json');
+          proxyReq.setHeader('Content-Length', Buffer.byteLength(bodyData));
+          // Make sure we end the stream to avoid hanging
+          proxyReq.write(bodyData);
+          proxyReq.end();
+        }
+      },
+      onError: function(err, req, res) {
+        console.error('Cost Tracking Proxy Error:', err);
+        res.status(500).json({ error: 'Proxy error', message: err.message });
+      }
+    })
+  );
+  
+  // Legacy format endpoints
+  app.use(
+    '/api/cost-tracking-summary',
+    createProxyMiddleware({
+      target: BACKEND_URL,
+      changeOrigin: true,
+      logLevel: 'debug',
+      onProxyReq: function(proxyReq, req) {
+        // For POST requests, we need to restream the body
+        if (req.method === 'POST' && req.body) {
+          const bodyData = JSON.stringify(req.body);
+          proxyReq.setHeader('Content-Type', 'application/json');
+          proxyReq.setHeader('Content-Length', Buffer.byteLength(bodyData));
+          proxyReq.write(bodyData);
+          proxyReq.end();
+        }
+      },
+      onError: function(err, req, res) {
+        console.error('Cost Tracking Summary Proxy Error:', err);
+        res.status(500).json({ error: 'Proxy error', message: err.message });
+      }
+    })
+  );
+  
+  app.use(
+    '/api/cost-tracking-export',
+    createProxyMiddleware({
+      target: BACKEND_URL,
+      changeOrigin: true,
+      logLevel: 'debug',
+      onProxyReq: function(proxyReq, req) {
+        // For POST requests, we need to restream the body
+        if (req.method === 'POST' && req.body) {
+          const bodyData = JSON.stringify(req.body);
+          proxyReq.setHeader('Content-Type', 'application/json');
+          proxyReq.setHeader('Content-Length', Buffer.byteLength(bodyData));
+          proxyReq.write(bodyData);
+          proxyReq.end();
+        }
+      },
+      onError: function(err, req, res) {
+        console.error('Cost Tracking Export Proxy Error:', err);
+        res.status(500).json({ error: 'Proxy error', message: err.message });
+      }
+    })
+  );
+  
+  app.use(
+    '/api/cost-tracking-reset',
+    createProxyMiddleware({
+      target: BACKEND_URL,
+      changeOrigin: true,
+      logLevel: 'debug',
+      onProxyReq: function(proxyReq, req) {
+        // For POST requests, we need to restream the body
+        if (req.method === 'POST' && req.body) {
+          const bodyData = JSON.stringify(req.body);
+          proxyReq.setHeader('Content-Type', 'application/json');
+          proxyReq.setHeader('Content-Length', Buffer.byteLength(bodyData));
+          proxyReq.write(bodyData);
+          proxyReq.end();
+        }
+      },
+      onError: function(err, req, res) {
+        console.error('Cost Tracking Reset Proxy Error:', err);
+        res.status(500).json({ error: 'Proxy error', message: err.message });
+      }
+    })
+  );
+  
+  app.use(
+    '/api/cost-tracking-settings',
+    createProxyMiddleware({
+      target: BACKEND_URL,
+      changeOrigin: true,
+      logLevel: 'debug',
+      onProxyReq: function(proxyReq, req) {
+        // For POST requests, we need to restream the body
+        if (req.method === 'POST' && req.body) {
+          const bodyData = JSON.stringify(req.body);
+          proxyReq.setHeader('Content-Type', 'application/json');
+          proxyReq.setHeader('Content-Length', Buffer.byteLength(bodyData));
+          proxyReq.write(bodyData);
+          proxyReq.end();
+        }
+      },
+      onError: function(err, req, res) {
+        console.error('Cost Tracking Settings Proxy Error:', err);
+        res.status(500).json({ error: 'Proxy error', message: err.message });
+      }
+    })
+  );
 
   // Handle OPTIONS requests for CORS preflight first
   app.use('/api/proxy/*', (req, res, next) => {
@@ -45,9 +195,10 @@ module.exports = function(app) {
           proxyReq.setHeader('Authorization', `Bearer ${apiKey}`);
           proxyReq.setHeader('Content-Type', 'application/json');
 
-          // Remove the API key from the body
+          // Remove the API key and queryId from the body
           const modifiedBody = { ...req.body };
           delete modifiedBody.openaiApiKey;
+          delete modifiedBody.queryId;
 
           // Convert the modified body to a string
           const bodyData = JSON.stringify(modifiedBody);
@@ -97,7 +248,7 @@ module.exports = function(app) {
       target: 'https://api.anthropic.com',
       changeOrigin: true,
       pathRewrite: {
-        '^/api/proxy/anthropic': '/v1/messages',
+        '^/api/proxy/anthropic/messages': '/v1/messages',
       },
       onProxyReq: function(proxyReq, req) {
         if (req.method === 'POST' && req.body) {
@@ -115,9 +266,10 @@ module.exports = function(app) {
           // Add the required CORS header for direct browser access
           proxyReq.setHeader('anthropic-dangerous-direct-browser-access', 'true');
           
-          // Remove the API key from the body
+          // Remove the API key and queryId from the body
           const modifiedBody = { ...req.body };
           delete modifiedBody.anthropicApiKey;
+          delete modifiedBody.queryId;
           
           // Log the request structure (without sensitive data)
           global.console.log('Anthropic request structure:', {

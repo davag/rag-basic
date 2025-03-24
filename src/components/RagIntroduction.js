@@ -77,7 +77,12 @@ const UmlArrow = styled(Box)(({ theme }) => ({
   },
 }));
 
-const RagIntroduction = ({ open, onClose }) => {
+const RagIntroduction = ({ 
+  open = false, 
+  onClose = () => {}, 
+  showApiKeyNotice, 
+  onDismissApiKeyNotice 
+}) => {
   return (
     <Dialog 
       open={open} 
@@ -288,7 +293,9 @@ const RagIntroduction = ({ open, onClose }) => {
                     <UmlInterface>User Question</UmlInterface>
                   </UmlComponent>
                 </Grid>
-                <UmlArrow item xs={12} md={1} />
+                <Grid item xs={12} md={1}>
+                  <UmlArrow />
+                </Grid>
                 <Grid item xs={12} md={3}>
                   <UmlComponent>
                     <Typography variant="subtitle2">Retrieve Context</Typography>
@@ -296,7 +303,9 @@ const RagIntroduction = ({ open, onClose }) => {
                     <UmlInterface>Similarity Matching</UmlInterface>
                   </UmlComponent>
                 </Grid>
-                <UmlArrow item xs={12} md={1} />
+                <Grid item xs={12} md={1}>
+                  <UmlArrow />
+                </Grid>
                 <Grid item xs={12} md={3}>
                   <UmlComponent>
                     <Typography variant="subtitle2">Generate Response</Typography>

@@ -34,9 +34,10 @@ import LightbulbIcon from '@mui/icons-material/Lightbulb';
 import CloseIcon from '@mui/icons-material/Close';
 import FullscreenIcon from '@mui/icons-material/Fullscreen';
 import { createLlmInstance } from '../utils/apiServices';
-import { processModelsInParallel } from '../utils/parallelLLMProcessor';
+import { ParallelLLMProcessor } from '../utils/parallelLLMProcessor';
 import AddIcon from '@mui/icons-material/Add';
 import DeleteIcon from '@mui/icons-material/Delete';
+import { v4 as uuidv4 } from 'uuid';
 
 const DEFAULT_SYSTEM_PROMPT = `You are a helpful assistant that answers questions based on the provided context. 
 If the answer is not in the context, say that you don't know. 
@@ -72,6 +73,18 @@ const QueryInterface = ({ vectorStore, namespaces = [], onQuerySubmitted, isProc
     total: 0,
     models: {}
   });
+  
+  // Add progressData and processingStartTime state for parallel processing
+  const [progressData, setProgressData] = useState({
+    current: 0,
+    total: 0,
+    message: '',
+    detailedStatus: []
+  });
+  
+  const [processingStartTime, setProcessingStartTime] = useState(null);
+  const [responseMetrics, setResponseMetrics] = useState({});
+  const [activeTab, setActiveTab] = useState('query');
 
   // Reference to the file input element
   const fileInputRef = useRef(null);
@@ -80,6 +93,43 @@ const QueryInterface = ({ vectorStore, namespaces = [], onQuerySubmitted, isProc
   const [expandedPromptSet, setExpandedPromptSet] = useState(null);
   const [expandedPrompt, setExpandedPrompt] = useState('');
   const [expandedQueryText, setExpandedQueryText] = useState('');
+  
+  // Handler for processor progress updates
+  const handleProcessorProgress = (progressInfo) => {
+    console.log("Processor progress update:", progressInfo);
+    
+    if (!progressInfo) return;
+    
+    // Update progress data
+    setProgressData(prevData => ({
+      ...prevData,
+      message: progressInfo.step || prevData.message,
+      detailedStatus: [
+        ...(prevData.detailedStatus || []),
+        { 
+          model: progressInfo.model || 'global',
+          step: progressInfo.step || 'Processing',
+          status: progressInfo.status || 'pending',
+          timestamp: new Date().toISOString()
+        }
+      ]
+    }));
+    
+    // Update parallel progress if available
+    if (progressInfo.progress) {
+      setParallelProgress(progressInfo.progress);
+    }
+    
+    // Update current processing model if available
+    if (progressInfo.model) {
+      setCurrentProcessingModel(progressInfo.model);
+    }
+    
+    // Update processing step if available
+    if (progressInfo.step) {
+      setProcessingStep(progressInfo.step);
+    }
+  };
 
   // Reset processing state when component is mounted or re-mounted
   useEffect(() => {
@@ -282,227 +332,140 @@ Format your response in a clear, structured way. Focus on actionable improvement
   };
 
   const submitQuery = async () => {
-    if (!query.trim() || selectedModels.length === 0) return;
+    if (!query.trim()) {
+      setError('Please enter a query');
+      return;
+    }
     
-    setIsProcessing(true);
-    setError(null);
+    if (selectedModels.length === 0) {
+      setError('Please select at least one model');
+      return;
+    }
+    
+    if (selectedNamespaces.length === 0) {
+      setError('Please select at least one namespace');
+      return;
+    }
     
     try {
-      // Get parallel processing preference from localStorage
-      const useParallelProcessing = localStorage.getItem('useParallelProcessing') === 'true';
-      console.log('QueryInterface - Parallel processing setting:', {
-        rawValue: localStorage.getItem('useParallelProcessing'),
-        useParallelProcessing
+      setIsProcessing(true);
+      setError(null);
+      setResponses({});
+      setProcessingStep('Retrieving relevant documents');
+      
+      // Generate a unique query ID for cost tracking
+      const queryId = uuidv4();
+      
+      // Create parallel processor for handling multiple models in parallel
+      const processor = new ParallelLLMProcessor({
+        onProgressUpdate: handleProgressUpdate
       });
       
-      // Retrieve relevant documents
-      setProcessingStep('Retrieving relevant documents');
-      const docs = await vectorStore.similaritySearch(query, 5);
+      // Set up the models, prompts, and other parameters
+      const response = await processor.processQuery({
+        query,
+        vectorStore,
+        selectedModels,
+        selectedNamespaces,
+        promptSets,
+        queryId // Add query ID for cost tracking
+      });
       
-      // Filter documents by namespace if needed
-      const filteredDocs = selectedNamespaces.length > 0 ? 
-        docs.filter(doc => {
-          const docNamespace = doc.metadata?.namespace || 'default';
-          return selectedNamespaces.includes(docNamespace);
-        }) : 
-        docs;
+      // Set the full response object in state
+      setResponses(response);
+      setCurrentProcessingModel(null);
+      setProcessingStep('');
       
-      // Format the context from retrieved documents
-      const context = filteredDocs.map(doc => doc.pageContent).join('\n\n');
+      // Create metrics for token usage, latency, etc.
+      const metrics = {
+        retrievalTime: response.metadata.retrievalTime
+      };
       
-      // Create the prompt with context
-      const prompt = `
-Context information is below.
----------------------
-${context}
----------------------
-Given the context information and not prior knowledge, answer the question: ${query}
-`;
-
-      // Estimate input token count (very rough estimate: 1 token ≈ 4 characters)
-      const inputTokenEstimate = Math.round(prompt.length / 4);
-      
-      if (useParallelProcessing) {
-        // Set processing step to indicate parallel processing
-        setCurrentProcessingModel('all models');
-        setProcessingStep('Processing queries in parallel');
+      // Process model metrics
+      for (const set of promptSets) {
+        const setKey = `Set ${set.id}`;
         
-        // Initialize parallel progress
-        setParallelProgress({
-          completed: 0,
-          pending: selectedModels.length * promptSets.length,
-          total: selectedModels.length * promptSets.length,
-          models: {}
-        });
-        
-        // Start timers for all models
-        const startTimes = {};
-        selectedModels.forEach(model => {
-          startTimes[model] = Date.now();
-        });
-        setProcessingStartTimes(startTimes);
-        
-        // Process all models in parallel for each prompt set
-        const allResponses = {};
-        const allMetrics = {};
-        
-        for (const promptSet of promptSets) {
-          const { responses: parallelResponses, metrics: parallelMetrics } = await processModelsInParallel(
-            selectedModels,
-            prompt,
-            {
-              getSystemPromptForModel: () => promptSet.systemPrompt,
-              getTemperatureForModel: () => promptSet.temperature,
-              sources: filteredDocs,
-              onProgress: (progressData) => {
-                if (!progressData) return;
-                
-                setParallelProgress(prev => {
-                  const newModels = { ...prev.models };
-                  
-                  // Ensure consistent model name format: "modelName / Set X"
-                  let modelName = progressData.model;
-                  if (modelName.startsWith('Set ')) {
-                    const parts = modelName.split('-');
-                    if (parts.length > 1) {
-                      const setName = parts[0];
-                      const baseModel = parts.slice(1).join('-');
-                      modelName = `${baseModel} / ${setName}`;
-                    }
-                  } else if (!modelName.includes('Set')) {
-                    modelName = `${modelName} / Set ${promptSet.id}`;
-                  }
-
-                  // Only update the model status if it's not completed yet
-                  if (!newModels[modelName] || newModels[modelName].status !== 'completed') {
-                    newModels[modelName] = {
-                      status: progressData.status,
-                      timestamp: Date.now()
-                    };
-                  }
-
-                  // Calculate completed count based on unique completed models
-                  const completedCount = Object.values(newModels).filter(m => m.status === 'completed').length;
-
-                  return {
-                    ...prev,
-                    completed: completedCount,
-                    models: newModels
-                  };
-                });
-              }
-            }
-          );
-          
-          // Add set identifier to responses and metrics
-          const setKey = `Set ${promptSet.id}`;
-          allResponses[setKey] = parallelResponses || {};
-          allMetrics[setKey] = parallelMetrics || {};
-        }
-        
-        // Update state with results
-        setResponses(allResponses);
-        
-        // Get current state to pass to parent component
-        const queryState = getCurrentState();
-        
-        // Call the onQuerySubmitted callback with all results and state
-        onQuerySubmitted(
-          allResponses, 
-          allMetrics,
-          query,
-          promptSets.reduce((acc, set) => ({
-            ...acc,
-            [`Set ${set.id}`]: {
-              systemPrompt: set.systemPrompt,
-              temperature: set.temperature,
-              models: selectedModels
-            }
-          }), {}),
-          queryState
-        );
-      } else {
-        // Process models sequentially for each prompt set
-        const allResponses = {};
-        const allMetrics = {};
-        
-        for (const promptSet of promptSets) {
-          const responses = {};
-          const metrics = {};
-          
-          // Process each model with the same retrieved documents
-          for (const model of selectedModels) {
-            setCurrentProcessingModel(model);
-            setProcessingStep(`Processing with ${model} (Set ${promptSet.id})`);
-            
-            // Start timer for current model
-            setProcessingStartTimes(prev => ({
-              ...prev,
-              [model]: Date.now()
-            }));
-            
-            // Get Ollama endpoint from localStorage
-            const ollamaEndpoint = localStorage.getItem('ollamaEndpoint') || 'http://localhost:11434';
-            
-            // Create LLM instance with appropriate configuration
-            const llm = createLlmInstance(model, promptSet.systemPrompt, {
-              ollamaEndpoint: ollamaEndpoint,
-              temperature: promptSet.temperature
-            });
-            
-            const startTime = Date.now();
-            
-            // Call the LLM directly with the prompt
-            const answer = await llm.invoke(prompt);
-            
-            const endTime = Date.now();
-            const responseTime = endTime - startTime;
-            
-            // Get the answer text
-            const answerText = typeof answer === 'object' ? answer.text : answer;
-            
-            // Store the response
-            responses[model] = {
-              text: answerText,
-              sources: filteredDocs
-            };
-            
-            // Store metrics for this model
-            metrics[model] = {
-              responseTime,
-              elapsedTime: endTime - startTime,
-              tokenUsage: {
-                estimated: true,
-                input: inputTokenEstimate,
-                output: Math.round(answerText.length / 4),
-                total: inputTokenEstimate + Math.round(answerText.length / 4)
-              }
-            };
+        // Only process if this set exists in the response
+        if (response.models[setKey]) {
+          // Create a nested structure for this set
+          if (!metrics[setKey]) {
+            metrics[setKey] = {};
           }
           
-          // Store responses and metrics for this set
-          const setKey = `Set ${promptSet.id}`;
-          allResponses[setKey] = responses;
-          allMetrics[setKey] = metrics;
+          for (const model of selectedModels) {
+            // Only process if we have results for this model
+            if (response.models[setKey][model]) {
+              const result = response.models[setKey][model];
+              const tokenUsage = result.tokenUsage || {};
+              
+              // Store metrics in multiple formats for backward compatibility
+              
+              // Format 1: Composite key at top level (for ResponseComparison.js)
+              metrics[`${setKey}-${model}`] = {
+                model,
+                promptSet: set.id,
+                elapsedTime: result.elapsedTime,
+                responseTime: result.elapsedTime, // Add responseTime alias
+                tokenUsage: tokenUsage
+              };
+              
+              // Format 2: Nested under set key (for newer components)
+              metrics[setKey][model] = {
+                model,
+                promptSet: set.id,
+                elapsedTime: result.elapsedTime,
+                responseTime: result.elapsedTime, // Add responseTime alias
+                tokenUsage: tokenUsage
+              };
+              
+              // Format 3: Direct model key (for simpler lookups)
+              metrics[model] = {
+                model,
+                promptSet: set.id,
+                elapsedTime: result.elapsedTime,
+                responseTime: result.elapsedTime, // Add responseTime alias
+                tokenUsage: tokenUsage,
+                set: setKey
+              };
+            }
+          }
         }
-        
-        // Get current state to pass to parent component
-        const queryState = getCurrentState();
-        
-        // Call the onQuerySubmitted callback with all results and state
+      }
+      
+      // Add debug logging for metrics structure
+      console.log("METRICS STRUCTURE:", {
+        keys: Object.keys(metrics),
+        topLevelKeys: Object.keys(metrics).filter(k => !k.includes('-')),
+        setNestedKeys: promptSets.map(set => `Set ${set.id}`).filter(k => metrics[k] && typeof metrics[k] === 'object'),
+        modelDirectKeys: selectedModels.filter(m => metrics[m])
+      });
+      
+      // Collect system prompts for each model
+      const systemPrompts = promptSets.reduce((acc, set) => {
+        for (const model of selectedModels) {
+          acc[`Set ${set.id}-${model}`] = set.systemPrompt;
+        }
+        return acc;
+      }, {});
+      
+      // Call the onQuerySubmitted callback with all necessary data
+      if (onQuerySubmitted) {
         onQuerySubmitted(
-          allResponses,
-          allMetrics,
-          query,
-          promptSets.reduce((acc, set) => ({
-            ...acc,
-            [`Set ${set.id}`]: {
+          response, 
+          metrics, 
+          query, 
+          systemPrompts,
+          {
+            query,
+            selectedModels,
+            selectedNamespaces,
+            promptSets: promptSets.map(set => ({ 
+              id: set.id,
               systemPrompt: set.systemPrompt,
               temperature: set.temperature,
               models: selectedModels
-            }
-          }), {}),
-          queryState
+            }))
+          }
         );
       }
     } catch (error) {
@@ -622,6 +585,294 @@ Given the context information and not prior knowledge, answer the question: ${qu
   const handleSaveExpandedQuery = () => {
     setQuery(expandedQueryText);
     setExpandedQuery(false);
+  };
+
+  // Function to handle progress updates from the parallel processor
+  const handleProgressUpdate = (progress) => {
+    if (!progress) return;
+    
+    setCurrentProcessingModel(progress.model || 'all models');
+    setProcessingStep(progress.step || 'Processing query');
+    
+    // Update parallel progress state
+    setParallelProgress(prev => {
+      const newModels = { ...prev.models };
+      
+      // Update model status
+      if (progress.model) {
+        newModels[progress.model] = {
+          status: progress.status || 'pending',
+          timestamp: Date.now()
+        };
+      }
+      
+      // Calculate completed count
+      const completedCount = Object.values(newModels).filter(m => m.status === 'completed').length;
+      
+      return {
+        ...prev,
+        completed: completedCount,
+        models: newModels
+      };
+    });
+  };
+
+  // Execute query via the parallel processor
+  const processParallelQuery = async () => {
+    if (!query || !vectorStore) return;
+    
+    // Generate a unique ID for this query to track costs
+    const queryId = `query-${Date.now()}`;
+    console.log(`Generated query ID for cost tracking: ${queryId}`);
+
+    try {
+      setIsProcessing(true);
+      setProgressData({
+        current: 0,
+        total: selectedModels.length,
+        message: 'Retrieving relevant documents...',
+        detailedStatus: []
+      });
+      
+      // Record processing start times
+      const currentTime = Date.now();
+      setProcessingStartTime(currentTime);
+      
+      // Create a parallel processor with progress callback
+      const processor = new ParallelLLMProcessor({
+        onProgressUpdate: handleProcessorProgress
+      });
+      
+      // Process selected models in parallel with different prompt sets
+      const processorResults = await processor.processQuery({
+        query,
+        vectorStore,
+        selectedModels,
+        selectedNamespaces,
+        promptSets,
+        queryId // Pass the queryId for cost tracking
+      });
+      
+      console.log("Processor results:", processorResults);
+      
+      // Extract metrics for each model and prompt set
+      const metrics = {};
+      
+      // Track whether we've extracted metrics from any model yet
+      let hasExtractedMetrics = false;
+      
+      // UPDATED: Metrics handling for new nested structure
+      if (processorResults.models) {
+        console.log("Processing metrics from new nested structure");
+        
+        // For each prompt set
+        Object.entries(processorResults.models).forEach(([setKey, setModels]) => {
+          // Create a container for this set's metrics
+          metrics[setKey] = {};
+          
+          // Process each model in this set
+          Object.entries(setModels).forEach(([modelKey, modelResponse]) => {
+            console.log(`Extracting metrics for ${modelKey} in ${setKey}`);
+            
+            // Calculate elapsed time
+            const elapsedTime = modelResponse.elapsedTime || 0;
+            
+            // Extract token usage
+            let tokenUsage = modelResponse.tokenUsage || {
+              promptTokens: 0,
+              completionTokens: 0,
+              totalTokens: 0,
+              estimated: true
+            };
+            
+            // If token usage is missing entirely, estimate it from the response text
+            if (!tokenUsage || (tokenUsage.totalTokens === 0 && !tokenUsage.prompt_tokens && !tokenUsage.completion_tokens)) {
+              console.log(`No token usage found for ${modelKey}, estimating from response text`);
+              const responseText = modelResponse.text || '';
+              const estimatedTokens = Math.round(responseText.length / 4);
+              
+              tokenUsage = {
+                promptTokens: Math.floor(estimatedTokens / 2),
+                completionTokens: Math.ceil(estimatedTokens / 2),
+                totalTokens: estimatedTokens,
+                estimated: true
+              };
+            }
+            
+            // Normalize token usage format
+            const normalizedTokenUsage = {
+              input: tokenUsage.promptTokens || tokenUsage.prompt_tokens || 0,
+              output: tokenUsage.completionTokens || tokenUsage.completion_tokens || 0,
+              total: tokenUsage.totalTokens || tokenUsage.total_tokens || 
+                    (tokenUsage.promptTokens + tokenUsage.completionTokens) || 
+                    (tokenUsage.prompt_tokens + tokenUsage.completion_tokens) || 0,
+              estimated: tokenUsage.estimated || false
+            };
+            
+            // Store metrics in multiple formats for compatibility
+            // 1. Under the set name with model as key
+            metrics[setKey][modelKey] = {
+              responseTime: elapsedTime,
+              elapsedTime: elapsedTime,
+              tokenUsage: normalizedTokenUsage
+            };
+            
+            // 2. Using combined key format
+            const combinedKey = `${setKey}-${modelKey}`;
+            metrics[combinedKey] = {
+              responseTime: elapsedTime,
+              elapsedTime: elapsedTime,
+              tokenUsage: normalizedTokenUsage
+            };
+            
+            // 3. For direct model key access
+            metrics[modelKey] = {
+              responseTime: elapsedTime,
+              elapsedTime: elapsedTime,
+              tokenUsage: normalizedTokenUsage
+            };
+            
+            hasExtractedMetrics = true;
+          });
+        });
+        
+        // Also save metadata in metrics
+        if (processorResults.metadata) {
+          metrics.metadata = processorResults.metadata;
+        }
+      } 
+      // Legacy format handling
+      else {
+        console.log("Processing metrics from legacy format");
+        
+        Object.keys(processorResults).forEach(key => {
+          // Skip metadata keys
+          if (key === 'query' || key === 'retrievalTime') {
+            metrics[key] = processorResults[key];
+            return;
+          }
+          
+          // Handle prompt set formats
+          if (key.startsWith('Set ') && typeof processorResults[key] === 'object') {
+            const setKey = key;
+            const setContent = processorResults[key];
+            
+            // Create a container for this set
+            metrics[setKey] = {};
+            
+            // Process models in this set
+            Object.keys(setContent).forEach(modelKey => {
+              // Skip non-model properties
+              if (modelKey === 'query' || modelKey === 'retrievalTime') {
+                metrics[`${setKey}.${modelKey}`] = setContent[modelKey];
+                return;
+              }
+              
+              const modelResponse = setContent[modelKey];
+              if (modelResponse) {
+                // Calculate elapsed time
+                const elapsedTime = modelResponse.elapsedTime || 0;
+                
+                // Extract token usage
+                let tokenUsage = modelResponse.tokenUsage || {
+                  promptTokens: 0,
+                  completionTokens: 0,
+                  totalTokens: 0,
+                  estimated: true
+                };
+                
+                // If token usage is missing, estimate it from the response text
+                if (!tokenUsage || !tokenUsage.totalTokens) {
+                  const responseText = modelResponse.text || '';
+                  const estimatedTokens = Math.round(responseText.length / 4);
+                  
+                  tokenUsage = {
+                    promptTokens: Math.floor(estimatedTokens / 2),
+                    completionTokens: Math.ceil(estimatedTokens / 2),
+                    totalTokens: estimatedTokens,
+                    estimated: true
+                  };
+                }
+                
+                // Store in multiple formats for compatibility
+                metrics[setKey][modelKey] = {
+                  responseTime: elapsedTime,
+                  elapsedTime: elapsedTime,
+                  tokenUsage: tokenUsage
+                };
+                
+                // Combined key for direct access
+                metrics[`${setKey}-${modelKey}`] = {
+                  responseTime: elapsedTime,
+                  elapsedTime: elapsedTime,
+                  tokenUsage: tokenUsage
+                };
+                
+                hasExtractedMetrics = true;
+              }
+            });
+          } 
+          // Direct model responses
+          else {
+            const modelResponse = processorResults[key];
+            if (typeof modelResponse === 'object') {
+              const elapsedTime = modelResponse.elapsedTime || 0;
+              const tokenUsage = modelResponse.tokenUsage || {
+                estimated: true,
+                promptTokens: 0,
+                completionTokens: 0,
+                totalTokens: 0
+              };
+              
+              metrics[key] = {
+                responseTime: elapsedTime,
+                elapsedTime: elapsedTime,
+                tokenUsage: tokenUsage
+              };
+              
+              hasExtractedMetrics = true;
+            }
+          }
+        });
+      }
+      
+      console.log("Final metrics object:", metrics);
+      
+      // If no metrics were extracted, add default ones
+      if (!hasExtractedMetrics) {
+        console.warn("No metrics were extracted, creating defaults");
+        
+        // Create default metrics for each model
+        selectedModels.forEach(model => {
+          metrics[model] = {
+            responseTime: 1000, // Default 1 second
+            elapsedTime: 1000,
+            tokenUsage: {
+              promptTokens: 500,
+              completionTokens: 500,
+              totalTokens: 1000,
+              estimated: true
+            }
+          };
+        });
+      }
+      
+      // Set responses and metrics in state
+      setResponses(processorResults);
+      setResponseMetrics(metrics);
+      
+      // Switch to comparison view
+      setActiveTab('comparison');
+      
+      // Log completion
+      console.log("Query processing completed successfully");
+      
+    } catch (error) {
+      console.error("Error processing parallel query:", error);
+      setError(error.message);
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   return (

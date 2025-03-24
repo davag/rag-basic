@@ -185,11 +185,13 @@ Given the context information and not prior knowledge, answer the question: ${cu
   
   // Helper to calculate percentage of token usage
   const calculatePercentage = (part, total) => {
+    if (!part || !total) return 0;
     return Math.round((part / total) * 100);
   };
   
   // Format large numbers with commas
   const formatNumber = (num) => {
+    if (num === undefined || num === null) return '0';
     return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
   };
   
@@ -249,15 +251,27 @@ Given the context information and not prior knowledge, answer the question: ${cu
                 const modelKey = `${setKey}-${model}`;
                 
                 const modelMetrics = findModelMetrics(metrics, modelKey) || {};
-                const tokenUsage = modelMetrics.tokenUsage || { input: 0, output: 0, total: 0 };
+                const tokenUsage = {
+                  input: 0,
+                  output: 0,
+                  total: 0,
+                  ...(modelMetrics.tokenUsage || {})
+                };
+                
+                // Make sure total is properly calculated if missing
+                if (!tokenUsage.total && (tokenUsage.input || tokenUsage.output)) {
+                  tokenUsage.total = (tokenUsage.input || 0) + (tokenUsage.output || 0);
+                }
+                
                 const breakdown = tokenBreakdowns[modelKey];
                 const modelWarnings = warnings[modelKey] || [];
                 
                 // Get cost for this model
-                const modelCost = calculateCost(model, 
-                  tokenUsage.input / 1000, 
-                  tokenUsage.output / 1000
-                );
+                const modelCost = calculateCost(
+                  model, 
+                  (tokenUsage.input || 0) / 1000, 
+                  (tokenUsage.output || 0) / 1000
+                ) || 0;
                   
                 if (!breakdown) return null;
                 
@@ -295,18 +309,32 @@ Given the context information and not prior knowledge, answer the question: ${cu
                         <Box sx={{ mb: 2, display: 'flex', alignItems: 'center' }}>
                           <Box sx={{ flexGrow: 1 }}>
                             <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                              <Box sx={{ width: `${calculatePercentage(tokenUsage.input, tokenUsage.total)}%`, bgcolor: 'primary.main', height: 10, borderRadius: '4px 0 0 4px' }} />
-                              <Box sx={{ width: `${calculatePercentage(tokenUsage.output, tokenUsage.total)}%`, bgcolor: 'secondary.main', height: 10, borderRadius: '0 4px 4px 0' }} />
+                              <Box 
+                                sx={{ 
+                                  width: `${tokenUsage.total ? calculatePercentage(tokenUsage.input, tokenUsage.total) : 50}%`, 
+                                  bgcolor: 'primary.main', 
+                                  height: 10, 
+                                  borderRadius: '4px 0 0 4px' 
+                                }} 
+                              />
+                              <Box 
+                                sx={{ 
+                                  width: `${tokenUsage.total ? calculatePercentage(tokenUsage.output, tokenUsage.total) : 50}%`, 
+                                  bgcolor: 'secondary.main', 
+                                  height: 10, 
+                                  borderRadius: '0 4px 4px 0' 
+                                }} 
+                              />
                             </Box>
                           </Box>
                           <Box sx={{ ml: 2, display: 'flex', fontSize: '0.75rem' }}>
                             <Box sx={{ color: 'primary.main', display: 'flex', alignItems: 'center', mr: 1 }}>
                               <Box sx={{ width: 8, height: 8, bgcolor: 'primary.main', borderRadius: 1, mr: 0.5 }} />
-                              Input {calculatePercentage(tokenUsage.input, tokenUsage.total)}%
+                              Input {tokenUsage.total ? calculatePercentage(tokenUsage.input, tokenUsage.total) : 0}%
                             </Box>
                             <Box sx={{ color: 'secondary.main', display: 'flex', alignItems: 'center' }}>
                               <Box sx={{ width: 8, height: 8, bgcolor: 'secondary.main', borderRadius: 1, mr: 0.5 }} />
-                              Output {calculatePercentage(tokenUsage.output, tokenUsage.total)}%
+                              Output {tokenUsage.total ? calculatePercentage(tokenUsage.output, tokenUsage.total) : 0}%
                             </Box>
                           </Box>
                         </Box>
@@ -324,13 +352,16 @@ Given the context information and not prior knowledge, answer the question: ${cu
                             </TableHead>
                             <TableBody>
                               {breakdown && breakdown.breakdown && Object.entries(breakdown.breakdown || {}).map(([part, tokens]) => {
-                                const percentage = calculatePercentage(tokens, tokenUsage.input);
+                                // Ensure tokens is a valid number
+                                const tokenValue = Number.isFinite(tokens) ? tokens : 0;
+                                const inputTokens = Number.isFinite(tokenUsage.input) ? tokenUsage.input : 1;
+                                const percentage = calculatePercentage(tokenValue, inputTokens);
                                 return (
                                   <TableRow key={part}>
                                     <TableCell component="th" scope="row">
                                       {part.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase())}
                                     </TableCell>
-                                    <TableCell align="right">{formatNumber(tokens)}</TableCell>
+                                    <TableCell align="right">{formatNumber(tokenValue)}</TableCell>
                                     <TableCell 
                                       align="right"
                                       sx={{ 

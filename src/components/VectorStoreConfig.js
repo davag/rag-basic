@@ -32,6 +32,8 @@ import { MemoryVectorStore } from 'langchain/vectorstores/memory';
 import { recommendEmbeddingModel, getModelChunkConfigs } from '../utils/embeddingRecommender';
 import { recommendChunkingStrategy, chunkingStrategies, createTextSplitter } from '../utils/chunkingStrategies';
 import axios from 'axios';
+import { v4 as uuidv4 } from 'uuid';
+import { costTracker } from '../utils/costTracker';
 
 // Custom class for Ollama embeddings
 class OllamaEmbeddings {
@@ -76,16 +78,28 @@ const VectorStoreConfig = ({
 }) => {
   const [chunkSize, setChunkSize] = useState(1000);
   const [chunkOverlap, setChunkOverlap] = useState(200);
-  const [embeddingModel, setEmbeddingModel] = useState(() => {
-    // Try to get the saved model from localStorage, fallback to default
-    return localStorage.getItem('selectedEmbeddingModel') || 'text-embedding-3-small';
-  });
+  const [embeddingModel, setEmbeddingModel] = useState('text-embedding-3-small');
   const [chunkingStrategy, setChunkingStrategy] = useState('recursive');
   const [recommendation, setRecommendation] = useState(null);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(false);
   const [namespaceSummary, setNamespaceSummary] = useState({});
   const [helpExpanded, setHelpExpanded] = useState(false);
+
+  // Settings for endpoints
+  const [ollamaBaseUrl, setOllamaBaseUrl] = useState(
+    localStorage.getItem('ollamaEndpoint') || 
+    process.env.REACT_APP_OLLAMA_API_URL || 
+    'http://localhost:11434'
+  );
+  const [azureApiKey, setAzureApiKey] = useState(process.env.REACT_APP_AZURE_OPENAI_API_KEY || '');
+  const [azureEndpoint, setAzureEndpoint] = useState(process.env.REACT_APP_AZURE_OPENAI_ENDPOINT || '');
+  const [apiVersion, setApiVersion] = useState(process.env.REACT_APP_AZURE_OPENAI_API_VERSION || '2023-05-15');
+  
+  // Get Azure deployment name from the embeddingModel
+  const getDeploymentName = () => {
+    return embeddingModel.startsWith('azure-') ? embeddingModel.replace('azure-', '') : '';
+  };
 
   // Get model and chunking strategy recommendations when documents change
   useEffect(() => {
@@ -183,12 +197,17 @@ const VectorStoreConfig = ({
   };
 
   const createVectorStore = async () => {
-    setIsProcessing(true);
-    setError(null);
-    setSuccess(false);
-
     try {
-      console.log('[DEBUG] Starting vector store creation with model:', embeddingModel);
+      setIsProcessing(true);
+      setError(null);
+      setSuccess(false);
+      
+      // Generate a unique identifier for this embedding operation
+      const operationId = uuidv4();
+      
+      // Log the start of operation
+      console.log(`Starting vector store creation with ${documents.length} documents using ${chunkingStrategy} strategy`);
+      
       // Create text splitter based on selected strategy
       const textSplitter = createTextSplitter(chunkingStrategy, {
         chunkSize,
@@ -219,38 +238,27 @@ const VectorStoreConfig = ({
       const splitDocs = await textSplitter.splitDocuments(documents);
       console.log('[DEBUG] Split documents into chunks:', splitDocs.length);
       
-      // Create embeddings based on selected model
-      let embeddings;
       console.log('[DEBUG] Creating embeddings with model:', embeddingModel);
       
-      if (embeddingModel === 'nomic-embed-text') {
-        // Get Ollama endpoint from localStorage or use default
-        const ollamaEndpoint = localStorage.getItem('ollamaEndpoint') || process.env.REACT_APP_OLLAMA_API_URL || 'http://localhost:11434';
+      let embeddings;
+      const deploymentName = getDeploymentName();
+      
+      // Track embedding costs differently based on the provider
+      if (embeddingModel.startsWith('ollama-')) {
+        // ... existing Ollama embeddings code ...
+        
+        console.log('[DEBUG] Using Ollama embeddings');
+        
         embeddings = new OllamaEmbeddings({
-          modelName: embeddingModel,
-          ollamaEndpoint: ollamaEndpoint
+          model: embeddingModel.replace('ollama-', ''),
+          baseUrl: ollamaBaseUrl || 'http://localhost:11434'
         });
-        console.log('[DEBUG] Using Ollama embeddings with endpoint:', ollamaEndpoint);
       } else if (embeddingModel.startsWith('azure-')) {
-        // Use Azure OpenAI embeddings
-        const azureApiKey = process.env.REACT_APP_AZURE_OPENAI_API_KEY;
-        const azureEndpoint = process.env.REACT_APP_AZURE_OPENAI_ENDPOINT;
-        const apiVersion = process.env.REACT_APP_AZURE_OPENAI_API_VERSION;
+        // ... existing Azure embeddings code ...
         
-        if (!azureApiKey || !azureEndpoint) {
-          throw new Error('Azure OpenAI requires REACT_APP_AZURE_OPENAI_API_KEY and REACT_APP_AZURE_OPENAI_ENDPOINT to be set in your .env file');
-        }
+        console.log('[DEBUG] Using Azure OpenAI embeddings');
         
-        // Get deployment name by removing 'azure-' prefix
-        const deploymentName = embeddingModel.replace('azure-', '');
-        console.log('[DEBUG] Using Azure OpenAI embeddings with:', {
-          deploymentName,
-          endpoint: azureEndpoint,
-          apiVersion,
-          numChunks: splitDocs.length
-        });
-        
-        // Create a custom embeddings class for Azure OpenAI
+        // Define Azure embeddings class with cost tracking
         class AzureOpenAIEmbeddings {
           constructor(options) {
             this.apiKey = options.apiKey;
@@ -258,45 +266,52 @@ const VectorStoreConfig = ({
             this.deploymentName = options.deploymentName;
             this.apiVersion = options.apiVersion;
           }
-
+          
           async embedQuery(text) {
             try {
-              console.log('[DEBUG] Making Azure OpenAI embedding request for text:', text.substring(0, 100) + '...');
-              const response = await fetch(`${this.endpoint}/openai/deployments/${this.deploymentName}/embeddings?api-version=${this.apiVersion}`, {
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                  'api-key': this.apiKey
-                },
-                body: JSON.stringify({
-                  input: text
-                })
+              const response = await axios.post(`/api/proxy/azure/embeddings`, {
+                azureApiKey: this.apiKey,
+                azureEndpoint: this.endpoint,
+                deploymentName: this.deploymentName,
+                apiVersion: this.apiVersion,
+                input: text,
+                queryId: operationId
               });
-
-              if (!response.ok) {
-                const errorText = await response.text();
-                console.error('[DEBUG] Azure OpenAI API error response:', errorText);
-                throw new Error(`Azure OpenAI API error: ${response.status} ${response.statusText}`);
-              }
-
-              const data = await response.json();
-              console.log('[DEBUG] Azure OpenAI embedding response received');
-              return data.data[0].embedding;
+              
+              // Extract embedding data
+              const embedding = response.data.data[0].embedding;
+              
+              // Estimate token count (for cost tracking)
+              const tokenCount = Math.ceil(text.length / 4);
+              
+              // Track the cost directly (in case query parameter wasn't handled)
+              costTracker.trackEmbeddingCost('azure-embedding', tokenCount, 'query', operationId);
+              
+              return embedding;
             } catch (error) {
-              console.error('[DEBUG] Error generating embedding from Azure OpenAI:', error);
-              throw error;
+              console.error('Error generating embeddings with Azure:', error);
+              throw new Error(`Azure embedding error: ${error.message}`);
             }
           }
-
+          
           async embedDocuments(documents) {
-            console.log('[DEBUG] Starting to embed documents:', documents.length);
+            // Process each document sequentially to avoid rate limits
             const embeddings = [];
-            for (let i = 0; i < documents.length; i++) {
-              console.log(`[DEBUG] Embedding document ${i + 1}/${documents.length}`);
-              const embedding = await this.embedQuery(documents[i]);
-              embeddings.push(embedding);
+            
+            for (const doc of documents) {
+              try {
+                const embedding = await this.embedQuery(doc);
+                embeddings.push(embedding);
+                
+                // Track cost for each document
+                const tokenCount = Math.ceil(doc.length / 4);
+                costTracker.trackEmbeddingCost('azure-embedding', tokenCount, 'document', operationId);
+              } catch (error) {
+                console.error('Error embedding document:', error);
+                throw error;
+              }
             }
-            console.log('[DEBUG] Finished embedding all documents');
+            
             return embeddings;
           }
         }
@@ -308,14 +323,49 @@ const VectorStoreConfig = ({
           apiVersion: apiVersion
         });
       } else {
+        // Use OpenAI embeddings for OpenAI models with cost tracking
+        console.log('[DEBUG] Using OpenAI embeddings with model:', embeddingModel);
+        
+        // Create custom OpenAI embeddings class with cost tracking
+        class TrackedOpenAIEmbeddings extends OpenAIEmbeddings {
+          constructor(options) {
+            super(options);
+            this.model = options.modelName || 'text-embedding-3-small';
+          }
+          
+          async embedQuery(text) {
+            // Call parent implementation
+            const result = await super.embedQuery(text);
+            
+            // Track cost
+            const tokenCount = Math.ceil(text.length / 4);
+            costTracker.trackEmbeddingCost(this.model, tokenCount, 'query', operationId);
+            
+            return result;
+          }
+          
+          async embedDocuments(documents) {
+            // Call parent implementation
+            const result = await super.embedDocuments(documents);
+            
+            // Track cost for all documents
+            const totalChars = documents.reduce((sum, doc) => sum + doc.length, 0);
+            const tokenCount = Math.ceil(totalChars / 4);
+            costTracker.trackEmbeddingCost(this.model, tokenCount, 'document', operationId);
+            
+            return result;
+          }
+        }
+        
         // Use OpenAI embeddings for OpenAI models
-        embeddings = new OpenAIEmbeddings({
+        embeddings = new TrackedOpenAIEmbeddings({
           openAIApiKey: process.env.REACT_APP_OPENAI_API_KEY,
           modelName: embeddingModel
         });
       }
 
       console.log('[DEBUG] Starting to create vector store with embeddings');
+      
       // Create vector store - using MemoryVectorStore instead of FAISS for browser compatibility
       const vectorStore = await MemoryVectorStore.fromDocuments(splitDocs, embeddings);
       console.log('[DEBUG] Vector store created successfully');

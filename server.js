@@ -6,11 +6,171 @@ const bodyParser = require('body-parser');
 const dotenv = require('dotenv');
 const { createProxyMiddleware } = require('http-proxy-middleware');
 
+// Simple cost tracker implementation for the server
+const costTracker = {
+  costs: {
+    llm: {},
+    embeddings: {},
+    total: 0,
+  },
+  
+  detailedLogging: true,
+  embeddingPricing: {
+    'text-embedding-ada-002': 0.0001,
+    'text-embedding-3-small': 0.00002,
+    'text-embedding-3-large': 0.00013
+  },
+  
+  trackLlmCost(model, usage, operation = 'chat', queryId = null) {
+    // Log for debugging
+    console.log(`Server cost tracker: ${model}, ${operation}, ${queryId || 'no-query-id'}`);
+    console.log('Usage data:', usage);
+    
+    if (!model || !usage) {
+      return { cost: 0, model: model || 'unknown', operation, usage: { totalTokens: 0 } };
+    }
+    
+    // Normalize the usage data
+    const normalizedUsage = {
+      promptTokens: usage.promptTokens || usage.prompt_tokens || usage.input || 0,
+      completionTokens: usage.completionTokens || usage.completion_tokens || usage.output || 0,
+      totalTokens: usage.totalTokens || usage.total_tokens || usage.total || 0
+    };
+    
+    // If total tokens isn't set, calculate it
+    if (normalizedUsage.totalTokens === 0 && 
+        (normalizedUsage.promptTokens > 0 || normalizedUsage.completionTokens > 0)) {
+      normalizedUsage.totalTokens = normalizedUsage.promptTokens + normalizedUsage.completionTokens;
+    }
+    
+    // Calculate cost based on the model and token count
+    // Simple pricing model for demonstration
+    let cost = 0;
+    if (model.includes('gpt-4')) {
+      // GPT-4 pricing estimate
+      cost = (normalizedUsage.promptTokens * 0.00003) + (normalizedUsage.completionTokens * 0.00006);
+    } else if (model.includes('gpt-3.5')) {
+      // GPT-3.5 pricing estimate
+      cost = (normalizedUsage.promptTokens * 0.000005) + (normalizedUsage.completionTokens * 0.000015);
+    } else if (model.includes('claude-3-5')) {
+      // Claude 3.5 Sonnet pricing estimate
+      cost = normalizedUsage.totalTokens * 0.000009;
+    } else if (model.includes('claude-3-opus')) {
+      // Claude 3 Opus pricing estimate
+      cost = normalizedUsage.totalTokens * 0.00015;
+    } else if (model.includes('claude-3-haiku')) {
+      // Claude 3 Haiku pricing estimate
+      cost = normalizedUsage.totalTokens * 0.00025;
+    } else if (model.includes('claude-2')) {
+      // Claude 2 pricing estimate
+      cost = normalizedUsage.totalTokens * 0.00008;
+    } else if (model.includes('mistral') || model.includes('llama') || model.includes('gemma')) {
+      // Local models are free
+      cost = 0;
+    } else {
+      // Default pricing for unknown models
+      cost = normalizedUsage.totalTokens * 0.00001;
+    }
+    
+    // Store the cost data
+    if (!this.costs.llm[model]) {
+      this.costs.llm[model] = [];
+    }
+    
+    const timestamp = new Date();
+    const costEntry = {
+      timestamp,
+      model,
+      operation,
+      usage: normalizedUsage,
+      cost,
+      queryId
+    };
+    
+    this.costs.llm[model].push(costEntry);
+    this.costs.total += cost;
+    
+    console.log(`Cost calculated for ${model}: $${cost.toFixed(6)}`);
+    console.log(`Total accumulated cost: $${this.costs.total.toFixed(6)}`);
+    
+    return costEntry;
+  },
+  
+  trackEmbeddingCost(model, tokenCount, operation = 'document', queryId = null) {
+    // Simple implementation
+    const cost = model.includes('large') ? tokenCount * 0.00001 : tokenCount * 0.0000001;
+    this.costs.total += cost;
+    return { cost, model, operation };
+  },
+  
+  getCostSummary() {
+    console.log('Returning cost summary with total:', this.costs.total.toFixed(6));
+    return {
+      totalCost: this.costs.total,
+      costsByModel: this._getCostsByModel(),
+      costsByOperation: this._getCostsByOperation()
+    };
+  },
+  
+  _getCostsByModel() {
+    const result = {};
+    for (const model in this.costs.llm) {
+      result[model] = this.costs.llm[model].reduce((sum, entry) => sum + entry.cost, 0);
+    }
+    return result;
+  },
+  
+  _getCostsByOperation() {
+    const result = {};
+    for (const model in this.costs.llm) {
+      for (const entry of this.costs.llm[model]) {
+        const operation = entry.operation || 'unknown';
+        if (!result[operation]) {
+          result[operation] = 0;
+        }
+        result[operation] += entry.cost;
+      }
+    }
+    return result;
+  },
+  
+  resetCostData() {
+    this.costs = {
+      llm: {},
+      embeddings: {},
+      total: 0
+    };
+    console.log('Cost data has been reset');
+    return true;
+  },
+  
+  exportCostData() {
+    return { ...this.costs };
+  },
+  
+  setDetailedLogging(enabled) {
+    this.detailedLogging = enabled;
+    console.log(`Detailed logging ${enabled ? 'enabled' : 'disabled'}`);
+  },
+  
+  setEmbeddingPricing(pricingData) {
+    this.embeddingPricing = {
+      ...this.embeddingPricing,
+      ...pricingData
+    };
+    console.log('Updated embedding pricing:', this.embeddingPricing);
+  },
+  
+  getTotalCost() {
+    return this.costs.total;
+  }
+};
+
 // Load environment variables from .env file
 dotenv.config();
 
 const app = express();
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.BACKEND_PORT || process.env.PORT || 3002;
 
 // Middleware
 app.use(cors());
@@ -20,8 +180,13 @@ app.use(bodyParser.urlencoded({ extended: true, limit: '10mb' }));
 // Serve static files from the React app in production
 app.use(express.static(path.join(__dirname, 'build')));
 
-// Proxy endpoint for Anthropic API
-app.post('/api/proxy/anthropic', async (req, res) => {
+// IMPORTANT: There are two proxy setups in this application:
+// 1. The webpack dev server proxy middleware (configured in package.json)
+// 2. Our own direct implementation below
+// We need to ensure they don't conflict.
+
+// Replace the existing Anthropic proxy implementation with this version
+app.post('/api/anthropic-proxy', async (req, res) => {
   try {
     // Use API key from request body or fall back to environment variable
     const apiKey = req.body.anthropicApiKey || process.env.REACT_APP_ANTHROPIC_API_KEY;
@@ -30,12 +195,13 @@ app.post('/api/proxy/anthropic', async (req, res) => {
       return res.status(400).json({ error: 'Anthropic API key is required' });
     }
     
-    // Remove the API key from the request body
-    const { anthropicApiKey, ...requestBody } = req.body;
+    // Extract API key and queryId from the request
+    const { anthropicApiKey, queryId, ...cleanRequestBody } = req.body;
     
     console.log('Proxying request to Anthropic API...');
+    console.log(`Request includes queryId for tracking: ${queryId ? 'yes' : 'no'}`);
     
-    const response = await axios.post('https://api.anthropic.com/v1/messages', requestBody, {
+    const response = await axios.post('https://api.anthropic.com/v1/messages', cleanRequestBody, {
       headers: {
         'x-api-key': apiKey,
         'anthropic-version': '2023-06-01',
@@ -44,6 +210,25 @@ app.post('/api/proxy/anthropic', async (req, res) => {
     });
     
     console.log('Received response from Anthropic API');
+    
+    // Track costs if usage information is available
+    if (response.data && response.data.usage) {
+      // Extract model and usage information
+      const model = response.data.model || cleanRequestBody.model;
+      const usage = {
+        prompt_tokens: response.data.usage.input_tokens || 0,
+        completion_tokens: response.data.usage.output_tokens || 0,
+        total_tokens: (response.data.usage.input_tokens || 0) + (response.data.usage.output_tokens || 0)
+      };
+      
+      // Track cost
+      const costInfo = costTracker.trackLlmCost(model, usage, 'chat', queryId);
+      console.log(`Cost tracked for Anthropic API call: $${costInfo.cost.toFixed(6)}`);
+      
+      // Add cost info to response
+      response.data.cost = costInfo.cost;
+    }
+    
     res.json(response.data);
   } catch (error) {
     console.error('Error proxying to Anthropic API:', error.response?.data || error.message);
@@ -53,41 +238,26 @@ app.post('/api/proxy/anthropic', async (req, res) => {
   }
 });
 
-// Proxy endpoint for OpenAI API
-app.post('/api/proxy/openai/:endpoint(*)', async (req, res) => {
+// Replace the existing OpenAI proxy implementation with this version
+app.post('/api/openai-proxy/:endpoint(*)', async (req, res) => {
   try {
-    // Use API key from request body or fall back to environment variable
     const apiKey = req.body.openaiApiKey || process.env.REACT_APP_OPENAI_API_KEY;
     const endpoint = req.params.endpoint;
     
     console.log(`OpenAI proxy request to endpoint: ${endpoint}`);
     
     if (!apiKey) {
-      console.error('No OpenAI API key provided in request body or environment variables');
+      console.error('No OpenAI API key provided');
       return res.status(400).json({ error: 'OpenAI API key is required' });
     }
     
-    // Log API key prefix (for debugging, without exposing the full key)
-    const apiKeyPrefix = apiKey.substring(0, 10);
-    console.log(`Using API key with prefix: ${apiKeyPrefix}...`);
+    // Extract API key and queryId - don't send these to OpenAI
+    const { openaiApiKey, queryId, ...cleanRequestBody } = req.body;
     
-    // Remove the API key from the request body
-    const { openaiApiKey, ...requestBody } = req.body;
-    
-    // Log request details
     console.log(`Request to OpenAI API endpoint: ${endpoint}`);
-    console.log('Request headers:');
-    console.log(`- Authorization: Bearer ${apiKeyPrefix}...`);
-    console.log(`- Content-Type: application/json`);
+    console.log(`Request includes queryId for cost tracking: ${queryId ? 'yes' : 'no'}`);
     
-    // Log request body (without sensitive information)
-    console.log('Request body:', JSON.stringify({
-      ...requestBody,
-      // Don't log sensitive fields
-      messages: requestBody.messages ? `[${requestBody.messages.length} messages]` : undefined
-    }));
-    
-    const response = await axios.post(`https://api.openai.com/v1/${endpoint}`, requestBody, {
+    const response = await axios.post(`https://api.openai.com/v1/${endpoint}`, cleanRequestBody, {
       headers: {
         'Authorization': `Bearer ${apiKey}`,
         'Content-Type': 'application/json'
@@ -96,20 +266,29 @@ app.post('/api/proxy/openai/:endpoint(*)', async (req, res) => {
     
     console.log(`OpenAI API response status: ${response.status}`);
     
-    // Log response headers
-    console.log('Response headers:');
-    Object.keys(response.headers).forEach(key => {
-      console.log(`- ${key}: ${response.headers[key]}`);
-    });
-    
-    // Log response data structure (without the actual content)
-    if (response.data) {
-      console.log('Response data structure:');
-      if (response.data.choices) {
-        console.log(`- choices: Array with ${response.data.choices.length} items`);
-      }
-      if (response.data.usage) {
-        console.log(`- usage: ${JSON.stringify(response.data.usage)}`);
+    // Track costs if usage information is available
+    if (response.data && response.data.usage) {
+      if (endpoint.includes('embeddings')) {
+        // Handle embedding cost tracking
+        const model = response.data.model || cleanRequestBody.model;
+        const tokenCount = response.data.usage.total_tokens || 0;
+        const operation = Array.isArray(cleanRequestBody.input) && cleanRequestBody.input.length > 1 ? 'document' : 'query';
+        
+        const costInfo = costTracker.trackEmbeddingCost(model, tokenCount, operation, queryId);
+        console.log(`Cost tracked for OpenAI embedding: $${costInfo.cost.toFixed(6)}`);
+        
+        // Add cost info to response
+        response.data.cost = costInfo.cost;
+      } else {
+        // Handle LLM cost tracking
+        const model = response.data.model || cleanRequestBody.model;
+        const usage = response.data.usage;
+        
+        const costInfo = costTracker.trackLlmCost(model, usage, 'chat', queryId);
+        console.log(`Cost tracked for OpenAI API call: $${costInfo.cost.toFixed(6)}`);
+        
+        // Add cost info to response
+        response.data.cost = costInfo.cost;
       }
     }
     
@@ -120,10 +299,7 @@ app.post('/api/proxy/openai/:endpoint(*)', async (req, res) => {
     // Log more detailed error information
     if (error.response) {
       console.error('Response status:', error.response.status);
-      console.error('Response data:', error.response.data);
-      console.error('Response headers:', error.response.headers);
-    } else if (error.request) {
-      console.error('No response received. Request:', error.request);
+      console.error('Response data:', JSON.stringify(error.response.data, null, 2));
     }
     
     res.status(error.response?.status || 500).json({
@@ -140,6 +316,7 @@ app.post('/api/proxy/azure/chat/completions', async (req, res) => {
     const endpoint = req.body.azureEndpoint;
     const apiVersion = req.body.apiVersion || process.env.REACT_APP_AZURE_OPENAI_API_VERSION || '2024-02-15-preview';
     const deploymentName = req.body.deploymentName;
+    const queryId = req.body.queryId; // Extract queryId for cost tracking
     
     console.log('[DEBUG] Azure API Proxy Request:');
     console.log(`- Request URL: ${req.originalUrl}`);
@@ -147,6 +324,7 @@ app.post('/api/proxy/azure/chat/completions', async (req, res) => {
     console.log(`- Deployment name: ${deploymentName}`);
     console.log(`- API version: ${apiVersion}`);
     console.log(`- API key provided: ${apiKey ? 'Yes (length: ' + apiKey.length + ', first 5 chars: ' + apiKey.substring(0, 5) + '...)' : 'No'}`);
+    console.log(`- QueryId provided: ${queryId ? 'Yes' : 'No'}`);
     console.log(`- Request body keys: ${Object.keys(req.body).join(', ')}`);
     
     if (!apiKey) {
@@ -190,15 +368,28 @@ app.post('/api/proxy/azure/chat/completions', async (req, res) => {
       console.warn('[AZURE WARNING] Using preview model o3-mini-alpha');
     }
     
-    // Remove the API key, endpoint and other Azure-specific fields from the request body
-    const { azureApiKey, azureEndpoint, apiVersion: _, deploymentName: __, ...requestBody } = req.body;
+    // Create a clean request body by removing Azure-specific fields AND the queryId
+    // Spreading each property individually to ensure queryId is properly removed
+    const cleanRequestBody = {};
+    Object.keys(req.body).forEach(key => {
+      // Skip Azure-specific fields and queryId
+      if (
+        key !== 'azureApiKey' && 
+        key !== 'azureEndpoint' && 
+        key !== 'apiVersion' && 
+        key !== 'deploymentName' && 
+        key !== 'queryId'
+      ) {
+        cleanRequestBody[key] = req.body[key];
+      }
+    });
     
     // Log detailed request info
     console.log(`Proxying Azure OpenAI request to: ${endpoint}/openai/deployments/${deploymentName}/chat/completions?api-version=${apiVersion}`);
     console.log('Request body structure:', {
-      messagesCount: requestBody.messages?.length,
-      maxTokens: requestBody.max_tokens,
-      temperature: requestBody.temperature
+      messagesCount: cleanRequestBody.messages?.length,
+      maxTokens: cleanRequestBody.max_tokens,
+      temperature: cleanRequestBody.temperature
     });
     
     // Ensure the endpoint URL is properly formatted
@@ -213,12 +404,12 @@ app.post('/api/proxy/azure/chat/completions', async (req, res) => {
     
     // Make the request to Azure OpenAI API
     console.log(`[DEBUG] About to make Azure API request to: ${targetUrl}`);
-    console.log(`[DEBUG] Request body: ${JSON.stringify(requestBody, null, 2)}`);
+    console.log(`[DEBUG] Request body: ${JSON.stringify(cleanRequestBody, null, 2)}`);
     
     try {
       const response = await axios.post(
         targetUrl,
-        requestBody,
+        cleanRequestBody,
         {
           headers: {
             'Content-Type': 'application/json',
@@ -290,72 +481,6 @@ app.post('/api/proxy/azure/chat/completions', async (req, res) => {
   }
 });
 
-// Proxy endpoint for Anthropic API to avoid CORS issues
-app.use('/api/proxy/anthropic', createProxyMiddleware({
-  target: 'https://api.anthropic.com',
-  changeOrigin: true,
-  pathRewrite: {
-    '^/api/proxy/anthropic': '/v1/messages'
-  },
-  onProxyReq: function(proxyReq, req) {
-    if (req.method === 'POST' && req.body) {
-      const apiKey = req.body.anthropicApiKey;
-      
-      if (!apiKey) {
-        console.error('No Anthropic API key provided');
-        return;
-      }
-
-      // Add the required headers for Anthropic
-      proxyReq.setHeader('x-api-key', apiKey);
-      proxyReq.setHeader('anthropic-version', '2023-06-01');
-      proxyReq.setHeader('Content-Type', 'application/json');
-      // Add the required CORS header for direct browser access
-      proxyReq.setHeader('anthropic-dangerous-direct-browser-access', 'true');
-      
-      // Remove the API key from the body
-      const modifiedBody = { ...req.body };
-      delete modifiedBody.anthropicApiKey;
-      
-      // Log the request structure (without sensitive data)
-      console.log('Anthropic request structure:', {
-        model: modifiedBody.model,
-        hasMessages: !!modifiedBody.messages,
-        messageCount: modifiedBody.messages ? modifiedBody.messages.length : 0,
-        hasSystem: !!modifiedBody.system,
-        temperature: modifiedBody.temperature,
-        max_tokens: modifiedBody.max_tokens
-      });
-
-      const bodyData = JSON.stringify(modifiedBody);
-      proxyReq.setHeader('Content-Length', Buffer.byteLength(bodyData));
-      proxyReq.write(bodyData);
-
-      // Log request headers
-      console.log('Anthropic request headers:', {
-        'anthropic-version': proxyReq.getHeader('anthropic-version'),
-        'Content-Type': proxyReq.getHeader('Content-Type'),
-        'Content-Length': proxyReq.getHeader('Content-Length'),
-        'has-api-key': !!proxyReq.getHeader('x-api-key'),
-        'has-cors-header': !!proxyReq.getHeader('anthropic-dangerous-direct-browser-access')
-      });
-    }
-  },
-  onProxyRes: function(proxyRes) {
-    // Log response status
-    console.log('Anthropic response status:', proxyRes.statusCode);
-    
-    // Add CORS headers
-    proxyRes.headers['Access-Control-Allow-Origin'] = '*';
-    proxyRes.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS';
-    proxyRes.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, x-api-key, anthropic-version, anthropic-dangerous-direct-browser-access';
-  },
-  onError: function(err, req, res) {
-    console.error('Anthropic Proxy Error:', err);
-    res.status(500).json({ error: 'Proxy error', message: err.message });
-  }
-}));
-
 // Endpoint to list Azure OpenAI deployments
 app.post('/api/list-azure-deployments', async (req, res) => {
   try {
@@ -422,6 +547,317 @@ app.post('/api/list-azure-deployments', async (req, res) => {
   }
 });
 
+// Cost tracking API endpoints
+app.get('/api/cost-tracking-summary', (req, res) => {
+  try {
+    const summary = costTracker.getCostSummary();
+    res.json(summary);
+  } catch (error) {
+    console.error('Error getting cost summary:', error);
+    res.status(500).json({ error: 'Failed to get cost summary' });
+  }
+});
+
+// Add slash-format endpoints to match frontend expectations
+app.get('/api/cost-tracking/summary', (req, res) => {
+  try {
+    const summary = costTracker.getCostSummary();
+    res.json(summary);
+  } catch (error) {
+    console.error('Error getting cost summary:', error);
+    res.status(500).json({ error: 'Failed to get cost summary' });
+  }
+});
+
+app.get('/api/cost-tracking-export', (req, res) => {
+  try {
+    const costData = costTracker.exportCostData();
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Content-Disposition', 'attachment; filename="cost-tracking-data.json"');
+    res.json(costData);
+  } catch (error) {
+    console.error('Error exporting cost data:', error);
+    res.status(500).json({ error: 'Failed to export cost data' });
+  }
+});
+
+// Add slash-format endpoint for export
+app.get('/api/cost-tracking/export', (req, res) => {
+  try {
+    const costData = costTracker.exportCostData();
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Content-Disposition', 'attachment; filename="cost-tracking-data.json"');
+    res.json(costData);
+  } catch (error) {
+    console.error('Error exporting cost data:', error);
+    res.status(500).json({ error: 'Failed to export cost data' });
+  }
+});
+
+app.post('/api/cost-tracking-reset', (req, res) => {
+  try {
+    costTracker.resetCostData();
+    res.json({ success: true, message: 'Cost data has been reset' });
+  } catch (error) {
+    console.error('Error resetting cost data:', error);
+    res.status(500).json({ error: 'Failed to reset cost data' });
+  }
+});
+
+// Add slash-format endpoint for reset
+app.post('/api/cost-tracking/reset', (req, res) => {
+  try {
+    costTracker.resetCostData();
+    res.json({ success: true, message: 'Cost data has been reset' });
+  } catch (error) {
+    console.error('Error resetting cost data:', error);
+    res.status(500).json({ error: 'Failed to reset cost data' });
+  }
+});
+
+app.post('/api/cost-tracking-settings', (req, res) => {
+  try {
+    const { detailedLogging, embeddingPricing } = req.body;
+    
+    if (detailedLogging !== undefined) {
+      costTracker.setDetailedLogging(detailedLogging);
+    }
+    
+    if (embeddingPricing) {
+      costTracker.setEmbeddingPricing(embeddingPricing);
+    }
+    
+    res.json({ success: true, message: 'Settings updated successfully' });
+  } catch (error) {
+    console.error('Error updating cost tracking settings:', error);
+    res.status(500).json({ error: 'Failed to update settings' });
+  }
+});
+
+// Add slash-format endpoint for settings
+app.post('/api/cost-tracking/settings', (req, res) => {
+  try {
+    const { detailedLogging, embeddingPricing } = req.body;
+    
+    if (detailedLogging !== undefined) {
+      costTracker.setDetailedLogging(detailedLogging);
+    }
+    
+    if (embeddingPricing) {
+      costTracker.setEmbeddingPricing(embeddingPricing);
+    }
+    
+    res.json({ success: true, message: 'Settings updated successfully' });
+  } catch (error) {
+    console.error('Error updating cost tracking settings:', error);
+    res.status(500).json({ error: 'Failed to update settings' });
+  }
+});
+
+// Add a new endpoint to track model usage directly
+app.post('/api/cost-tracking/track-model-usage', (req, res) => {
+  try {
+    const { model, usage, operation, queryId } = req.body;
+    
+    if (!model || !usage) {
+      return res.status(400).json({ error: 'Model and usage data are required' });
+    }
+    
+    console.log(`Server tracking cost for model ${model}:`, usage);
+    
+    // Track the cost
+    const costInfo = costTracker.trackLlmCost(model, usage, operation || 'chat', queryId);
+    
+    console.log(`Server tracked cost for ${model}: $${costInfo.cost.toFixed(6)}`);
+    console.log(`Total cost accumulating: $${costTracker.getTotalCost().toFixed(6)}`);
+    
+    // Return the cost information
+    res.json(costInfo);
+  } catch (error) {
+    console.error('Error tracking model usage:', error);
+    res.status(500).json({ error: 'Failed to track model usage' });
+  }
+});
+
+// Add cost-tracking-by-period endpoint
+// ... existing code ...
+
+// Add OpenAI proxy endpoint with the expected path
+app.post('/api/proxy/openai/:endpoint(*)', async (req, res) => {
+  try {
+    const apiKey = req.body.openaiApiKey || process.env.REACT_APP_OPENAI_API_KEY;
+    const endpoint = req.params.endpoint;
+    
+    console.log(`OpenAI proxy request to endpoint: ${endpoint}`);
+    
+    if (!apiKey) {
+      console.error('No OpenAI API key provided');
+      return res.status(400).json({ error: 'OpenAI API key is required' });
+    }
+    
+    // Extract API key and queryId - don't send these to OpenAI
+    const { openaiApiKey, queryId, ...cleanRequestBody } = req.body;
+    
+    console.log(`Request to OpenAI API endpoint: ${endpoint}`);
+    console.log(`Request includes queryId for cost tracking: ${queryId ? 'yes' : 'no'}`);
+    
+    const response = await axios.post(`https://api.openai.com/v1/${endpoint}`, cleanRequestBody, {
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json'
+      }
+    });
+    
+    console.log(`OpenAI API response status: ${response.status}`);
+    
+    // Track costs if usage information is available
+    if (response.data && response.data.usage) {
+      if (endpoint.includes('embeddings')) {
+        // Handle embedding cost tracking
+        const model = response.data.model || cleanRequestBody.model;
+        const tokenCount = response.data.usage.total_tokens || 0;
+        const operation = Array.isArray(cleanRequestBody.input) && cleanRequestBody.input.length > 1 ? 'document' : 'query';
+        
+        const costInfo = costTracker.trackEmbeddingCost(model, tokenCount, operation, queryId);
+        console.log(`Cost tracked for OpenAI embedding: $${costInfo.cost.toFixed(6)}`);
+        
+        // Add cost info to response
+        response.data.cost = costInfo.cost;
+      } else {
+        // Handle LLM cost tracking
+        const model = response.data.model || cleanRequestBody.model;
+        const usage = response.data.usage;
+        
+        const costInfo = costTracker.trackLlmCost(model, usage, 'chat', queryId);
+        console.log(`Cost tracked for OpenAI API call: $${costInfo.cost.toFixed(6)}`);
+        
+        // Add cost info to response
+        response.data.cost = costInfo.cost;
+      }
+    }
+    
+    res.json(response.data);
+  } catch (error) {
+    console.error('Error proxying to OpenAI API:', error.message);
+    
+    // Log more detailed error information
+    if (error.response) {
+      console.error('Response status:', error.response.status);
+      console.error('Response data:', JSON.stringify(error.response.data, null, 2));
+    }
+    
+    res.status(error.response?.status || 500).json({
+      error: error.response?.data || { message: error.message }
+    });
+  }
+});
+
+// Add Anthropic proxy endpoint with the expected path
+app.post('/api/proxy/anthropic', async (req, res) => {
+  try {
+    // Use API key from request body or fall back to environment variable
+    const apiKey = req.body.anthropicApiKey || process.env.REACT_APP_ANTHROPIC_API_KEY;
+    
+    if (!apiKey) {
+      return res.status(400).json({ error: 'Anthropic API key is required' });
+    }
+    
+    // Extract API key and queryId from the request
+    const { anthropicApiKey, queryId, ...cleanRequestBody } = req.body;
+    
+    console.log('Proxying request to Anthropic API...');
+    console.log(`Request includes queryId for tracking: ${queryId ? 'yes' : 'no'}`);
+    
+    const response = await axios.post('https://api.anthropic.com/v1/messages', cleanRequestBody, {
+      headers: {
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'Content-Type': 'application/json'
+      }
+    });
+    
+    console.log('Received response from Anthropic API');
+    
+    // Track costs if usage information is available
+    if (response.data && response.data.usage) {
+      // Extract model and usage information
+      const model = response.data.model || cleanRequestBody.model;
+      const usage = {
+        prompt_tokens: response.data.usage.input_tokens || 0,
+        completion_tokens: response.data.usage.output_tokens || 0,
+        total_tokens: (response.data.usage.input_tokens || 0) + (response.data.usage.output_tokens || 0)
+      };
+      
+      // Track cost
+      const costInfo = costTracker.trackLlmCost(model, usage, 'chat', queryId);
+      console.log(`Cost tracked for Anthropic API call: $${costInfo.cost.toFixed(6)}`);
+      
+      // Add cost info to response
+      response.data.cost = costInfo.cost;
+    }
+    
+    res.json(response.data);
+  } catch (error) {
+    console.error('Error proxying to Anthropic API:', error.response?.data || error.message);
+    res.status(error.response?.status || 500).json({
+      error: error.response?.data || { message: error.message }
+    });
+  }
+});
+
+// Add Anthropic messages proxy endpoint
+app.post('/api/proxy/anthropic/messages', async (req, res) => {
+  try {
+    // Use API key from request body or fall back to environment variable
+    const apiKey = req.body.anthropicApiKey || process.env.REACT_APP_ANTHROPIC_API_KEY;
+    
+    if (!apiKey) {
+      return res.status(400).json({ error: 'Anthropic API key is required' });
+    }
+    
+    // Extract API key and queryId from the request
+    const { anthropicApiKey, queryId, ...cleanRequestBody } = req.body;
+    
+    console.log('Proxying request to Anthropic API (messages endpoint)...');
+    console.log(`Request includes queryId for tracking: ${queryId ? 'yes' : 'no'}`);
+    
+    const response = await axios.post('https://api.anthropic.com/v1/messages', cleanRequestBody, {
+      headers: {
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'Content-Type': 'application/json'
+      }
+    });
+    
+    console.log('Received response from Anthropic API');
+    
+    // Track costs if usage information is available
+    if (response.data && response.data.usage) {
+      // Extract model and usage information
+      const model = response.data.model || cleanRequestBody.model;
+      const usage = {
+        prompt_tokens: response.data.usage.input_tokens || 0,
+        completion_tokens: response.data.usage.output_tokens || 0,
+        total_tokens: (response.data.usage.input_tokens || 0) + (response.data.usage.output_tokens || 0)
+      };
+      
+      // Track cost
+      const costInfo = costTracker.trackLlmCost(model, usage, 'chat', queryId);
+      console.log(`Cost tracked for Anthropic API call: $${costInfo.cost.toFixed(6)}`);
+      
+      // Add cost info to response
+      response.data.cost = costInfo.cost;
+    }
+    
+    res.json(response.data);
+  } catch (error) {
+    console.error('Error proxying to Anthropic API:', error.response?.data || error.message);
+    res.status(error.response?.status || 500).json({
+      error: error.response?.data || { message: error.message }
+    });
+  }
+});
+
 // The "catchall" handler: for any request that doesn't match one above, send back the index.html file.
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'build', 'index.html'));
@@ -436,6 +872,5 @@ console.log('AZURE_OPENAI_ENDPOINT:', process.env.REACT_APP_AZURE_OPENAI_ENDPOIN
 console.log('OLLAMA_API_URL:', process.env.REACT_APP_OLLAMA_API_URL || 'Not set (using default)');
 
 app.listen(PORT, () => {
-  console.log(`Server listening on port ${PORT}`);
-  console.log(`Access the app at http://localhost:${PORT}`);
+  console.log(`Server running on port ${PORT}`);
 }); 

@@ -11,10 +11,12 @@ const safeLogger = {
 // Custom Ollama integration for local LLM inference
 class ChatOllama {
   constructor(options) {
-    this.modelName = options.modelName || 'llama3';
+    // Set default model or use the provided one
+    // The UI displays models with tags (like "llama3.2:latest"), but Ollama might need different format
+    this.modelName = options.model || options.modelName || 'llama3';
     this.temperature = options.temperature !== undefined ? options.temperature : 0;
     this.systemPrompt = options.systemPrompt || '';
-    this.endpoint = options.endpoint || 'http://localhost:11434';
+    this.endpoint = options.endpoint || options.baseUrl || 'http://localhost:11434';
     
     // Add compatibility properties
     this._modelType = () => 'ollama';
@@ -23,11 +25,37 @@ class ChatOllama {
     
     // Use safe logger
     safeLogger.log(`ChatOllama initialized with model: ${this.modelName}`);
+    safeLogger.log(`Endpoint: ${this.endpoint}`);
     safeLogger.log(`Temperature setting: ${this.temperature}`);
+    
+    // Verify if the model is available at initialization time
+    this.verifyModel();
+  }
+  
+  // Verify that the model exists in Ollama
+  async verifyModel() {
+    try {
+      // Check if model exists by querying the Ollama models list
+      const response = await axios.get(`${this.endpoint}/api/tags`);
+      const models = response.data.models || [];
+      
+      safeLogger.log(`Available Ollama models: ${models.map(m => m.name).join(', ')}`);
+      
+      const modelExists = models.some(m => m.name === this.modelName);
+      
+      if (!modelExists) {
+        safeLogger.warn(`Warning: Model "${this.modelName}" not found in Ollama. Available models: ${models.map(m => m.name).join(', ')}`);
+        safeLogger.warn(`Try running: ollama pull ${this.modelName}`);
+      }
+    } catch (error) {
+      safeLogger.error(`Failed to verify Ollama model availability: ${error.message}`);
+      // Don't throw error here, let it attempt to run first
+    }
   }
 
   async call(messages) {
     try {
+      console.log(`Calling Ollama API with model: ${this.modelName}`);
       const response = await axios.post(`${this.endpoint}/api/chat`, {
         model: this.modelName,
         messages: [
@@ -41,7 +69,18 @@ class ChatOllama {
       return response.data.message.content;
     } catch (error) {
       safeLogger.error('Error calling Ollama API:', error);
-      throw new Error(`Ollama API error: ${error.message}`);
+      
+      // Provide a more detailed error message
+      let errorMessage = `Ollama API error: ${error.message}`;
+      
+      // Check if the error is related to model not found
+      if (error.response?.data?.error?.includes('not found')) {
+        errorMessage = `Model "${this.modelName}" not found in Ollama. Please pull it first by running: ollama pull ${this.modelName}`;
+      } else if (error.code === 'ECONNREFUSED') {
+        errorMessage = `Could not connect to Ollama at ${this.endpoint}. Is Ollama running?`;
+      }
+      
+      throw new Error(errorMessage);
     }
   }
 
@@ -57,10 +96,11 @@ class ChatOllama {
 // Custom Anthropic integration to avoid CORS issues
 class CustomChatAnthropic {
   constructor(options) {
-    this.modelName = options.modelName || 'claude-3-5-sonnet-latest';
+    this.modelName = options.modelName || 'claude-3-haiku-20240307';
     this.temperature = options.temperature !== undefined ? options.temperature : 0;
     this.systemPrompt = options.systemPrompt || '';
     this.apiKey = options.anthropicApiKey;
+    this.queryId = options.queryId || null;
     
     // Use a proxy server URL if available, otherwise use the default proxy
     this.proxyUrl = process.env.REACT_APP_API_PROXY_URL || '/api/proxy/anthropic';
@@ -94,7 +134,7 @@ class CustomChatAnthropic {
       
       // Use safe logger
       safeLogger.log('Sending Anthropic request:', {
-        endpoint: `${this.proxyUrl}`,
+        endpoint: `${this.proxyUrl}/messages`,
         model: this.modelName,
         messageCount: formattedMessages.length,
         hasSystemPrompt: !!this.systemPrompt,
@@ -102,17 +142,17 @@ class CustomChatAnthropic {
       });
       
       // Use proxy endpoint to avoid CORS
-      // Note: The API endpoint should just be the base proxy URL, not with "/messages" appended
-      // The proxy server will handle the full path construction
+      // Update to include '/messages' in the URL path
       const response = await axios.post(
-        this.proxyUrl,
+        `${this.proxyUrl}/messages`,
         {
           model: this.modelName,
           messages: formattedMessages,
           system: this.systemPrompt,
           max_tokens: 1024,
           temperature: this.temperature,
-          anthropicApiKey: apiKey
+          anthropicApiKey: apiKey,
+          queryId: this.queryId
         },
         {
           headers: {
@@ -167,6 +207,7 @@ class CustomChatOpenAI {
     this.temperature = options.temperature;
     this.systemPrompt = options.systemPrompt || '';
     this.apiKey = options.openAIApiKey;
+    this.queryId = options.queryId || null;
     
     // Use a proxy server URL if available, otherwise use the default proxy
     this.proxyUrl = process.env.REACT_APP_API_PROXY_URL || '/api/proxy/openai';
@@ -240,7 +281,8 @@ class CustomChatOpenAI {
       const requestData = {
         model: this.modelName,
         messages: allMessages,
-        openaiApiKey: apiKey
+        openaiApiKey: apiKey,
+        queryId: this.queryId
       };
       
       // Handle special cases for o1 and o3 models
@@ -315,6 +357,7 @@ export class CustomAzureOpenAI {
     this.apiKey = options.azureApiKey;
     this.apiVersion = options.apiVersion;
     this.endpoint = options.azureEndpoint || '';
+    this.queryId = options.queryId || null;
     
     // Use a proxy server URL if available, otherwise use the default proxy
     this.proxyUrl = process.env.REACT_APP_API_PROXY_URL || '/api/proxy/azure';
@@ -376,7 +419,7 @@ export class CustomAzureOpenAI {
       
       // Use safe logger and also log to console for debugging
       safeLogger.log('Sending Azure OpenAI request:', {
-        endpoint: `${this.proxyUrl}/chat/completions`,
+        endpoint: `${this.proxyUrl}`,
         modelName: this.modelName,
         deploymentName: finalDeploymentName,
         messageCount: formattedMessages.length,
@@ -386,7 +429,7 @@ export class CustomAzureOpenAI {
       
       // Log detailed request info
       console.log('[DEBUG] Azure API Request Details:');
-      console.log(`- Proxy URL: ${this.proxyUrl}/chat/completions`);
+      console.log(`- Proxy URL: ${this.proxyUrl}`);
       console.log(`- Deployment Name: ${finalDeploymentName}`);
       console.log(`- Message Count: ${formattedMessages.length}`);
       console.log(`- First message role: ${formattedMessages[0]?.role}`);
@@ -400,7 +443,8 @@ export class CustomAzureOpenAI {
         azureApiKey: apiKey,
         azureEndpoint: endpoint,
         apiVersion: process.env.REACT_APP_AZURE_OPENAI_API_VERSION || '2024-02-15-preview',
-        deploymentName: finalDeploymentName
+        deploymentName: finalDeploymentName,
+        queryId: this.queryId
       };
       
       // Add temperature if specified
@@ -410,6 +454,9 @@ export class CustomAzureOpenAI {
       
       // Add max tokens
       requestData.max_tokens = 1024;
+      
+      console.log('[DEBUG] About to make Azure API request');
+      console.log(`[DEBUG] Request body: ${JSON.stringify(requestData, null, 2)}`);
       
       // Make the API call
       const response = await axios.post(
@@ -483,206 +530,80 @@ export class CustomAzureOpenAI {
  * @returns {ChatOllama|CustomChatAnthropic|CustomChatOpenAI} - The LLM instance
  */
 export const createLlmInstance = (model, systemPrompt, options = {}) => {
-  // Try to get custom model settings from localStorage
-  let customModels = {};
-  try {
-    const savedModels = localStorage.getItem('llmModels');
-    if (savedModels) {
-      customModels = JSON.parse(savedModels);
-    }
-  } catch (err) {
-    safeLogger.error('Error loading custom models from localStorage:', err);
+  if (!model) {
+    throw new Error('Model is required to create an LLM instance');
   }
-
-  // Check if this is a validation request and explicitly block o3-mini models
-  if (options.isForValidation && (model.includes('o3-mini') || model.includes('o1-mini'))) {
-    console.warn(`Detected problematic model ${model} for validation. Fallback to gpt-4o instead.`);
-    // Force switch to a reliable model for validation
-    model = 'gpt-4o';
-    // Update localStorage to prevent future issues
-    try {
-      localStorage.setItem('responseValidatorModel', model);
-    } catch (err) {
-      console.error('Error updating localStorage with reliable validator model:', err);
-    }
-  }
-
-  // Get the vendor from custom models if available
-  const vendor = customModels[model]?.vendor;
   
-  safeLogger.log(`Processing model: ${model}, vendor: ${vendor || 'not specified'}`);
+  const {
+    temperature = 0,
+    ollamaEndpoint = 'http://localhost:11434',
+    queryId = null
+  } = options;
   
-  // Detect Azure models ONLY by prefix or vendor
-  const isAzureModel = vendor === 'AzureOpenAI' || model.startsWith('azure-');
-  
-  safeLogger.log(`Model ${model} detected as Azure model: ${isAzureModel}`);
-
-  // Route to the appropriate implementation based on vendor or model prefix
-  if (isAzureModel) {
-    // Use Azure OpenAI Services
-    const azureApiKey = process.env.REACT_APP_AZURE_OPENAI_API_KEY;
-    const azureEndpoint = process.env.REACT_APP_AZURE_OPENAI_ENDPOINT;
+  // Handle Ollama models
+  if (model.startsWith('llama') || model.startsWith('mistral') || model.startsWith('gemma')) {
+    console.log(`Creating Ollama instance for model: ${model}`);
     
-    if (!azureApiKey) {
-      safeLogger.error('REACT_APP_AZURE_OPENAI_API_KEY is not set in environment variables');
-      throw new Error('Azure OpenAI API key is required. Please set REACT_APP_AZURE_OPENAI_API_KEY in your .env file.');
-    }
+    // No need to map model names as the UI names match Ollama's exactly
+    const ollamaModel = model;
     
-    if (!azureEndpoint) {
-      safeLogger.error('REACT_APP_AZURE_OPENAI_ENDPOINT is not set in environment variables');
-      throw new Error('Azure OpenAI endpoint is required. Please set REACT_APP_AZURE_OPENAI_ENDPOINT in your .env file.');
-    }
+    // Use the provided Ollama endpoint if available
+    const ollamaUrl = ollamaEndpoint || process.env.REACT_APP_OLLAMA_ENDPOINT || 'http://localhost:11434';
     
-    // Strip the "azure-" prefix for deployment name if it exists
-    let deploymentName = model.startsWith('azure-') ? model.substring(6) : model;
+    console.log(`Initializing Ollama with model: ${ollamaModel} at endpoint: ${ollamaUrl}`);
     
-    // Check if there's a custom deployment name specified in model settings
-    if (customModels[model]?.deploymentName) {
-      deploymentName = customModels[model].deploymentName;
-      safeLogger.log(`Using custom deployment name from settings: ${deploymentName}`);
-    }
-    
-    // Specific mapping for known Azure models that need different deployment names
-    const azureDeploymentMap = {
-      // Standard GPT-4 models
-      'gpt-4': 'gpt-4o',           // Map gpt-4 to gpt-4o deployment
-      'gpt-4o': 'gpt-4o',          // Direct mapping for gpt-4o
-      'gpt-4o-mini': 'gpt-4o-mini', // Direct mapping for gpt-4o-mini
-      'azure-gpt-4o-mini': 'gpt-4o-mini', // Handle azure- prefix
-      'GPT-4o-mini': 'gpt-4o-mini',        // Handle case sensitivity
-      'O3-mini': 'o3-mini'                  // Keep o3-mini as is
-    };
-    
-    // If we have a mapping for this model name, use it
-    if (azureDeploymentMap[deploymentName]) {
-      safeLogger.log(`Mapped Azure deployment name from ${deploymentName} to ${azureDeploymentMap[deploymentName]}`);
-      deploymentName = azureDeploymentMap[deploymentName];
-    }
-    
-    // Log warning if deployment name contains hyphens, as they might need formatting
-    if (deploymentName.includes('-') || deploymentName === deploymentName.toLowerCase()) {
-      console.warn('[WARNING] Azure deployment names are case-sensitive and might not use hyphens.');
-      console.warn('If you are getting 404 errors, try checking your deployment name in the Azure portal.');
-      console.warn(`Current deployment name: "${deploymentName}"`);
-      console.warn('You can use the "Check Available Azure Deployments" function in settings to see the correct deployment names.');
-    }
-    
-    safeLogger.log(`Using Azure OpenAI with model: ${model}, deployment: ${deploymentName}`);
-    safeLogger.log(`Azure endpoint: ${azureEndpoint}, API version: ${process.env.REACT_APP_AZURE_OPENAI_API_VERSION}`);
-    
-    // Log detailed info about the Azure configuration for debugging
-    console.log('[DEBUG] Azure OpenAI Configuration:');
-    console.log(`- Model: ${model}`);
-    console.log(`- Deployment Name: ${deploymentName}`);
-    console.log(`- Endpoint: ${azureEndpoint}`);
-    console.log(`- API Version: ${process.env.REACT_APP_AZURE_OPENAI_API_VERSION}`);
-    console.log(`- Temperature: ${options.temperature !== undefined ? options.temperature : 0}`);
-    console.log(`- API Key provided: ${azureApiKey ? 'Yes (length: ' + azureApiKey.length + ')' : 'No'}`);
-    console.log(`- Using custom deployment name: ${customModels[model]?.deploymentName ? 'Yes' : 'No'}`);
-    
-    return new CustomAzureOpenAI({
-      azureApiKey: azureApiKey,
-      azureEndpoint: azureEndpoint,
-      modelName: model,
-      deploymentName: deploymentName,
-      temperature: options.temperature !== undefined ? options.temperature : 0,
-      systemPrompt: systemPrompt,
-      apiVersion: process.env.REACT_APP_AZURE_OPENAI_API_VERSION
-    });
-  } else if ((vendor === 'OpenAI') || (!vendor && (model.startsWith('gpt') || model.startsWith('o1') || model.startsWith('o3')))) {
-    // Get the API key from environment variables
-    const openAIApiKey = process.env.REACT_APP_OPENAI_API_KEY;
-    
-    if (!openAIApiKey) {
-      safeLogger.error('REACT_APP_OPENAI_API_KEY is not set in environment variables');
-      throw new Error('OpenAI API key is required. Please set REACT_APP_OPENAI_API_KEY in your .env file.');
-    }
-    
-    return new CustomChatOpenAI({
-      openAIApiKey: openAIApiKey,
-      modelName: model,
-      temperature: model.startsWith('o1') ? undefined : (options.temperature !== undefined ? options.temperature : 0),
-      systemPrompt: systemPrompt
-    });
-  } else if ((vendor === 'OpenAI' || vendor === 'AzureOpenAI') && model.includes('embedding')) {
-    // For embedding models
-    if (vendor === 'AzureOpenAI' || model.startsWith('azure-')) {
-      const azureApiKey = process.env.REACT_APP_AZURE_OPENAI_API_KEY;
-      const azureEndpoint = process.env.REACT_APP_AZURE_OPENAI_ENDPOINT;
-      
-      if (!azureApiKey) {
-        safeLogger.error('REACT_APP_AZURE_OPENAI_API_KEY is not set in environment variables');
-        throw new Error('Azure OpenAI API key is required. Please set REACT_APP_AZURE_OPENAI_API_KEY in your .env file.');
-      }
-      
-      if (!azureEndpoint) {
-        safeLogger.error('REACT_APP_AZURE_OPENAI_ENDPOINT is not set in environment variables');
-        throw new Error('Azure OpenAI endpoint is required. Please set REACT_APP_AZURE_OPENAI_ENDPOINT in your .env file.');
-      }
-      
-      // Strip the "azure-" prefix for deployment name if it exists
-      const deploymentName = model.startsWith('azure-') ? model.substring(6) : model;
-      
-      // Return a special embedding handler for Azure
-      return {
-        invoke: async (text) => {
-          // Implement Azure OpenAI embedding API call
-          // This is a stub that returns a fake embedding
-          safeLogger.log(`[STUB] Using Azure OpenAI embedding model ${deploymentName} for text: ${text.substring(0, 50)}...`);
-          return {
-            text: `Embedding generated with ${deploymentName}`,
-            embedding: Array(model.includes('large') ? 3072 : 1536).fill(0).map(() => Math.random())
-          };
-        }
-      };
-    } else {
-      // Handle regular OpenAI embedding models
-      const openAIApiKey = process.env.REACT_APP_OPENAI_API_KEY;
-      
-      if (!openAIApiKey) {
-        safeLogger.error('REACT_APP_OPENAI_API_KEY is not set in environment variables');
-        throw new Error('OpenAI API key is required. Please set REACT_APP_OPENAI_API_KEY in your .env file.');
-      }
-      
-      // Return a special embedding handler
-      return {
-        invoke: async (text) => {
-          // Implement OpenAI embedding API call
-          // This is a stub that returns a fake embedding
-          safeLogger.log(`[STUB] Using OpenAI embedding model ${model} for text: ${text.substring(0, 50)}...`);
-          return {
-            text: `Embedding generated with ${model}`,
-            embedding: Array(model.includes('large') ? 3072 : 1536).fill(0).map(() => Math.random())
-          };
-        }
-      };
-    }
-  } else if ((vendor === 'Anthropic') || (!vendor && model.startsWith('claude'))) {
-    // Get the API key from environment variables
-    const anthropicApiKey = process.env.REACT_APP_ANTHROPIC_API_KEY;
-    
-    if (!anthropicApiKey) {
-      safeLogger.error('REACT_APP_ANTHROPIC_API_KEY is not set in environment variables');
-      throw new Error('Anthropic API key is required. Please set REACT_APP_ANTHROPIC_API_KEY in your .env file.');
-    }
-    
-    return new CustomChatAnthropic({
-      anthropicApiKey: anthropicApiKey,
-      modelName: model,
-      temperature: options.temperature !== undefined ? options.temperature : 0,
-      systemPrompt: systemPrompt
-    });
-  } else if ((vendor === 'Ollama') || (!vendor && (model.includes('llama') || model.includes('mistral') || model.includes('gemma')))) {
-    // For Ollama models
     return new ChatOllama({
-      modelName: model,
-      temperature: options.temperature !== undefined ? options.temperature : 0,
+      baseUrl: ollamaUrl,
+      model: ollamaModel,
+      format: 'json',
+      temperature: temperature,
       systemPrompt: systemPrompt,
-      endpoint: options.ollamaEndpoint || process.env.REACT_APP_OLLAMA_API_URL || 'http://localhost:11434'
+      queryId: queryId
     });
   }
   
-  throw new Error(`Unsupported model: ${model}`);
+  // Handle Azure OpenAI models
+  if (model.startsWith('azure-')) {
+    // Extract base model name by removing 'azure-' prefix
+    const baseModel = model.replace('azure-', '');
+    
+    // Extract configuration from env variables
+    const azureApiKey = options.azureApiKey || process.env.REACT_APP_AZURE_OPENAI_API_KEY;
+    const azureEndpoint = options.azureEndpoint || process.env.REACT_APP_AZURE_OPENAI_ENDPOINT;
+    const apiVersion = options.apiVersion || process.env.REACT_APP_AZURE_OPENAI_API_VERSION || '2023-05-15';
+    
+    // Create instance with Azure configuration
+    return new CustomAzureOpenAI({
+      azureApiKey,
+      azureEndpoint,
+      apiVersion,
+      deploymentName: options.deploymentName || baseModel,
+      model: baseModel,
+      temperature,
+      systemPrompt,
+      queryId
+    });
+  }
+  
+  // Handle Anthropic Claude models
+  if (model.startsWith('claude')) {
+    return new CustomChatAnthropic({
+      anthropicApiKey: options.anthropicApiKey || process.env.REACT_APP_ANTHROPIC_API_KEY,
+      temperature,
+      model,
+      systemPrompt,
+      queryId
+    });
+  }
+  
+  // Default to OpenAI models
+  return new CustomChatOpenAI({
+    openAIApiKey: options.openaiApiKey || process.env.REACT_APP_OPENAI_API_KEY,
+    temperature,
+    modelName: model,
+    systemPrompt,
+    queryId
+  });
 };
 
 /**

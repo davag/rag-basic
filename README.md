@@ -66,14 +66,15 @@ These tools help you:
    # Client-side environment variables
    REACT_APP_OPENAI_API_KEY=your_openai_api_key_here
    REACT_APP_ANTHROPIC_API_KEY=your_anthropic_api_key_here
-   REACT_APP_API_URL=http://localhost:3001
+   REACT_APP_API_URL=http://localhost:3002
    REACT_APP_OLLAMA_API_URL=http://localhost:11434
 
    # Server-side environment variables
    OPENAI_API_KEY=your_openai_api_key_here
    ANTHROPIC_API_KEY=your_anthropic_api_key_here
    OLLAMA_API_URL=http://localhost:11434
-   PORT=3001
+   FRONTEND_PORT=3000
+   BACKEND_PORT=3002
    ```
 
 ## Running with Docker
@@ -90,7 +91,7 @@ The application can be run using Docker Desktop for a consistent development env
    - Start the container
    - Make the application available at:
      - Frontend: http://localhost:3000
-     - Backend: http://localhost:3001
+     - Backend: http://localhost:3002
 
 3. To stop the application:
    ```
@@ -119,7 +120,7 @@ npm run dev
 
 This will start:
 - The React application on http://localhost:3000
-- The API server on http://localhost:3001
+- The API server on http://localhost:3002
 
 ### Running Separately
 
@@ -196,7 +197,7 @@ If you encounter webpack errors related to Node.js modules:
 
 If you have trouble connecting to the API:
 
-1. Make sure your server is running on the correct port (default: 3001)
+1. Make sure your server is running on the correct port (default: 3002)
 2. Check that your `.env` file contains the correct API keys
 3. Verify that the CORS settings in the server allow connections from your React app
 
