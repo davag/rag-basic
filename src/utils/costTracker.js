@@ -42,6 +42,24 @@ class CostTracker {
   }
   
   /**
+   * Normalize model name by removing date suffix
+   * @param {string} modelName - The model name that might contain a date suffix
+   * @returns {string} - Normalized model name
+   */
+  normalizeModelName(modelName) {
+    if (!modelName) return 'unknown';
+    
+    // Remove date suffix in format -YYYY-MM-DD
+    const normalizedName = modelName.replace(/-\d{4}-\d{2}-\d{2}$/, '');
+    
+    if (normalizedName !== modelName && this.detailedLogging) {
+      console.log(`Cost tracker: Normalized model name from ${modelName} to ${normalizedName}`);
+    }
+    
+    return normalizedName;
+  }
+  
+  /**
    * Track cost for an LLM API call
    * @param {string} model - The model name
    * @param {object} usage - Token usage object {promptTokens, completionTokens, total} or {prompt_tokens, completion_tokens, total_tokens}
@@ -59,12 +77,15 @@ class CostTracker {
       return { cost: 0, model: 'unknown', operation, usage: { totalTokens: 0 } };
     }
     
+    // Normalize the model name by removing any date suffix
+    const normalizedModel = this.normalizeModelName(model);
+    
     if (!usage || typeof usage !== 'object') {
-      console.warn(`Cost tracker: Missing or invalid usage data for ${model}`);
+      console.warn(`Cost tracker: Missing or invalid usage data for ${normalizedModel}`);
       
       // For Ollama models, provide a default token estimate since they don't report usage
-      if (model.includes('llama') || model.includes('mistral') || model.includes('gemma')) {
-        console.log(`Cost tracker: Creating default token estimate for Ollama model ${model}`);
+      if (normalizedModel.includes('llama') || normalizedModel.includes('mistral') || normalizedModel.includes('gemma')) {
+        console.log(`Cost tracker: Creating default token estimate for Ollama model ${normalizedModel}`);
         const defaultUsage = {
           promptTokens: 500,
           completionTokens: 500,
@@ -74,14 +95,14 @@ class CostTracker {
         
         return {
           cost: 0, // Ollama models are free for local inference
-          model,
+          model: normalizedModel,
           operation,
           usage: defaultUsage,
           queryId
         };
       }
       
-      return { cost: 0, model, operation, usage: { totalTokens: 0 } };
+      return { cost: 0, model: normalizedModel, operation, usage: { totalTokens: 0 } };
     }
     
     // Handle different usage formats with more flexibility
@@ -152,16 +173,17 @@ class CostTracker {
       }
     }
     
-    console.log(`Cost tracker: Normalized usage for ${model}:`, normalizedUsage);
+    console.log(`Cost tracker: Normalized usage for ${normalizedModel}:`, normalizedUsage);
     
     // Calculate cost based on token usage and model
-    const cost = calculateCost(model, normalizedUsage.totalTokens);
+    const cost = calculateCost(normalizedModel, normalizedUsage.totalTokens);
     
     // Create cost entry
     const timestamp = new Date();
     const costEntry = {
       timestamp,
-      model,
+      model: normalizedModel,
+      originalModel: model !== normalizedModel ? model : undefined, // Keep original model name for reference if different
       operation,
       usage: normalizedUsage,
       cost,
@@ -169,15 +191,15 @@ class CostTracker {
     };
     
     // Add to tracking data
-    if (!this.costs.llm[model]) {
-      this.costs.llm[model] = [];
+    if (!this.costs.llm[normalizedModel]) {
+      this.costs.llm[normalizedModel] = [];
     }
-    this.costs.llm[model].push(costEntry);
+    this.costs.llm[normalizedModel].push(costEntry);
     this.costs.total += cost;
     
     // Log if detailed logging is enabled
     if (this.detailedLogging) {
-      console.log(`Cost tracker: LLM operation logged - ${model}, ${operation}, $${cost.toFixed(6)}`);
+      console.log(`Cost tracker: LLM operation logged - ${normalizedModel}, ${operation}, $${cost.toFixed(6)}`);
       console.log(`Token usage: ${normalizedUsage.totalTokens} total tokens (${normalizedUsage.estimated ? 'estimated' : 'reported'})`);
     }
     
@@ -263,15 +285,18 @@ class CostTracker {
       return { cost: 0, model, operation };
     }
     
+    // Normalize the model name
+    const normalizedModel = this.normalizeModelName(model);
+    
     // Find matching model in defaultModels configuration
-    const matchedModel = this.findMatchingEmbeddingModel(model);
+    const matchedModel = this.findMatchingEmbeddingModel(normalizedModel);
     
     // Get embedding model configuration from central defaultModels
     const modelConfig = matchedModel ? defaultModels[matchedModel] : null;
     
     if (!modelConfig) {
-      console.warn(`Cost tracker: No pricing found for embedding model ${model}`);
-      return { cost: 0, model, operation };
+      console.warn(`Cost tracker: No pricing found for embedding model ${normalizedModel}`);
+      return { cost: 0, model: normalizedModel, operation };
     }
     
     // For embeddings, input and output costs are typically the same
@@ -285,7 +310,8 @@ class CostTracker {
     const timestamp = new Date();
     const costEntry = {
       timestamp,
-      model,
+      model: normalizedModel,
+      originalModel: model !== normalizedModel ? model : undefined, // Keep original model name for reference if different
       matchedModel, // Keep track of which model configuration was used
       operation,
       usage: {
@@ -296,15 +322,15 @@ class CostTracker {
     };
     
     // Add to tracking data
-    if (!this.costs.embeddings[model]) {
-      this.costs.embeddings[model] = [];
+    if (!this.costs.embeddings[normalizedModel]) {
+      this.costs.embeddings[normalizedModel] = [];
     }
-    this.costs.embeddings[model].push(costEntry);
+    this.costs.embeddings[normalizedModel].push(costEntry);
     this.costs.total += cost;
     
     // Log if detailed logging is enabled
     if (this.detailedLogging) {
-      console.log(`Cost tracker: Embedding operation logged - ${model} (matched to ${matchedModel}), ${operation}, $${cost.toFixed(6)}`);
+      console.log(`Cost tracker: Embedding operation logged - ${normalizedModel} (matched to ${matchedModel}), ${operation}, $${cost.toFixed(6)}`);
       console.log(`Used price per million tokens: $${pricePerMillion}`);
     }
     

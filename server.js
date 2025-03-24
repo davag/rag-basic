@@ -21,6 +21,20 @@ const costTracker = {
     'text-embedding-3-large': 0.00013
   },
   
+  // Normalize model name by removing date suffix
+  normalizeModelName(modelName) {
+    if (!modelName) return 'unknown';
+    
+    // Remove date suffix in format -YYYY-MM-DD
+    const normalizedName = modelName.replace(/-\d{4}-\d{2}-\d{2}$/, '');
+    
+    if (normalizedName !== modelName && this.detailedLogging) {
+      console.log(`Server cost tracker: Normalized model name from ${modelName} to ${normalizedName}`);
+    }
+    
+    return normalizedName;
+  },
+  
   trackLlmCost(model, usage, operation = 'chat', queryId = null) {
     // Log for debugging
     console.log(`Server cost tracker: ${model}, ${operation}, ${queryId || 'no-query-id'}`);
@@ -29,6 +43,9 @@ const costTracker = {
     if (!model || !usage) {
       return { cost: 0, model: model || 'unknown', operation, usage: { totalTokens: 0 } };
     }
+    
+    // Normalize the model name
+    const normalizedModel = this.normalizeModelName(model);
     
     // Normalize the usage data
     const normalizedUsage = {
@@ -46,25 +63,25 @@ const costTracker = {
     // Calculate cost based on the model and token count
     // Simple pricing model for demonstration
     let cost = 0;
-    if (model.includes('gpt-4')) {
+    if (normalizedModel.includes('gpt-4')) {
       // GPT-4 pricing estimate
       cost = (normalizedUsage.promptTokens * 0.00003) + (normalizedUsage.completionTokens * 0.00006);
-    } else if (model.includes('gpt-3.5')) {
+    } else if (normalizedModel.includes('gpt-3.5')) {
       // GPT-3.5 pricing estimate
       cost = (normalizedUsage.promptTokens * 0.000005) + (normalizedUsage.completionTokens * 0.000015);
-    } else if (model.includes('claude-3-5')) {
+    } else if (normalizedModel.includes('claude-3-5')) {
       // Claude 3.5 Sonnet pricing estimate
       cost = normalizedUsage.totalTokens * 0.000009;
-    } else if (model.includes('claude-3-opus')) {
+    } else if (normalizedModel.includes('claude-3-opus')) {
       // Claude 3 Opus pricing estimate
       cost = normalizedUsage.totalTokens * 0.00015;
-    } else if (model.includes('claude-3-haiku')) {
+    } else if (normalizedModel.includes('claude-3-haiku')) {
       // Claude 3 Haiku pricing estimate
       cost = normalizedUsage.totalTokens * 0.00025;
-    } else if (model.includes('claude-2')) {
+    } else if (normalizedModel.includes('claude-2')) {
       // Claude 2 pricing estimate
       cost = normalizedUsage.totalTokens * 0.00008;
-    } else if (model.includes('mistral') || model.includes('llama') || model.includes('gemma')) {
+    } else if (normalizedModel.includes('mistral') || normalizedModel.includes('llama') || normalizedModel.includes('gemma')) {
       // Local models are free
       cost = 0;
     } else {
@@ -73,43 +90,47 @@ const costTracker = {
     }
     
     // Store the cost data
-    if (!this.costs.llm[model]) {
-      this.costs.llm[model] = [];
+    if (!this.costs.llm[normalizedModel]) {
+      this.costs.llm[normalizedModel] = [];
     }
     
     const timestamp = new Date();
     const costEntry = {
       timestamp,
-      model,
+      model: normalizedModel,
+      originalModel: model !== normalizedModel ? model : undefined, // Keep original model name for reference if different
       operation,
       usage: normalizedUsage,
       cost,
       queryId
     };
     
-    this.costs.llm[model].push(costEntry);
+    this.costs.llm[normalizedModel].push(costEntry);
     this.costs.total += cost;
     
-    console.log(`Cost calculated for ${model}: $${cost.toFixed(6)}`);
+    console.log(`Cost calculated for ${normalizedModel}: $${cost.toFixed(6)}`);
     console.log(`Total accumulated cost: $${this.costs.total.toFixed(6)}`);
     
     return costEntry;
   },
   
   trackEmbeddingCost(model, tokenCount, operation = 'document', queryId = null) {
+    // Normalize the model name
+    const normalizedModel = this.normalizeModelName(model);
+    
     // Get pricing for the model
     let costPerToken;
     
-    if (model.includes('large') || model.includes('text-embedding-3-large')) {
+    if (normalizedModel.includes('large') || normalizedModel.includes('text-embedding-3-large')) {
       // text-embedding-3-large pricing
       costPerToken = 0.00013 / 1000000; // $0.00013 per 1M tokens
-    } else if (model.includes('small') || model.includes('text-embedding-3-small')) {
+    } else if (normalizedModel.includes('small') || normalizedModel.includes('text-embedding-3-small')) {
       // text-embedding-3-small pricing
       costPerToken = 0.00002 / 1000000; // $0.00002 per 1M tokens 
-    } else if (model.includes('ada') || model.includes('text-embedding-ada')) {
+    } else if (normalizedModel.includes('ada') || normalizedModel.includes('text-embedding-ada')) {
       // text-embedding-ada-002 pricing
       costPerToken = 0.0001 / 1000000; // $0.0001 per 1M tokens
-    } else if (model.includes('ollama')) {
+    } else if (normalizedModel.includes('ollama')) {
       // Ollama models are free for local inference
       costPerToken = 0;
     } else {
@@ -124,7 +145,8 @@ const costTracker = {
     const timestamp = new Date();
     const costEntry = {
       timestamp,
-      model,
+      model: normalizedModel,
+      originalModel: model !== normalizedModel ? model : undefined, // Keep original model name for reference if different
       operation,
       usage: {
         tokenCount
@@ -134,15 +156,15 @@ const costTracker = {
     };
     
     // Store the embedding cost data by model
-    if (!this.costs.embeddings[model]) {
-      this.costs.embeddings[model] = [];
+    if (!this.costs.embeddings[normalizedModel]) {
+      this.costs.embeddings[normalizedModel] = [];
     }
-    this.costs.embeddings[model].push(costEntry);
+    this.costs.embeddings[normalizedModel].push(costEntry);
     
     // Add to total cost
     this.costs.total += cost;
     
-    console.log(`Embedding cost calculated for ${model}: $${cost.toFixed(6)} (${tokenCount} tokens)`);
+    console.log(`Embedding cost calculated for ${normalizedModel}: $${cost.toFixed(6)} (${tokenCount} tokens)`);
     console.log(`Total accumulated cost: $${this.costs.total.toFixed(6)}`);
     
     return costEntry;
@@ -249,11 +271,86 @@ const costTracker = {
   },
   
   setEmbeddingPricing(pricingData) {
-    this.embeddingPricing = {
-      ...this.embeddingPricing,
-      ...pricingData
+    if (pricingData && typeof pricingData === 'object') {
+      this.embeddingPricing = { ...this.embeddingPricing, ...pricingData };
+      console.log('Updated embedding pricing:', this.embeddingPricing);
+    }
+  },
+  
+  // Migrate existing cost data by normalizing model names
+  migrateExistingCostData() {
+    console.log('Starting migration of existing cost data with model normalization...');
+    
+    // Create normalized cost structure
+    const migratedCosts = {
+      llm: {},
+      embeddings: {},
+      total: 0
     };
-    console.log('Updated embedding pricing:', this.embeddingPricing);
+    
+    // Migrate LLM costs
+    let totalCost = 0;
+    for (const modelName in this.costs.llm) {
+      const normalizedName = this.normalizeModelName(modelName);
+      
+      // If model name changed, log it
+      if (normalizedName !== modelName) {
+        console.log(`Migrating LLM model data from ${modelName} to ${normalizedName}`);
+      }
+      
+      // Initialize array for normalized model if needed
+      if (!migratedCosts.llm[normalizedName]) {
+        migratedCosts.llm[normalizedName] = [];
+      }
+      
+      // Copy entries with normalized model name
+      for (const entry of this.costs.llm[modelName]) {
+        const updatedEntry = {
+          ...entry,
+          model: normalizedName,
+          originalModel: modelName !== normalizedName ? modelName : undefined
+        };
+        
+        migratedCosts.llm[normalizedName].push(updatedEntry);
+        totalCost += entry.cost;
+      }
+    }
+    
+    // Migrate embedding costs
+    for (const modelName in this.costs.embeddings) {
+      const normalizedName = this.normalizeModelName(modelName);
+      
+      // If model name changed, log it
+      if (normalizedName !== modelName) {
+        console.log(`Migrating embedding model data from ${modelName} to ${normalizedName}`);
+      }
+      
+      // Initialize array for normalized model if needed
+      if (!migratedCosts.embeddings[normalizedName]) {
+        migratedCosts.embeddings[normalizedName] = [];
+      }
+      
+      // Copy entries with normalized model name
+      for (const entry of this.costs.embeddings[modelName]) {
+        const updatedEntry = {
+          ...entry,
+          model: normalizedName,
+          originalModel: modelName !== normalizedName ? modelName : undefined
+        };
+        
+        migratedCosts.embeddings[normalizedName].push(updatedEntry);
+        totalCost += entry.cost;
+      }
+    }
+    
+    // Update the costs data
+    this.costs = migratedCosts;
+    this.costs.total = totalCost;
+    
+    console.log(`Migration complete. Data now has ${Object.keys(this.costs.llm).length} LLM models and ${Object.keys(this.costs.embeddings).length} embedding models.`);
+    console.log(`Total cost: $${this.costs.total.toFixed(6)}`);
+    
+    return true;
   },
   
   getTotalCost() {
@@ -1105,6 +1202,26 @@ console.log('AZURE_OPENAI_API_KEY:', process.env.REACT_APP_AZURE_OPENAI_API_KEY 
 console.log('AZURE_OPENAI_ENDPOINT:', process.env.REACT_APP_AZURE_OPENAI_ENDPOINT ? 'Set' : 'Not set');
 console.log('OLLAMA_API_URL:', process.env.REACT_APP_OLLAMA_API_URL || 'Not set (using default)');
 
+// Add endpoint to trigger cost data migration
+app.post('/api/cost-tracking/migrate', (req, res) => {
+  try {
+    costTracker.migrateExistingCostData();
+    res.json({ success: true, message: 'Cost data migration completed successfully' });
+  } catch (error) {
+    console.error('Error migrating cost data:', error);
+    res.status(500).json({ error: 'Failed to migrate cost data' });
+  }
+});
+
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
+  
+  // Run cost data migration once on server startup
+  console.log('Running initial cost data migration to normalize model names...');
+  try {
+    costTracker.migrateExistingCostData();
+    console.log('Initial cost data migration completed successfully');
+  } catch (error) {
+    console.error('Error during initial cost data migration:', error);
+  }
 }); 

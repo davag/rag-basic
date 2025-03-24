@@ -278,6 +278,23 @@ const CostTrackingDashboard = () => {
     return total;
   };
   
+  // Calculate costs by operation type for filtered data
+  const getFilteredCostsByOperation = () => {
+    const { llm, embeddings } = getFilteredData();
+    const result = {
+      llm: 0,
+      embeddings: 0
+    };
+    
+    // Sum up LLM costs
+    llm.forEach(entry => { result.llm += Number(entry.cost) || 0 });
+    
+    // Sum up embedding costs
+    embeddings.forEach(entry => { result.embeddings += Number(entry.cost) || 0 });
+    
+    return result;
+  };
+  
   // Save settings
   const saveSettings = async () => {
     try {
@@ -362,15 +379,15 @@ const CostTrackingDashboard = () => {
   
   // Get chart data for cost by operation
   const getCostByOperationChartData = () => {
-    // Ensure costsByOperation exists and is an object
-    const costsByOperation = costData.costsByOperation || {};
+    // Use filtered costs by operation
+    const filteredCosts = getFilteredCostsByOperation();
     
     return {
-      labels: Object.keys(costsByOperation),
+      labels: Object.keys(filteredCosts),
       datasets: [
         {
           label: 'Cost by Operation',
-          data: Object.values(costsByOperation),
+          data: Object.values(filteredCosts),
           backgroundColor: [
             'rgba(54, 162, 235, 0.6)',
             'rgba(255, 99, 132, 0.6)',
@@ -561,10 +578,10 @@ const CostTrackingDashboard = () => {
               <CardContent>
                 <Typography variant="subtitle2" color="textSecondary">LLM Calls Cost</Typography>
                 <Typography variant="h4" sx={{ mt: 2, mb: 1 }}>
-                  {isLoading ? 'Loading...' : formatCurrency(costData.costsByOperation?.llm || 0)}
+                  {isLoading ? 'Loading...' : formatCurrency(getFilteredCostsByOperation().llm)}
                 </Typography>
                 <Typography variant="body2" color="textSecondary">
-                  {isLoading ? '...' : `${(costData.llm || []).length} operations tracked`}
+                  {isLoading ? '...' : `${(getFilteredData().llm || []).length} operations tracked`}
                 </Typography>
               </CardContent>
             </Card>
@@ -575,10 +592,10 @@ const CostTrackingDashboard = () => {
               <CardContent>
                 <Typography variant="subtitle2" color="textSecondary">Embeddings Cost</Typography>
                 <Typography variant="h4" sx={{ mt: 2, mb: 1 }}>
-                  {isLoading ? 'Loading...' : formatCurrency(costData.costsByOperation?.embeddings || 0)}
+                  {isLoading ? 'Loading...' : formatCurrency(getFilteredCostsByOperation().embeddings)}
                 </Typography>
                 <Typography variant="body2" color="textSecondary">
-                  {isLoading ? '...' : `${(costData.embeddings || []).length} operations tracked`}
+                  {isLoading ? '...' : `${(getFilteredData().embeddings || []).length} operations tracked`}
                 </Typography>
               </CardContent>
             </Card>
@@ -787,13 +804,6 @@ const CostTrackingDashboard = () => {
           <Button onClick={confirmResetData} variant="contained" color="error">Reset</Button>
         </DialogActions>
       </Dialog>
-      
-      {/* Debug Information */}
-      <Box sx={{ marginBottom: 2, padding: 2, backgroundColor: '#f5f5f5', borderRadius: 1 }}>
-        <Typography variant="h6">Debug Information</Typography>
-        <Typography variant="body2">Total Cost: ${costData?.totalCost?.toFixed(6) || '0.000000'}</Typography>
-        <Typography variant="body2">Raw Data: {JSON.stringify(costData || {}, null, 2)}</Typography>
-      </Box>
     </Box>
   );
 };
