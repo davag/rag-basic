@@ -87,14 +87,16 @@ const VectorStoreConfig = ({
   const [helpExpanded, setHelpExpanded] = useState(false);
 
   // Settings for endpoints
-  const [ollamaBaseUrl, setOllamaBaseUrl] = useState(
+  const [ollamaBaseUrl] = useState(
     localStorage.getItem('ollamaEndpoint') || 
     process.env.REACT_APP_OLLAMA_API_URL || 
     'http://localhost:11434'
   );
-  const [azureApiKey, setAzureApiKey] = useState(process.env.REACT_APP_AZURE_OPENAI_API_KEY || '');
-  const [azureEndpoint, setAzureEndpoint] = useState(process.env.REACT_APP_AZURE_OPENAI_ENDPOINT || '');
-  const [apiVersion, setApiVersion] = useState(process.env.REACT_APP_AZURE_OPENAI_API_VERSION || '2023-05-15');
+  // The following states are defined but not currently used 
+  // They're kept for future implementation of advanced configuration options
+  const [azureApiKey] = useState(process.env.REACT_APP_AZURE_OPENAI_API_KEY || '');
+  const [azureEndpoint] = useState(process.env.REACT_APP_AZURE_OPENAI_ENDPOINT || '');
+  const [apiVersion] = useState(process.env.REACT_APP_AZURE_OPENAI_API_VERSION || '2023-05-15');
   
   // Get Azure deployment name from the embeddingModel
   const getDeploymentName = () => {

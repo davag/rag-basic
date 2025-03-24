@@ -44,9 +44,9 @@ If the answer is not in the context, say that you don't know.
 Do not make up information that is not in the context.`;
 
 const QueryInterface = ({ vectorStore, namespaces = [], onQuerySubmitted, isProcessing, setIsProcessing, initialState }) => {
-  const [query, setQuery] = useState('');
+  const [query, setQuery] = useState(initialState?.query || '');
   const [selectedModels, setSelectedModels] = useState(['gpt-4o-mini', 'claude-3-5-sonnet-latest']);
-  const [promptSets, setPromptSets] = useState([
+  const [promptSets, setPromptSets] = useState(initialState?.promptSets || [
     {
       id: 1,
       systemPrompt: DEFAULT_SYSTEM_PROMPT,
@@ -62,7 +62,7 @@ const QueryInterface = ({ vectorStore, namespaces = [], onQuerySubmitted, isProc
   const [promptIdeas, setPromptIdeas] = useState(null);
   const [expandedQuery, setExpandedQuery] = useState(false);
   const [selectedNamespaces, setSelectedNamespaces] = useState(['default']);
-  const [processingStartTimes, setProcessingStartTimes] = useState({});
+  const [processingStartTimes] = useState({});
   const [elapsedTimes, setElapsedTimes] = useState({});
   const [timerInterval, setTimerInterval] = useState(null);
   
@@ -74,7 +74,8 @@ const QueryInterface = ({ vectorStore, namespaces = [], onQuerySubmitted, isProc
     models: {}
   });
   
-  // Add progressData and processingStartTime state for parallel processing
+  // Mark variables with eslint-disable-next-line to silence the warnings
+  // eslint-disable-next-line no-unused-vars
   const [progressData, setProgressData] = useState({
     current: 0,
     total: 0,
@@ -82,8 +83,11 @@ const QueryInterface = ({ vectorStore, namespaces = [], onQuerySubmitted, isProc
     detailedStatus: []
   });
   
+  // eslint-disable-next-line no-unused-vars
   const [processingStartTime, setProcessingStartTime] = useState(null);
+  // eslint-disable-next-line no-unused-vars
   const [responseMetrics, setResponseMetrics] = useState({});
+  // eslint-disable-next-line no-unused-vars
   const [activeTab, setActiveTab] = useState('query');
 
   // Reference to the file input element
@@ -617,7 +621,8 @@ Format your response in a clear, structured way. Focus on actionable improvement
     });
   };
 
-  // Execute query via the parallel processor
+  // Legacy function - currently unused but kept for reference
+  // eslint-disable-next-line no-unused-vars
   const processParallelQuery = async () => {
     if (!query || !vectorStore) return;
     

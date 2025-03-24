@@ -744,7 +744,10 @@ const EmbeddingQualityAnalysis = ({
       // Update eigenvalue and normalize vector
       const normalizedVector = normalize(newVector);
       vector = normalizedVector;
-      eigenvalue = newVector.reduce((sum, x, i) => sum + x * vector[i], 0);
+      
+      // Store current vector in a local constant before using it in the reduce function
+      const currentVector = vector;
+      eigenvalue = newVector.reduce((sum, x, i) => sum + x * currentVector[i], 0);
     }
     
     return {

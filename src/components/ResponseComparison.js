@@ -941,7 +941,7 @@ const ResponseComparison = ({
   };
 
   // Extract models and metadata
-  const { models, metadata } = separateModelsAndMetadata(responses);
+  const { models } = separateModelsAndMetadata(responses);
 
   return (
     <Box>

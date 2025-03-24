@@ -39,140 +39,79 @@ import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import ErrorIcon from '@mui/icons-material/Error';
 import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
 import { createLlmInstance, CustomAzureOpenAI } from '../utils/apiServices';
+import {
+  defaultModels,
+  defaultSettings,
+  vendorColors,
+} from '../config/llmConfig';
 import axios from 'axios';
 
 const LlmSettings = ({ showAppSettingsOnly = false }) => {
-  // Get model pricing info from the utility
-  const [models, setModels] = useState({
-    // OpenAI models
-    'gpt-4o': {
-      vendor: 'OpenAI',
-      input: 2.5,
-      output: 10,
-      active: true,
-      description: 'Most capable GPT-4 model optimized for chat at a lower price.'
-    },
-    'gpt-4o-mini': {
-      vendor: 'OpenAI',
-      input: 0.150,
-      output: 0.600,
-      active: true,
-      description: 'Affordable GPT-4 class model for everyday use.'
-    },
-    'o3-mini': {
-      vendor: 'OpenAI',
-      input: 1.10,
-      output: 4.40,
-      active: true,
-      description: 'OpenAI\'s newest model with improved reasoning capabilities.'
-    },
-    
-    // Azure OpenAI models
-    'azure-gpt-4o': {
-      vendor: 'AzureOpenAI',
-      input: 0.03,
-      output: 0.06,
-      active: true,
-      description: 'Azure-hosted GPT-4o - optimized version of GPT-4.',
-      deploymentName: 'gpt-4o'
-    },
-    'azure-gpt-4o-mini': {
-      vendor: 'AzureOpenAI',
-      input: 0.15,
-      output: 0.60,
-      active: true,
-      description: 'Azure-hosted GPT-4o-mini - affordable, faster version of GPT-4o.',
-      deploymentName: 'gpt-4o-mini'
-    },
-    'azure-o3-mini': {
-      vendor: 'AzureOpenAI',
-      input: 1.10,
-      output: 4.40,
-      active: true,
-      description: 'Azure-hosted o3-mini - newest model with improved reasoning capabilities.',
-      deploymentName: 'gpt-4o-mini'
-    },
-    
-    // Azure OpenAI embedding models
-    'azure-text-embedding-3-small': {
-      vendor: 'AzureOpenAI',
-      input: 0.00002,
-      output: 0.00002,
-      active: true,
-      description: 'Azure-hosted text-embedding-3-small - optimized for general text with good performance and cost efficiency.',
-      deploymentName: 'text-embedding-3-small'
-    },
-    'azure-text-embedding-3-large': {
-      vendor: 'AzureOpenAI',
-      input: 0.00013,
-      output: 0.00013,
-      active: true,
-      description: 'Azure-hosted text-embedding-3-large - better for complex technical content and longer context.',
-      deploymentName: 'text-embedding-3-large'
-    },
-    
-    // Anthropic models
-    'claude-3-5-sonnet-latest': {
-      vendor: 'Anthropic',
-      input: 0.003,
-      output: 0.015,
-      active: true,
-      description: 'Fast and cost-effective Claude model with excellent performance.'
-    },
-    'claude-3-7-sonnet-latest': {
-      vendor: 'Anthropic',
-      input: 0.015,
-      output: 0.075,
-      active: true,
-      description: 'Anthropic\'s most advanced Claude model with exceptional reasoning capabilities.'
-    },
-    
-    // Ollama models (free for local inference)
-    'llama3.2:latest': {
-      vendor: 'Ollama',
-      input: 0,
-      output: 0,
-      active: true,
-      description: 'Open source Llama 3 (8B) model for local inference via Ollama.'
-    },
-    'gemma3:12b': {
-      vendor: 'Ollama',
-      input: 0,
-      output: 0,
-      active: true,
-      description: 'Open source Gemma 3 (12B) model for local inference via Ollama.'
-    },
-    'mistral:latest': {
-      vendor: 'Ollama',
-      input: 0,
-      output: 0,
-      active: true,
-      description: 'Open source Mistral (7B) model for local inference via Ollama.'
+  // Load models from the configuration
+  const [models, setModels] = useState(defaultModels);
+  
+  const [testResults, setTestResults] = useState({});
+  const [ollamaEndpoint, setOllamaEndpoint] = useState(defaultSettings.ollamaEndpoint);
+  const [promptAdvisorModel, setPromptAdvisorModel] = useState(defaultSettings.promptAdvisorModel);
+  const [responseValidatorModel, setResponseValidatorModel] = useState(defaultSettings.responseValidatorModel);
+  const [defaultEvaluationCriteria, setDefaultEvaluationCriteria] = useState(defaultSettings.defaultEvaluationCriteria);
+  const [defaultQueryTemplate, setDefaultQueryTemplate] = useState('');
+  const [useParallelProcessing, setUseParallelProcessing] = useState(defaultSettings.useParallelProcessing);
+  // eslint-disable-next-line no-unused-vars
+  const [isEmbeddingEnabled, setIsEmbeddingEnabled] = useState(defaultSettings.embeddingEnabled);
+  
+  // State for API keys
+  // eslint-disable-next-line no-unused-vars
+  const [openaiKey, setOpenaiKey] = useState('');
+  // eslint-disable-next-line no-unused-vars
+  const [anthropicKey, setAnthropicKey] = useState('');
+  // eslint-disable-next-line no-unused-vars
+  const [azureOpenAIKey, setAzureOpenAIKey] = useState('');
+  // eslint-disable-next-line no-unused-vars
+  const [azureOpenAIEndpoint, setAzureOpenAIEndpoint] = useState('');
+  // eslint-disable-next-line no-unused-vars
+  const [googleAIKey, setGoogleAIKey] = useState('');
+  
+  // State for API key visibility
+  // eslint-disable-next-line no-unused-vars
+  const [showOpenAIKey, setShowOpenAIKey] = useState(false);
+  // eslint-disable-next-line no-unused-vars
+  const [showAnthropicKey, setShowAnthropicKey] = useState(false);
+  // eslint-disable-next-line no-unused-vars
+  const [showAzureKey, setShowAzureKey] = useState(false);
+  // eslint-disable-next-line no-unused-vars
+  const [showGoogleAIKey, setShowGoogleAIKey] = useState(false);
+  
+  // State for testing connection
+  // eslint-disable-next-line no-unused-vars
+  const [isTestingConnection, setIsTestingConnection] = useState(false);
+  // eslint-disable-next-line no-unused-vars
+  const [currentModelBeingTested, setCurrentModelBeingTested] = useState('');
+  
+  // State for model dialog
+  const [showModelDialog, setShowModelDialog] = useState(false);
+  const [editingModel, setEditingModel] = useState(null);
+  const [editModelData, setEditModelData] = useState({
+    modelId: '',
+    name: '',
+    vendor: '',
+    maxTokens: 4096,
+    contextLength: 8192,
+    inputPrice: 0,
+    outputPrice: 0,
+    capabilities: {
+      chat: true,
+      images: false,
+      vision: false,
+      json: false
     }
   });
-
-  const [testResults, setTestResults] = useState({});
-  const [ollamaEndpoint, setOllamaEndpoint] = useState(process.env.REACT_APP_OLLAMA_API_URL || 'http://localhost:11434');
-  const [promptAdvisorModel, setPromptAdvisorModel] = useState('gpt-4o-mini'); // Default advisor model
-  const [responseValidatorModel, setResponseValidatorModel] = useState('gpt-4o-mini'); // Default validator model
-  const [defaultEvaluationCriteria, setDefaultEvaluationCriteria] = useState(
-    'Accuracy: Does the response correctly answer the query based on the provided context?\n' +
-    'Completeness: Does the response address all aspects of the query?\n' +
-    'Relevance: Is the information in the response relevant to the query?\n' +
-    'Conciseness: Is the response appropriately concise without omitting important information?\n' +
-    'Clarity: Is the response clear, well-structured, and easy to understand?\n' +
-    'Exception handling: Only if the output is code then check exceptions paths'
-  );
-  const [defaultQueryTemplate, setDefaultQueryTemplate] = useState('');
-  const [useParallelProcessing, setUseParallelProcessing] = useState(true);
-
-  const vendorColors = {
-    'OpenAI': '#10a37f',    // Green
-    'AzureOpenAI': '#0078d4',  // Add Azure OpenAI with Microsoft blue color
-    'Anthropic': '#5436da',  // Purple
-    'Ollama': '#ff6b6b',     // Red
-    'Other': '#888888'       // Gray
-  };
+  
+  // State for Azure deployments dialog
+  const [azureDeployments, setAzureDeployments] = useState([]);
+  const [showDeploymentDialog, setShowDeploymentDialog] = useState(false);
+  const [errorMessage, setErrorMessage] = useState('');
+  const [showError, setShowError] = useState(false);
 
   // Load parallel processing preference from localStorage on mount
   useEffect(() => {
@@ -329,142 +268,94 @@ const LlmSettings = ({ showAppSettingsOnly = false }) => {
     }
   };
 
-  // Reset to default models
-  const handleResetToDefaults = () => {
-    const defaultModels = {
-      // OpenAI models
-      'gpt-4o': {
-        vendor: 'OpenAI',
-        input: 0.00465,
-        output: 0.01395,
-        active: true,
-        description: 'Most capable GPT-4 model optimized for chat at a lower price.'
-      },
-      'gpt-4o-mini': {
-        vendor: 'OpenAI',
-        input: 0.0015,
-        output: 0.006,
-        active: true,
-        description: 'Affordable GPT-4 class model for everyday use.'
-      },
-      'o3-mini': {
-        vendor: 'OpenAI',
-        input: 0.0015,
-        output: 0.006,
-        active: true,
-        description: 'OpenAI\'s newest model with improved reasoning capabilities.'
-      },
-      
-      // Azure OpenAI models
-      'azure-gpt-4o': {
-        vendor: 'AzureOpenAI',
-        input: 0.03,
-        output: 0.06,
-        active: true,
-        description: 'Azure-hosted GPT-4o - optimized version of GPT-4.',
-        deploymentName: 'gpt-4o'
-      },
-      'azure-gpt-4o-mini': {
-        vendor: 'AzureOpenAI',
-        input: 0.15,
-        output: 0.60,
-        active: true,
-        description: 'Azure-hosted GPT-4o-mini - affordable, faster version of GPT-4o.',
-        deploymentName: 'gpt-4o-mini'
-      },
-      'azure-o3-mini': {
-        vendor: 'AzureOpenAI',
-        input: 1.10,
-        output: 4.40,
-        active: true,
-        description: 'Azure-hosted o3-mini - newest model with improved reasoning capabilities.',
-        deploymentName: 'gpt-4o-mini'
-      },
-      
-      // Azure OpenAI embedding models
-      'azure-text-embedding-3-small': {
-        vendor: 'AzureOpenAI',
-        input: 0.0001,
-        output: 0.0001,
-        active: true,
-        description: 'Azure-hosted text-embedding-3-small - optimized for general text with good performance and cost efficiency.',
-        deploymentName: 'text-embedding-3-small'
-      },
-      'azure-text-embedding-3-large': {
-        vendor: 'AzureOpenAI',
-        input: 0.00013,
-        output: 0.00013,
-        active: true,
-        description: 'Azure-hosted text-embedding-3-large - better for complex technical content and longer context.',
-        deploymentName: 'text-embedding-3-large'
-      },
-      
-      // Anthropic models
-      'claude-3-5-sonnet-latest': {
-        vendor: 'Anthropic',
-        input: 0.003,
-        output: 0.015,
-        active: true,
-        description: 'Fast and cost-effective Claude model with excellent performance.'
-      },
-      'claude-3-7-sonnet-latest': {
-        vendor: 'Anthropic',
-        input: 0.015,
-        output: 0.075,
-        active: true,
-        description: 'Anthropic\'s most advanced Claude model with exceptional reasoning capabilities.'
-      },
-      
-      // Ollama models
-      'llama3.2:latest': {
-        vendor: 'Ollama',
-        input: 0,
-        output: 0,
-        active: true,
-        description: 'Open source Llama 3 (8B) model for local inference via Ollama.'
-      },
-      'gemma3:12b': {
-        vendor: 'Ollama',
-        input: 0,
-        output: 0,
-        active: true,
-        description: 'Open source Gemma 3 (12B) model for local inference via Ollama.'
-      },
-      'mistral:latest': {
-        vendor: 'Ollama',
-        input: 0,
-        output: 0,
-        active: true,
-        description: 'Open source Mistral (7B) model for local inference via Ollama.'
+  // Load models from localStorage on component mount
+  useEffect(() => {
+    const savedModels = localStorage.getItem('llmModels');
+    if (savedModels) {
+      try {
+        setModels(JSON.parse(savedModels));
+      } catch (err) {
+        console.error('Error parsing saved models:', err);
+        setModels(defaultModels);
       }
-    };
+    } else {
+      setModels(defaultModels);
+    }
     
-    // Reset all settings to defaults
+    // Load Ollama endpoint from localStorage
+    const savedOllamaEndpoint = localStorage.getItem('ollamaEndpoint');
+    if (savedOllamaEndpoint) {
+      setOllamaEndpoint(savedOllamaEndpoint);
+    }
+    
+    // Load other settings
+    const savedPromptAdvisorModel = localStorage.getItem('promptAdvisorModel');
+    if (savedPromptAdvisorModel) {
+      setPromptAdvisorModel(savedPromptAdvisorModel);
+    }
+    
+    const savedResponseValidatorModel = localStorage.getItem('responseValidatorModel');
+    if (savedResponseValidatorModel) {
+      setResponseValidatorModel(savedResponseValidatorModel);
+    }
+    
+    const savedDefaultEvaluationCriteria = localStorage.getItem('defaultEvaluationCriteria');
+    if (savedDefaultEvaluationCriteria) {
+      setDefaultEvaluationCriteria(savedDefaultEvaluationCriteria);
+    }
+    
+    const savedDefaultQueryTemplate = localStorage.getItem('defaultQueryTemplate');
+    if (savedDefaultQueryTemplate) {
+      setDefaultQueryTemplate(savedDefaultQueryTemplate);
+    }
+  }, []);
+  
+  // Save models to localStorage whenever they change
+  useEffect(() => {
+    localStorage.setItem('llmModels', JSON.stringify(models));
+  }, [models]);
+  
+  // Save Ollama endpoint to localStorage whenever it changes
+  useEffect(() => {
+    localStorage.setItem('ollamaEndpoint', ollamaEndpoint);
+  }, [ollamaEndpoint]);
+  
+  // Save other settings to localStorage whenever they change
+  useEffect(() => {
+    localStorage.setItem('promptAdvisorModel', promptAdvisorModel);
+  }, [promptAdvisorModel]);
+  
+  useEffect(() => {
+    localStorage.setItem('responseValidatorModel', responseValidatorModel);
+  }, [responseValidatorModel]);
+  
+  useEffect(() => {
+    localStorage.setItem('defaultEvaluationCriteria', defaultEvaluationCriteria);
+  }, [defaultEvaluationCriteria]);
+  
+  useEffect(() => {
+    localStorage.setItem('defaultQueryTemplate', defaultQueryTemplate);
+  }, [defaultQueryTemplate]);
+
+  const handleResetToDefaults = () => {
+    console.log('Resetting all LLM settings to defaults');
     setModels(defaultModels);
-    localStorage.removeItem('llmModels');
+    setOllamaEndpoint(defaultSettings.ollamaEndpoint);
+    setPromptAdvisorModel(defaultSettings.promptAdvisorModel);
+    setResponseValidatorModel(defaultSettings.responseValidatorModel);
+    setDefaultEvaluationCriteria(defaultSettings.defaultEvaluationCriteria);
+    setUseParallelProcessing(defaultSettings.useParallelProcessing);
+    
+    // Update in localStorage
     localStorage.setItem('llmModels', JSON.stringify(defaultModels));
+    localStorage.setItem('ollamaEndpoint', defaultSettings.ollamaEndpoint);
+    localStorage.setItem('promptAdvisorModel', defaultSettings.promptAdvisorModel);
+    localStorage.setItem('responseValidatorModel', defaultSettings.responseValidatorModel);
+    localStorage.setItem('defaultEvaluationCriteria', defaultSettings.defaultEvaluationCriteria);
+    localStorage.setItem('useParallelProcessing', defaultSettings.useParallelProcessing.toString());
     
-    setOllamaEndpoint('http://localhost:11434');
-    localStorage.setItem('ollamaEndpoint', 'http://localhost:11434');
-    
-    setPromptAdvisorModel('gpt-4o-mini');
-    localStorage.setItem('promptAdvisorModel', 'gpt-4o-mini');
-    
-    setResponseValidatorModel('gpt-4o-mini');
-    localStorage.setItem('responseValidatorModel', 'gpt-4o-mini');
-    
-    const defaultCriteria = 'Accuracy: Does the response correctly answer the query based on the provided context?\n' +
-      'Completeness: Does the response address all aspects of the query?\n' +
-      'Relevance: Is the information in the response relevant to the query?\n' +
-      'Conciseness: Is the response appropriately concise without omitting important information?\n' +
-      'Clarity: Is the response clear, well-structured, and easy to understand?\n' +
-      'Exception handling: Only if the output is code then check exceptions paths'
-    
-    setDefaultEvaluationCriteria(defaultCriteria);
-    localStorage.setItem('defaultEvaluationCriteria', defaultCriteria);
-    
-    setDefaultQueryTemplate('');
-    localStorage.setItem('defaultQueryTemplate', '');
+    // Clear test results
+    setTestResults({});
   };
 
   // Add stub implementations for used functions
@@ -554,29 +445,22 @@ const LlmSettings = ({ showAppSettingsOnly = false }) => {
     reader.readAsText(file);
   };
 
-  // State for model dialog
-  const [showModelDialog, setShowModelDialog] = useState(false);
-  const [editingModel, setEditingModel] = useState(null);
-  const [editModelData, setEditModelData] = useState({
-    modelId: '',
-    vendor: 'OpenAI',
-    input: 0,
-    output: 0,
-    active: true,
-    description: '',
-    deploymentName: ''
-  });
-
   const handleAddModel = () => {
     setEditingModel(null);
     setEditModelData({
       modelId: '',
-      vendor: 'OpenAI',
-      input: 0,
-      output: 0,
-      active: true,
-      description: '',
-      deploymentName: ''
+      name: '',
+      vendor: '',
+      maxTokens: 4096,
+      contextLength: 8192,
+      inputPrice: 0,
+      outputPrice: 0,
+      capabilities: {
+        chat: true,
+        images: false,
+        vision: false,
+        json: false
+      }
     });
     setShowModelDialog(true);
   };
@@ -587,12 +471,18 @@ const LlmSettings = ({ showAppSettingsOnly = false }) => {
       setEditingModel(modelId);
       setEditModelData({
         modelId: modelId,
-        vendor: model.vendor || 'OpenAI',
-        input: model.input || 0,
-        output: model.output || 0,
-        active: model.active !== undefined ? model.active : true,
-        description: model.description || '',
-        deploymentName: model.deploymentName || ''
+        name: model.name || '',
+        vendor: model.vendor || '',
+        maxTokens: model.maxTokens || 4096,
+        contextLength: model.contextLength || 8192,
+        inputPrice: model.input || 0,
+        outputPrice: model.output || 0,
+        capabilities: model.capabilities || {
+          chat: true,
+          images: false,
+          vision: false,
+          json: false
+        }
       });
       setShowModelDialog(true);
     }
@@ -604,9 +494,13 @@ const LlmSettings = ({ showAppSettingsOnly = false }) => {
     // If editing existing model
     if (editingModel) {
       newModels[editingModel] = {
+        name: editModelData.name,
         vendor: editModelData.vendor,
-        input: parseFloat(editModelData.input),
-        output: parseFloat(editModelData.output),
+        maxTokens: editModelData.maxTokens,
+        contextLength: editModelData.contextLength,
+        input: editModelData.inputPrice,
+        output: editModelData.outputPrice,
+        capabilities: editModelData.capabilities,
         active: editModelData.active,
         description: editModelData.description
       };
@@ -619,9 +513,13 @@ const LlmSettings = ({ showAppSettingsOnly = false }) => {
     // If adding new model
     else if (editModelData.modelId) {
       newModels[editModelData.modelId] = {
+        name: editModelData.name,
         vendor: editModelData.vendor,
-        input: parseFloat(editModelData.input),
-        output: parseFloat(editModelData.output),
+        maxTokens: editModelData.maxTokens,
+        contextLength: editModelData.contextLength,
+        input: editModelData.inputPrice,
+        output: editModelData.outputPrice,
+        capabilities: editModelData.capabilities,
         active: editModelData.active,
         description: editModelData.description
       };
@@ -656,6 +554,8 @@ const LlmSettings = ({ showAppSettingsOnly = false }) => {
       // Add or update the Gemma 3 model
       updatedModels['gemma3:12b'] = {
         vendor: 'Ollama',
+        maxTokens: 4096,
+        contextLength: 8192,
         input: 0,
         output: 0,
         active: true,
@@ -668,12 +568,6 @@ const LlmSettings = ({ showAppSettingsOnly = false }) => {
       return updatedModels;
     });
   };
-
-  // State for Azure deployments dialog
-  const [azureDeployments, setAzureDeployments] = useState([]);
-  const [showDeploymentDialog, setShowDeploymentDialog] = useState(false);
-  const [errorMessage, setErrorMessage] = useState('');
-  const [showError, setShowError] = useState(false);
 
   return (
     <Box>
@@ -739,8 +633,8 @@ const LlmSettings = ({ showAppSettingsOnly = false }) => {
                 fullWidth
                 label="Input Cost (per 1M tokens)"
                 type="number"
-                value={editModelData.input}
-                onChange={(e) => setEditModelData({...editModelData, input: e.target.value})}
+                value={editModelData.inputPrice}
+                onChange={(e) => setEditModelData({...editModelData, inputPrice: e.target.value})}
                 InputProps={{
                   startAdornment: <Typography sx={{ mr: 1 }}>$</Typography>,
                 }}
@@ -752,8 +646,8 @@ const LlmSettings = ({ showAppSettingsOnly = false }) => {
                 fullWidth
                 label="Output Cost (per 1M tokens)"
                 type="number"
-                value={editModelData.output}
-                onChange={(e) => setEditModelData({...editModelData, output: e.target.value})}
+                value={editModelData.outputPrice}
+                onChange={(e) => setEditModelData({...editModelData, outputPrice: e.target.value})}
                 InputProps={{
                   startAdornment: <Typography sx={{ mr: 1 }}>$</Typography>,
                 }}

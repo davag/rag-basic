@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { defaultModels, apiConfig } from '../config/llmConfig';
 
 // Define a safe logger implementation inside src/ to avoid external imports
 const safeLogger = {
@@ -16,7 +17,7 @@ class ChatOllama {
     this.modelName = options.model || options.modelName || 'llama3';
     this.temperature = options.temperature !== undefined ? options.temperature : 0;
     this.systemPrompt = options.systemPrompt || '';
-    this.endpoint = options.endpoint || options.baseUrl || 'http://localhost:11434';
+    this.endpoint = options.endpoint || options.baseUrl || options.ollamaEndpoint || 'http://localhost:11434';
     
     // Add compatibility properties
     this._modelType = () => 'ollama';
@@ -99,11 +100,11 @@ class CustomChatAnthropic {
     this.modelName = options.modelName || 'claude-3-haiku-20240307';
     this.temperature = options.temperature !== undefined ? options.temperature : 0;
     this.systemPrompt = options.systemPrompt || '';
-    this.apiKey = options.anthropicApiKey;
+    this.apiKey = options.anthropicApiKey || apiConfig.anthropic.apiKey;
     this.queryId = options.queryId || null;
     
     // Use a proxy server URL if available, otherwise use the default proxy
-    this.proxyUrl = process.env.REACT_APP_API_PROXY_URL || '/api/proxy/anthropic';
+    this.proxyUrl = apiConfig.anthropic.proxyUrl;
     
     // Add compatibility properties
     this._modelType = () => 'anthropic';
@@ -113,7 +114,7 @@ class CustomChatAnthropic {
     // Use safe logger
     safeLogger.log(`CustomChatAnthropic initialized with model: ${this.modelName}`);
     safeLogger.log(`API key provided in constructor: ${this.apiKey ? 'Yes' : 'No'}`);
-    safeLogger.log(`Environment API key available: ${process.env.REACT_APP_ANTHROPIC_API_KEY ? 'Yes' : 'No'}`);
+    safeLogger.log(`Environment API key available: ${apiConfig.anthropic.apiKey ? 'Yes' : 'No'}`);
     safeLogger.log(`Temperature setting: ${this.temperature}`);
   }
 
@@ -126,7 +127,7 @@ class CustomChatAnthropic {
       }));
       
       // Make sure we have an API key
-      const apiKey = this.apiKey || process.env.REACT_APP_ANTHROPIC_API_KEY;
+      const apiKey = this.apiKey || apiConfig.anthropic.apiKey;
       
       if (!apiKey) {
         throw new Error('Anthropic API key is required. Please set REACT_APP_ANTHROPIC_API_KEY in your environment variables.');
@@ -206,11 +207,11 @@ class CustomChatOpenAI {
     this.modelName = options.modelName || 'gpt-4o-mini';
     this.temperature = options.temperature;
     this.systemPrompt = options.systemPrompt || '';
-    this.apiKey = options.openAIApiKey;
+    this.apiKey = options.openAIApiKey || apiConfig.openAI.apiKey;
     this.queryId = options.queryId || null;
     
     // Use a proxy server URL if available, otherwise use the default proxy
-    this.proxyUrl = process.env.REACT_APP_API_PROXY_URL || '/api/proxy/openai';
+    this.proxyUrl = apiConfig.openAI.proxyUrl;
     
     // Add compatibility properties
     this._modelType = () => 'openai';
@@ -220,7 +221,7 @@ class CustomChatOpenAI {
     // Use safe logger
     safeLogger.log(`CustomChatOpenAI initialized with model: ${this.modelName}`);
     safeLogger.log(`API key provided in constructor: ${this.apiKey ? 'Yes' : 'No'}`);
-    safeLogger.log(`Environment API key available: ${process.env.REACT_APP_OPENAI_API_KEY ? 'Yes' : 'No'}`);
+    safeLogger.log(`Environment API key available: ${apiConfig.openAI.apiKey ? 'Yes' : 'No'}`);
     if (this.modelName.startsWith('o1') || this.modelName.startsWith('o3')) {
       safeLogger.log(`Note: ${this.modelName.startsWith('o1') ? 'o1' : 'o3'} models use max_completion_tokens instead of max_tokens`);
       if (this.modelName.startsWith('o1')) {
@@ -260,7 +261,7 @@ class CustomChatOpenAI {
       }
       
       // Make sure we have an API key
-      const apiKey = this.apiKey || process.env.REACT_APP_OPENAI_API_KEY;
+      const apiKey = this.apiKey || apiConfig.openAI.apiKey;
       
       if (!apiKey) {
         throw new Error('OpenAI API key is required. Please set REACT_APP_OPENAI_API_KEY in your environment variables.');
@@ -350,17 +351,25 @@ class CustomChatOpenAI {
 // Custom Azure OpenAI integration for Azure-hosted models
 export class CustomAzureOpenAI {
   constructor(options) {
-    this.modelName = options.modelName || 'gpt-4o';
-    this.deploymentName = options.deploymentName || options.modelName;
-    this.temperature = options.temperature;
+    this.modelName = options.modelName || 'azure-gpt-4o-mini';
+    this.deploymentName = options.deploymentName;
+    this.temperature = options.temperature !== undefined ? options.temperature : 0;
     this.systemPrompt = options.systemPrompt || '';
-    this.apiKey = options.azureApiKey;
-    this.apiVersion = options.apiVersion;
-    this.endpoint = options.azureEndpoint || '';
+    this.apiKey = options.apiKey || apiConfig.azure.apiKey;
+    this.endpoint = options.endpoint || apiConfig.azure.endpoint;
+    this.apiVersion = options.apiVersion || apiConfig.azure.apiVersion || '2023-05-15';
     this.queryId = options.queryId || null;
     
-    // Use a proxy server URL if available, otherwise use the default proxy
-    this.proxyUrl = process.env.REACT_APP_API_PROXY_URL || '/api/proxy/azure';
+    // If deployment name is not provided, try to get it from model config
+    if (!this.deploymentName) {
+      const modelConfig = defaultModels[this.modelName];
+      if (modelConfig && modelConfig.deploymentName) {
+        this.deploymentName = modelConfig.deploymentName;
+      } else {
+        // Default to using the model name without the azure- prefix
+        this.deploymentName = this.modelName.replace('azure-', '');
+      }
+    }
     
     // Add compatibility properties
     this._modelType = () => 'azure-openai';
@@ -369,10 +378,10 @@ export class CustomAzureOpenAI {
     
     // Use safe logger
     safeLogger.log(`CustomAzureOpenAI initialized with model: ${this.modelName}`);
-    safeLogger.log(`Deployment name: ${this.deploymentName}`);
-    safeLogger.log(`API key provided in constructor: ${this.apiKey ? 'Yes' : 'No'}`);
-    safeLogger.log(`Environment API key available: ${process.env.REACT_APP_AZURE_OPENAI_API_KEY ? 'Yes' : 'No'}`);
-    safeLogger.log(`Azure endpoint: ${this.endpoint || 'Not provided'}`);
+    safeLogger.log(`Deployment: ${this.deploymentName}`);
+    safeLogger.log(`API key provided: ${this.apiKey ? 'Yes' : 'No'}`);
+    safeLogger.log(`Endpoint: ${this.endpoint}`);
+    safeLogger.log(`API Version: ${this.apiVersion}`);
     safeLogger.log(`Temperature setting: ${this.temperature}`);
   }
 
@@ -396,16 +405,16 @@ export class CustomAzureOpenAI {
       })));
 
       // Make sure we have an API key and endpoint
-      const apiKey = this.apiKey || process.env.REACT_APP_AZURE_OPENAI_API_KEY;
-      const endpoint = this.endpoint || process.env.REACT_APP_AZURE_OPENAI_ENDPOINT;
+      const apiKey = this.apiKey || apiConfig.azure.apiKey;
+      const endpoint = this.endpoint || apiConfig.azure.endpoint;
       
       if (!apiKey) {
-        console.error('[AZURE ERROR] API key missing:', { providedInConstructor: !!this.apiKey, fromEnv: !!process.env.REACT_APP_AZURE_OPENAI_API_KEY });
+        console.error('[AZURE ERROR] API key missing:', { providedInConstructor: !!this.apiKey, fromEnv: !!apiConfig.azure.apiKey });
         throw new Error('Azure OpenAI API key is required. Please set REACT_APP_AZURE_OPENAI_API_KEY in your environment variables.');
       }
       
       if (!endpoint) {
-        console.error('[AZURE ERROR] Endpoint missing:', { providedInConstructor: !!this.endpoint, fromEnv: !!process.env.REACT_APP_AZURE_OPENAI_ENDPOINT });
+        console.error('[AZURE ERROR] Endpoint missing:', { providedInConstructor: !!this.endpoint, fromEnv: !!apiConfig.azure.endpoint });
         throw new Error('Azure OpenAI endpoint is required. Please set REACT_APP_AZURE_OPENAI_ENDPOINT in your environment variables.');
       }
       
@@ -442,7 +451,7 @@ export class CustomAzureOpenAI {
         messages: formattedMessages,
         azureApiKey: apiKey,
         azureEndpoint: endpoint,
-        apiVersion: process.env.REACT_APP_AZURE_OPENAI_API_VERSION || '2024-02-15-preview',
+        apiVersion: this.apiVersion,
         deploymentName: finalDeploymentName,
         queryId: this.queryId
       };
@@ -530,80 +539,48 @@ export class CustomAzureOpenAI {
  * @returns {ChatOllama|CustomChatAnthropic|CustomChatOpenAI} - The LLM instance
  */
 export const createLlmInstance = (model, systemPrompt, options = {}) => {
-  if (!model) {
-    throw new Error('Model is required to create an LLM instance');
-  }
+  // Get the model configuration
+  const modelConfig = defaultModels[model];
+  const vendor = modelConfig ? modelConfig.vendor : (
+    model.startsWith('gpt') || model.startsWith('o1') || model.startsWith('o3') ? 'OpenAI' :
+    model.startsWith('claude') ? 'Anthropic' :
+    model.startsWith('azure-') ? 'AzureOpenAI' :
+    'Ollama'
+  );
   
-  const {
-    temperature = 0,
-    ollamaEndpoint = 'http://localhost:11434',
-    queryId = null
-  } = options;
-  
-  // Handle Ollama models
-  if (model.startsWith('llama') || model.startsWith('mistral') || model.startsWith('gemma')) {
-    console.log(`Creating Ollama instance for model: ${model}`);
-    
-    // No need to map model names as the UI names match Ollama's exactly
-    const ollamaModel = model;
-    
-    // Use the provided Ollama endpoint if available
-    const ollamaUrl = ollamaEndpoint || process.env.REACT_APP_OLLAMA_ENDPOINT || 'http://localhost:11434';
-    
-    console.log(`Initializing Ollama with model: ${ollamaModel} at endpoint: ${ollamaUrl}`);
-    
+  // Create the appropriate LLM instance based on vendor
+  if (vendor === 'Ollama') {
     return new ChatOllama({
-      baseUrl: ollamaUrl,
-      model: ollamaModel,
-      format: 'json',
-      temperature: temperature,
-      systemPrompt: systemPrompt,
-      queryId: queryId
-    });
-  }
-  
-  // Handle Azure OpenAI models
-  if (model.startsWith('azure-')) {
-    // Extract base model name by removing 'azure-' prefix
-    const baseModel = model.replace('azure-', '');
-    
-    // Extract configuration from env variables
-    const azureApiKey = options.azureApiKey || process.env.REACT_APP_AZURE_OPENAI_API_KEY;
-    const azureEndpoint = options.azureEndpoint || process.env.REACT_APP_AZURE_OPENAI_ENDPOINT;
-    const apiVersion = options.apiVersion || process.env.REACT_APP_AZURE_OPENAI_API_VERSION || '2023-05-15';
-    
-    // Create instance with Azure configuration
-    return new CustomAzureOpenAI({
-      azureApiKey,
-      azureEndpoint,
-      apiVersion,
-      deploymentName: options.deploymentName || baseModel,
-      model: baseModel,
-      temperature,
+      modelName: model,
       systemPrompt,
-      queryId
+      temperature: options.temperature,
+      ollamaEndpoint: options.ollamaEndpoint || localStorage.getItem('ollamaEndpoint')
     });
-  }
-  
-  // Handle Anthropic Claude models
-  if (model.startsWith('claude')) {
+  } else if (vendor === 'Anthropic') {
     return new CustomChatAnthropic({
-      anthropicApiKey: options.anthropicApiKey || process.env.REACT_APP_ANTHROPIC_API_KEY,
-      temperature,
-      model,
+      modelName: model,
       systemPrompt,
-      queryId
+      temperature: options.temperature,
+      anthropicApiKey: options.anthropicApiKey,
+      queryId: options.queryId
+    });
+  } else if (vendor === 'AzureOpenAI') {
+    return new CustomAzureOpenAI({
+      modelName: model,
+      systemPrompt,
+      temperature: options.temperature,
+      deploymentName: modelConfig?.deploymentName,
+      queryId: options.queryId
+    });
+  } else {
+    return new CustomChatOpenAI({
+      modelName: model,
+      systemPrompt,
+      temperature: options.temperature,
+      openAIApiKey: options.openAIApiKey,
+      queryId: options.queryId
     });
   }
-  
-  // Default to OpenAI models
-  return new CustomChatOpenAI({
-    openAIApiKey: options.openaiApiKey || process.env.REACT_APP_OPENAI_API_KEY,
-    temperature,
-    modelName: model,
-    systemPrompt,
-    queryId
-  });
 };
 
 /**
@@ -685,134 +662,15 @@ export const executeQuery = async (chain, query) => {
   }
 };
 
-/**
- * Calculate the estimated cost based on token usage for different LLM models
- * @param {string} model - The model name
- * @param {number} tokenCount - The number of tokens used
- * @returns {number} - The estimated cost in USD
- */
+// Calculate cost for token usage with a specific model - use the centralized function
 export const calculateCost = (model, tokenCount) => {
-  // Return 0 if tokenCount is undefined, null, or not a valid number
-  if (tokenCount === undefined || tokenCount === null || isNaN(tokenCount)) {
+  // Use the imported defaultModels instead of requiring llmConfig
+  const modelConfig = defaultModels[model];
+  
+  if (!modelConfig) {
+    safeLogger.warn(`Model ${model} not found in configuration`);
     return 0;
   }
-  
-  // Try to get custom model pricing from localStorage first
-  let customModels = {};
-  try {
-    const savedModels = localStorage.getItem('llmModels');
-    if (savedModels) {
-      customModels = JSON.parse(savedModels);
-    }
-  } catch (err) {
-    safeLogger.error('Error loading custom models from localStorage:', err);
-  }
-
-  // If the model exists in custom models and is active, use its pricing
-  if (customModels[model] && customModels[model].active) {
-    const modelPricing = {
-      input: customModels[model].input,
-      output: customModels[model].output
-    };
-    
-    // Assume a 50/50 split between input and output tokens for simplicity
-    const inputTokens = Math.round(tokenCount / 2);
-    const outputTokens = tokenCount - inputTokens;
-    
-    // Calculate cost (price per 1M tokens * token count / 1M)
-    const inputCost = (modelPricing.input * inputTokens) / 1000000;
-    const outputCost = (modelPricing.output * outputTokens) / 1000000;
-    
-    return inputCost + outputCost;
-  }
-
-  // Default pricing per 1M tokens (in USD) - fallback if not found in localStorage
-  const pricing = {
-    // OpenAI models
-    'gpt-4o': {
-      input: 5.0,
-      output: 15.0
-    },
-    'gpt-4o-mini': {
-      input: 0.15,
-      output: 0.6
-    },
-    'o3-mini': {
-      input: 0.15,
-      output: 0.6
-    },
-    
-    // Azure OpenAI models (same pricing as OpenAI models)
-    'azure-gpt-4o': {
-      input: 5.0,
-      output: 15.0
-    },
-    'azure-gpt-4o-mini': {
-      input: 0.15,
-      output: 0.6
-    },
-    'azure-o3-mini': {
-      input: 0.15,
-      output: 0.6
-    },
-    
-    // Azure OpenAI embedding models
-    'azure-text-embedding-3-small': {
-      input: 0.02,
-      output: 0.02
-    },
-    'azure-text-embedding-3-large': {
-      input: 0.13,
-      output: 0.13
-    },
-    
-    // OpenAI embedding models
-    'text-embedding-3-small': {
-      input: 0.02,
-      output: 0.02
-    },
-    'text-embedding-3-large': {
-      input: 0.13,
-      output: 0.13
-    },
-    'text-embedding-ada-002': {
-      input: 0.1,
-      output: 0.1
-    },
-    
-    // Anthropic models
-    'claude-3-5-sonnet-latest': {
-      input: 3.0,
-      output: 15.0
-    },
-    'claude-3-7-sonnet-latest': {
-      input: 15.0,
-      output: 75.0
-    },
-    
-    // Ollama models (free for local inference)
-    'llama3.2:latest': {
-      input: 0,
-      output: 0
-    },
-    'gemma3:12b': {
-      input: 0,
-      output: 0
-    },
-    'mistral:latest': {
-      input: 0,
-      output: 0
-    }
-  };
-  
-  // Default pricing if model not found
-  const defaultPricing = {
-    input: 0.5,
-    output: 1.5
-  };
-  
-  // Get pricing for the model or use default
-  const modelPricing = pricing[model] || defaultPricing;
   
   // Assume a 50/50 split between input and output tokens for simplicity
   // In a real implementation, you would track input and output tokens separately
@@ -820,8 +678,8 @@ export const calculateCost = (model, tokenCount) => {
   const outputTokens = tokenCount - inputTokens;
   
   // Calculate cost (price per 1M tokens * token count / 1M)
-  const inputCost = (modelPricing.input * inputTokens) / 1000000;
-  const outputCost = (modelPricing.output * outputTokens) / 1000000;
+  const inputCost = (modelConfig.input * inputTokens) / 1000000;
+  const outputCost = (modelConfig.output * outputTokens) / 1000000;
   
   return inputCost + outputCost;
 }; 

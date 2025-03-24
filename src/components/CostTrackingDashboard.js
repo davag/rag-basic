@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { 
   Box, 
   Typography, 
@@ -36,13 +36,12 @@ import {
   RestartAlt as ResetIcon,
   ExpandMore as ExpandMoreIcon,
   Settings as SettingsIcon,
-  DateRange as DateRangeIcon,
-  FilterAlt as FilterIcon,
   Info as InfoIcon
 } from '@mui/icons-material';
 import axios from 'axios';
 import { Bar, Pie } from 'react-chartjs-2';
 import { Chart as ChartJS, registerables } from 'chart.js';
+import { vendorColors, defaultModels } from '../config/llmConfig';
 ChartJS.register(...registerables);
 
 // Format a number as currency
@@ -84,12 +83,13 @@ const CostTrackingDashboard = () => {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [detailedLogging, setDetailedLogging] = useState(false);
   const [embeddingPricing, setEmbeddingPricing] = useState({});
+  const [modelDefinitions, setModelDefinitions] = useState(defaultModels);
   
   // State for confirmation dialog
   const [resetDialogOpen, setResetDialogOpen] = useState(false);
   
   // Fetch cost data
-  const fetchCostData = async () => {
+  const fetchCostData = useCallback(async () => {
     setIsLoading(true);
     try {
       const response = await axios.get('/api/cost-tracking/summary');
@@ -118,12 +118,12 @@ const CostTrackingDashboard = () => {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [timeFilter, startDate, endDate]);
   
   // Fetch cost data on component mount and when filters change
   useEffect(() => {
     fetchCostData();
-  }, [timeFilter, startDate, endDate]);
+  }, [fetchCostData]);
   
   // After data is loaded, log the raw data for debugging
   useEffect(() => {
@@ -264,43 +264,55 @@ const CostTrackingDashboard = () => {
     }
   };
   
-  // Get chart data for cost by model
-  const getCostByModelChartData = () => {
-    const { costsByModel } = costData;
-    
-    // Normalize model names by removing date tags
-    const normalizedCosts = {};
-    
-    Object.entries(costsByModel || {}).forEach(([model, cost]) => {
-      // Extract base model name by removing date tags (YYYY-MM-DD or -YYYYMMDD pattern)
-      const baseModelName = model.replace(/-\d{4}-\d{2}-\d{2}|-\d{8}/, '');
-      
-      // Add cost to normalized model
-      if (normalizedCosts[baseModelName]) {
-        normalizedCosts[baseModelName] += cost;
-      } else {
-        normalizedCosts[baseModelName] = cost;
+  // Load model definitions from localStorage
+  useEffect(() => {
+    const savedModels = localStorage.getItem('llmModels');
+    if (savedModels) {
+      try {
+        setModelDefinitions(JSON.parse(savedModels));
+      } catch (err) {
+        console.error('Error parsing saved models:', err);
+        setModelDefinitions(defaultModels);
       }
+    }
+  }, []);
+  
+  // Get chart data for costs by model
+  const getCostByModelChartData = () => {
+    const filteredData = getFilteredData();
+    const combinedData = [...filteredData.llm, ...filteredData.embeddings];
+    
+    const costsByModel = {};
+    combinedData.forEach(entry => {
+      if (!costsByModel[entry.model]) {
+        costsByModel[entry.model] = 0;
+      }
+      costsByModel[entry.model] += entry.cost;
+    });
+    
+    // Sort by cost (descending)
+    const sortedModels = Object.entries(costsByModel)
+      .sort((a, b) => b[1] - a[1])
+      .map(([model, cost]) => ({ model, cost }));
+    
+    // Get colors for each model based on its vendor
+    const colors = sortedModels.map(({ model }) => {
+      const modelConfig = modelDefinitions[model];
+      const vendor = modelConfig ? modelConfig.vendor : 'Other';
+      return vendorColors[vendor] || vendorColors.Other;
     });
     
     return {
-      labels: Object.keys(normalizedCosts),
+      labels: sortedModels.map(item => item.model),
       datasets: [
         {
-          label: 'Cost by Model',
-          data: Object.values(normalizedCosts),
-          backgroundColor: [
-            'rgba(54, 162, 235, 0.6)',
-            'rgba(255, 99, 132, 0.6)',
-            'rgba(255, 206, 86, 0.6)',
-            'rgba(75, 192, 192, 0.6)',
-            'rgba(153, 102, 255, 0.6)',
-            'rgba(255, 159, 64, 0.6)',
-            'rgba(199, 199, 199, 0.6)',
-          ],
-          borderWidth: 1,
-        },
-      ],
+          label: 'Cost (USD)',
+          data: sortedModels.map(item => item.cost),
+          backgroundColor: colors,
+          borderColor: colors.map(color => color + '80'),
+          borderWidth: 1
+        }
+      ]
     };
   };
   
@@ -327,14 +339,24 @@ const CostTrackingDashboard = () => {
     };
   };
   
-  // Get all unique models for filtering
+  // Get unique models from the data, grouped by vendor
   const getUniqueModels = () => {
-    const models = new Set();
+    const allModels = [...costData.llm, ...costData.embeddings].map(entry => entry.model);
+    const uniqueModels = [...new Set(allModels)];
     
-    (costData.llm || []).forEach(entry => models.add(entry.model));
-    (costData.embeddings || []).forEach(entry => models.add(entry.model));
+    // Group models by vendor
+    const modelsByVendor = {};
+    uniqueModels.forEach(model => {
+      const modelConfig = modelDefinitions[model];
+      const vendor = modelConfig ? modelConfig.vendor : 'Other';
+      
+      if (!modelsByVendor[vendor]) {
+        modelsByVendor[vendor] = [];
+      }
+      modelsByVendor[vendor].push(model);
+    });
     
-    return Array.from(models);
+    return { uniqueModels, modelsByVendor };
   };
   
   // Get all unique operations for filtering
@@ -440,7 +462,7 @@ const CostTrackingDashboard = () => {
                 onChange={(e) => setModelFilter(e.target.value)}
               >
                 <MenuItem value="all">All Models</MenuItem>
-                {getUniqueModels().map(model => (
+                {getUniqueModels().uniqueModels.map(model => (
                   <MenuItem key={model} value={model}>{model}</MenuItem>
                 ))}
               </Select>

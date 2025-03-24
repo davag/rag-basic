@@ -2,6 +2,7 @@
  * Utility module for processing LLM queries in parallel
  */
 import { createLlmInstance } from './apiServices';
+import { defaultSettings } from '../config/llmConfig';
 import axios from 'axios';
 
 /**
@@ -46,7 +47,7 @@ export const processModelsInParallel = async (
     
     try {
       // Get Ollama endpoint from localStorage
-      const ollamaEndpoint = localStorage.getItem('ollamaEndpoint') || 'http://localhost:11434';
+      const ollamaEndpoint = localStorage.getItem('ollamaEndpoint') || defaultSettings.ollamaEndpoint;
       
       // Create LLM instance with appropriate configuration
       const llm = createLlmInstance(modelName, getSystemPromptForModel(modelName), {
@@ -239,7 +240,7 @@ Given the context information and not prior knowledge, answer the question: ${qu
     };
     
     // Get Ollama endpoint from localStorage
-    const ollamaEndpoint = localStorage.getItem('ollamaEndpoint') || 'http://localhost:11434';
+    const ollamaEndpoint = localStorage.getItem('ollamaEndpoint') || defaultSettings.ollamaEndpoint;
     
     // Process each prompt set with all models in parallel
     for (const promptSet of promptSets) {

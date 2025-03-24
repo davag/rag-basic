@@ -2,6 +2,7 @@
  * Utility module for processing response validations in parallel
  */
 import { createLlmInstance } from './apiServices';
+import { defaultSettings } from '../config/llmConfig';
 
 /**
  * Process multiple validation queries in parallel
@@ -72,6 +73,7 @@ export const validateResponsesInParallel = async (
   // Generate validation tasks for each model response
   Object.keys(responses).forEach(key => {
     // Parse the key to extract model information
+    // eslint-disable-next-line no-unused-vars
     let modelKey = key;
     let modelName = key;
     let setName = '';
@@ -85,7 +87,6 @@ export const validateResponsesInParallel = async (
       if (possibleSetName.startsWith('Set ') && isModelKey(possibleModelName)) {
         setName = possibleSetName;
         modelName = possibleModelName;
-        modelKey = key; // Keep the combined key
       }
     }
     
@@ -106,7 +107,7 @@ export const validateResponsesInParallel = async (
     const response = responses[key];
     
     // Skip if response is not a string or object, or if it's a property name
-    if (response === null || typeof response !== 'object' && typeof response !== 'string') {
+    if (response === null || (typeof response !== 'object' && typeof response !== 'string')) {
       console.log(`Skipping invalid response type for key: ${key}`);
       return;
     }
@@ -170,8 +171,8 @@ Your evaluation should be structured as a JSON object with these properties:
 YOUR EVALUATION (in JSON format):
 `;
       
-      // Get Ollama endpoint from localStorage
-      const ollamaEndpoint = localStorage.getItem('ollamaEndpoint') || 'http://localhost:11434';
+      // Get Ollama endpoint from localStorage or default settings
+      const ollamaEndpoint = localStorage.getItem('ollamaEndpoint') || defaultSettings.ollamaEndpoint;
       
       // Create LLM instance for validation
       const llm = createLlmInstance(validatorModelName, '', {

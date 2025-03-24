@@ -1,11 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
-import { Container, Box, Paper, Tabs, Tab, Typography, Alert, Snackbar, IconButton, Dialog, DialogContent, AppBar, Toolbar, Button, Menu, MenuItem, Tooltip, ListItemIcon, ListItemText, Divider } from '@mui/material';
+import { Container, Box, Paper, Tabs, Tab, Typography, Alert, Snackbar, IconButton, Dialog, DialogContent, AppBar, Toolbar, Button, Menu, MenuItem, Tooltip } from '@mui/material';
 import SettingsIcon from '@mui/icons-material/Settings';
 import CloseIcon from '@mui/icons-material/Close';
 import CheckIcon from '@mui/icons-material/Check';
-// eslint-disable-next-line no-unused-vars
 import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
 import TuneIcon from '@mui/icons-material/Tune';
 import SmartToyIcon from '@mui/icons-material/SmartToy';
@@ -13,14 +12,6 @@ import AnalyticsIcon from '@mui/icons-material/Analytics';
 import RestartAltIcon from '@mui/icons-material/RestartAlt';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
-// eslint-disable-next-line no-unused-vars
-import UploadIcon from '@mui/icons-material/Upload';
-// eslint-disable-next-line no-unused-vars
-import StorageIcon from '@mui/icons-material/Storage';
-// eslint-disable-next-line no-unused-vars
-import CompareIcon from '@mui/icons-material/Compare';
-// eslint-disable-next-line no-unused-vars
-import AssessmentIcon from '@mui/icons-material/Assessment';
 import InsertChartIcon from '@mui/icons-material/InsertChart';
 import DashboardIcon from '@mui/icons-material/Dashboard';
 import BuildIcon from '@mui/icons-material/Build';
@@ -38,8 +29,8 @@ import DocumentAnalytics from './components/DocumentAnalytics';
 import QualityDashboard from './components/QualityAnalysisHub/Monitoring/QualityDashboard';
 import OptimizationRecommendations from './components/QualityAnalysisHub/Optimization/OptimizationRecommendations';
 import QualityTestSuite from './components/QualityAnalysisHub/Testing/QualityTestSuite';
-import SourceContentAnalysis from './components/SourceContentAnalysis';
 import CostTrackingDashboard from './components/CostTrackingDashboard';
+import { checkApiConfiguration } from './config/llmConfig';
 
 const theme = createTheme({
   palette: {
@@ -313,10 +304,9 @@ function App() {
     setValidationResults(results);
   };
 
-  // Check if API keys are set
-  const openAIApiKey = process.env.REACT_APP_OPENAI_API_KEY;
-  const anthropicApiKey = process.env.REACT_APP_ANTHROPIC_API_KEY;
-  const apiKeysConfigured = openAIApiKey && anthropicApiKey;
+  // Check if API keys are properly configured
+  const apiStatus = checkApiConfiguration();
+  const apiKeysConfigured = apiStatus.openAI && apiStatus.anthropic;
 
   // Check if user has seen welcome and api key messages before
   useEffect(() => {
