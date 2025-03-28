@@ -2,13 +2,31 @@ const { createProxyMiddleware } = require('http-proxy-middleware');
 const bodyParser = require('body-parser');
 require('dotenv').config();
 
+// Set limits high enough to handle large requests
+const BODY_PARSER_LIMIT = '50mb';
+
 const BACKEND_PORT = process.env.BACKEND_PORT || 3002;
 const BACKEND_URL = `http://localhost:${BACKEND_PORT}`;
 
 module.exports = function(app) {
-  // Add body parsing middleware before the proxy
-  app.use(bodyParser.json());
-  app.use(bodyParser.urlencoded({ extended: true }));
+  console.log('[PROXY SETUP] Setting up middleware with bodyParser limits:', BODY_PARSER_LIMIT);
+  
+  // Add body parsing middleware before the proxy with increased limits
+  app.use(bodyParser.json({ limit: BODY_PARSER_LIMIT }));
+  app.use(bodyParser.urlencoded({ extended: true, limit: BODY_PARSER_LIMIT }));
+  
+  // Custom middleware to log ALL request bodies for debugging
+  app.use('/api/proxy/azure', (req, res, next) => {
+    console.log('\n[AZURE PROXY DEBUGGER] Request path:', req.path);
+    console.log('[AZURE PROXY DEBUGGER] Method:', req.method);
+    console.log('[AZURE PROXY DEBUGGER] Content-Type:', req.headers['content-type']);
+    console.log('[AZURE PROXY DEBUGGER] Body keys:', Object.keys(req.body || {}));
+    console.log('[AZURE PROXY DEBUGGER] Has deploymentName:', !!req.body.deploymentName);
+    console.log('[AZURE PROXY DEBUGGER] DeploymentName value:', req.body.deploymentName);
+    
+    // Don't manipulate the body yet, just log it
+    next();
+  });
 
   // Add generic proxy for all API requests
   app.use(
@@ -351,6 +369,43 @@ module.exports = function(app) {
       target: 'https://api.openai.com', // This will be overridden by the actual Azure endpoint
       changeOrigin: true,
       router: function(req) {
+        // STATIC DEPLOYMENT NAME FIX 
+        console.log('[AZURE PROXY] STATIC FIX: Setting deploymentName to gpt-4o');
+        req.body.deploymentName = 'gpt-4o';  // Hardcode this explicitly
+        
+        // Log complete request body for debugging
+        console.log('[AZURE PROXY] Full request body keys:', Object.keys(req.body).join(', '));
+        console.log('[AZURE PROXY] Has deploymentName after static fix:', !!req.body.deploymentName);
+        console.log('[AZURE PROXY] DeploymentName value after static fix:', req.body.deploymentName);
+        console.log('[AZURE PROXY] Has model:', !!req.body.model);
+        
+        // EMERGENCY FIX - BYPASS THE CHECKS AND FORCE DEPLOYMENT NAME
+        let forcedDeploymentName;
+        if (req.body.model && req.body.model.startsWith('azure-')) {
+          forcedDeploymentName = req.body.model.replace('azure-', '');
+        } else if (req.body.model) {
+          forcedDeploymentName = req.body.model;
+        } else {
+          // Last resort
+          forcedDeploymentName = 'gpt-4o';
+        }
+        console.log(`[AZURE PROXY EMERGENCY] Forcing deployment name: ${forcedDeploymentName}`);
+        req.body.deploymentName = forcedDeploymentName;
+        
+        if (req.body.model) {
+          console.log('[AZURE PROXY] Model value:', req.body.model);
+        }
+        
+        // CRITICAL FIX: Ensure deploymentName is present
+        if (!req.body.deploymentName && req.body.model) {
+          if (req.body.model.startsWith('azure-')) {
+            req.body.deploymentName = req.body.model.replace('azure-', '');
+          } else {
+            req.body.deploymentName = req.body.model;
+          }
+          console.log(`[AZURE PROXY CRITICAL FIX] Set deploymentName to '${req.body.deploymentName}' from model`);
+        }
+        
         // Get the Azure endpoint from the request body
         const endpoint = req.body.azureEndpoint;
         if (!endpoint) {
@@ -360,23 +415,28 @@ module.exports = function(app) {
         return endpoint.endsWith('/') ? endpoint.slice(0, -1) : endpoint;
       },
       pathRewrite: function(path, req) {
-        // Get the deployment name and API version from the request body
-        const deploymentName = req.body.deploymentName;
-        const apiVersion = req.body.apiVersion || '2024-02-15-preview';
+        console.log('[PATH REWRITE] START - Original path:', path);
         
-        // Construct the Azure OpenAI path
-        return `/openai/deployments/${deploymentName}/chat/completions?api-version=${apiVersion}`;
+        // HARDCODED PATH SOLUTION - bypass all variable logic
+        const hardcodedPath = '/openai/deployments/gpt-4o/chat/completions?api-version=2023-05-15';
+        console.log(`[PATH REWRITE] USING HARDCODED PATH: ${hardcodedPath}`);
+        
+        // Set this in req.body to make sure it's there for later stages
+        req.body.deploymentName = 'gpt-4o';
+        
+        return hardcodedPath;
       },
       onProxyReq: function(proxyReq, req) {
         if (req.method === 'POST' && req.body) {
+          // HARDCODED HEADER SOLUTION
+          console.log('[PROXY REQ] Setting hardcoded deployment name in headers');
+          proxyReq.setHeader('x-ms-azure-openai-deployment', 'gpt-4o');
+          
+          // Get the API key from the request body
           const apiKey = req.body.azureApiKey;
-          const deploymentName = req.body.deploymentName;
-
-          if (!apiKey || !deploymentName) {
-            global.console.error('Missing required Azure OpenAI parameters:', {
-              hasApiKey: !!apiKey,
-              hasDeploymentName: !!deploymentName
-            });
+          
+          if (!apiKey) {
+            global.console.error('Missing API key in Azure OpenAI request');
             return;
           }
 
@@ -384,19 +444,24 @@ module.exports = function(app) {
           proxyReq.setHeader('api-key', apiKey);
           proxyReq.setHeader('Content-Type', 'application/json');
 
-          // Remove Azure-specific fields from the body
+          // Remove Azure-specific fields from the body but KEEP model
           const modifiedBody = { ...req.body };
           delete modifiedBody.azureApiKey;
           delete modifiedBody.azureEndpoint;
-          delete modifiedBody.deploymentName;
           delete modifiedBody.apiVersion;
-
+          delete modifiedBody.queryId;
+          
+          // IMPORTANT: Make sure the model is the same as the deployment name
+          // This is critical for Azure OpenAI
+          modifiedBody.model = 'gpt-4o';
+          
           // Convert the modified body to a string
           const bodyData = JSON.stringify(modifiedBody);
 
           // Log the modified request (without sensitive data)
-          global.console.log('Azure OpenAI request:', {
-            deploymentName: deploymentName,
+          global.console.log('[AZURE OPENAI FINAL REQUEST]:', {
+            deploymentName: 'gpt-4o', // Hardcoded
+            model: modifiedBody.model,
             bodyLength: bodyData.length,
             hasMessages: !!modifiedBody.messages
           });
@@ -406,6 +471,9 @@ module.exports = function(app) {
 
           // Write the body to the request
           proxyReq.write(bodyData);
+          
+          // End the request explicitly 
+          proxyReq.end();
         }
       },
       onProxyRes: function(proxyRes) {

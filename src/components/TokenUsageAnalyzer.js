@@ -17,14 +17,15 @@ import {
   Accordion,
   AccordionSummary,
   AccordionDetails,
-  LinearProgress
+  LinearProgress,
+  Tooltip
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import TokenIcon from '@mui/icons-material/Token';
 import AttachMoneyIcon from '@mui/icons-material/AttachMoney';
 import WarningIcon from '@mui/icons-material/Warning';
 import AccessTimeIcon from '@mui/icons-material/AccessTime';
-import { calculateCost } from '../utils/apiServices';
+import { calculateCost } from '../config/llmConfig';
 
 // Utility to estimate token breakdown of a prompt
 const estimateTokenBreakdown = (prompt, systemPrompt) => {
@@ -193,7 +194,10 @@ Given the context information and not prior knowledge, answer the question: ${cu
       return {
         input: tokenUsage.input || 0,
         output: tokenUsage.output || 0,
-        total: tokenUsage.total || (tokenUsage.input || 0) + (tokenUsage.output || 0)
+        total: tokenUsage.total || (tokenUsage.input || 0) + (tokenUsage.output || 0),
+        estimated: tokenUsage.estimated || false,
+        details: tokenUsage.details || null,
+        rawUsage: tokenUsage // Keep the original data for reference
       };
     }
     
@@ -202,7 +206,13 @@ Given the context information and not prior knowledge, answer the question: ${cu
       return {
         input: tokenUsage.prompt_tokens || 0,
         output: tokenUsage.completion_tokens || 0,
-        total: tokenUsage.total_tokens || (tokenUsage.prompt_tokens || 0) + (tokenUsage.completion_tokens || 0)
+        total: tokenUsage.total_tokens || (tokenUsage.prompt_tokens || 0) + (tokenUsage.completion_tokens || 0),
+        estimated: false, // API provided counts are not estimated
+        details: {
+          prompt_tokens_details: tokenUsage.prompt_tokens_details || null,
+          completion_tokens_details: tokenUsage.completion_tokens_details || null
+        },
+        rawUsage: tokenUsage // Keep the original data for reference
       };
     }
     
@@ -291,11 +301,24 @@ Given the context information and not prior knowledge, answer the question: ${cu
                 const breakdown = tokenBreakdowns[modelKey];
                 const modelWarnings = warnings[modelKey] || [];
                 
-                // Get cost for this model
-                const modelCost = calculateCost(
-                  model, 
-                  modelMetrics.tokenUsage || {}
-                ) || 0;
+                let modelCost = 0;
+                if (modelMetrics && modelMetrics.calculatedCost !== undefined) {
+                  // Use API-provided cost if available
+                  modelCost = Number(modelMetrics.calculatedCost);
+                } else if (tokenUsage && tokenUsage.total) {
+                  // Use the unified cost calculation through window.costTracker if available
+                  if (window.costTracker) {
+                    const costInfo = window.costTracker.computeCost(model, tokenUsage);
+                    modelCost = costInfo.cost;
+                  } else {
+                    // Fallback to the standard calculation method
+                    const costResult = calculateCost(model, { 
+                      input: tokenUsage.input || tokenUsage.total / 2, 
+                      output: tokenUsage.output || tokenUsage.total / 2 
+                    });
+                    modelCost = costResult.totalCost || 0;
+                  }
+                }
                   
                 if (!breakdown) return null;
                 
@@ -316,9 +339,20 @@ Given the context information and not prior knowledge, answer the question: ${cu
                           />
                           <Chip 
                             icon={<AttachMoneyIcon />} 
-                            label={`$${modelCost.toFixed(6)}`} 
+                            label={modelCost === 0 ? 'Free' : modelCost < 0.0000001 && modelCost > 0 ? `$${Number(modelCost).toFixed(10)}` : `$${Number(modelCost).toFixed(7)}`} 
                             color="secondary"
                           />
+                          {modelMetrics.calculatedCost !== undefined && modelMetrics.calculatedCost !== null && (
+                            <Tooltip title="Cost reported directly by API">
+                              <Chip
+                                size="small"
+                                variant="outlined"
+                                label="API Cost"
+                                color="info"
+                                sx={{ ml: 0.5 }}
+                              />
+                            </Tooltip>
+                          )}
                           {modelMetrics.elapsedTime && (
                             <Chip
                               icon={<AccessTimeIcon />}
@@ -355,6 +389,48 @@ Given the context information and not prior knowledge, answer the question: ${cu
                             </Box>
                           </Box>
                         </Box>
+                        
+                        {/* Token Usage Details - only show if available */}
+                        {tokenUsage.details && (
+                          <>
+                            <Typography variant="subtitle2" gutterBottom>Additional Token Details</Typography>
+                            <TableContainer component={Paper} variant="outlined" sx={{ mb: 2 }}>
+                              <Table size="small">
+                                <TableHead>
+                                  <TableRow>
+                                    <TableCell>Detail</TableCell>
+                                    <TableCell align="right">Value</TableCell>
+                                  </TableRow>
+                                </TableHead>
+                                <TableBody>
+                                  {/* Prompt token details */}
+                                  {tokenUsage.details?.prompt_tokens_details?.cached_tokens !== undefined && (
+                                    <TableRow>
+                                      <TableCell>Cached Input Tokens</TableCell>
+                                      <TableCell align="right">{tokenUsage.details.prompt_tokens_details.cached_tokens}</TableCell>
+                                    </TableRow>
+                                  )}
+                                  
+                                  {/* Completion token details */}
+                                  {tokenUsage.details?.completion_tokens_details?.reasoning_tokens !== undefined && (
+                                    <TableRow>
+                                      <TableCell>Reasoning Tokens</TableCell>
+                                      <TableCell align="right">{tokenUsage.details.completion_tokens_details.reasoning_tokens}</TableCell>
+                                    </TableRow>
+                                  )}
+                                  
+                                  {/* Display source if known */}
+                                  {!tokenUsage.estimated && (
+                                    <TableRow>
+                                      <TableCell>Token Count Source</TableCell>
+                                      <TableCell align="right">API Reported</TableCell>
+                                    </TableRow>
+                                  )}
+                                </TableBody>
+                              </Table>
+                            </TableContainer>
+                          </>
+                        )}
                         
                         {/* Detailed Prompt Breakdown */}
                         <Typography variant="subtitle2" gutterBottom>Prompt Breakdown</Typography>

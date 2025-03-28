@@ -54,7 +54,7 @@ const calculateCostPer1K = (model) => {
 
 const QueryInterface = ({ vectorStore, namespaces = [], onQuerySubmitted, isProcessing, setIsProcessing, initialState }) => {
   const [query, setQuery] = useState(initialState?.query || '');
-  const [selectedModels, setSelectedModels] = useState(['gpt-4o-mini', 'claude-3-5-sonnet-latest']);
+  const [selectedModels, setSelectedModels] = useState(['gpt-4o-mini']);
   const [promptSets, setPromptSets] = useState(initialState?.promptSets || [
     {
       id: 1,
@@ -191,7 +191,7 @@ const QueryInterface = ({ vectorStore, namespaces = [], onQuerySubmitted, isProc
       setSelectedModels(
         (cleanState.selectedModels && cleanState.selectedModels.length > 0) 
           ? cleanState.selectedModels 
-          : ['gpt-4o-mini', 'claude-3-5-sonnet-latest']
+          : ['gpt-4o-mini']
       );
       
       // Set selected namespaces with a fallback
@@ -353,6 +353,7 @@ Format your response in a clear, structured way. Focus on actionable improvement
     
     if (selectedModels.length === 0) {
       setError('Please select at least one model');
+      console.warn('No models selected in QueryInterface, aborting query processing');
       return;
     }
     
@@ -412,7 +413,15 @@ Format your response in a clear, structured way. Focus on actionable improvement
               const result = response.models[setKey][model];
               const tokenUsage = result.tokenUsage || {};
               
-              // Store metrics in multiple formats for backward compatibility
+              // Extract API-provided cost if available
+              const apiProvidedCost = result.cost !== undefined ? Number(result.cost) :
+                                      result.rawResponse?.cost !== undefined ? Number(result.rawResponse.cost) : null;
+              
+              // Track if this cost should be used for display in the UI (comes from API)
+              const useForDisplay = result.useForDisplay === true || result.rawResponse?.useForDisplay === true;
+              if (useForDisplay) {
+                console.log(`[COST INFO] Using API-reported cost for UI display: $${apiProvidedCost} for ${model}`);
+              }
               
               // Format 1: Composite key at top level (for ResponseComparison.js)
               metrics[`${setKey}-${model}`] = {
@@ -420,7 +429,9 @@ Format your response in a clear, structured way. Focus on actionable improvement
                 promptSet: set.id,
                 elapsedTime: result.elapsedTime,
                 responseTime: result.elapsedTime, // Add responseTime alias
-                tokenUsage: tokenUsage
+                tokenUsage: tokenUsage,
+                calculatedCost: apiProvidedCost, // Add API-provided cost when available
+                useForDisplay // Flag from server indicating this cost should be used for display
               };
               
               // Format 2: Nested under set key (for newer components)
@@ -429,7 +440,9 @@ Format your response in a clear, structured way. Focus on actionable improvement
                 promptSet: set.id,
                 elapsedTime: result.elapsedTime,
                 responseTime: result.elapsedTime, // Add responseTime alias
-                tokenUsage: tokenUsage
+                tokenUsage: tokenUsage,
+                calculatedCost: apiProvidedCost, // Add API-provided cost when available
+                useForDisplay // Flag from server indicating this cost should be used for display
               };
               
               // Format 3: Direct model key (for simpler lookups)
@@ -439,7 +452,9 @@ Format your response in a clear, structured way. Focus on actionable improvement
                 elapsedTime: result.elapsedTime,
                 responseTime: result.elapsedTime, // Add responseTime alias
                 tokenUsage: tokenUsage,
-                set: setKey
+                set: setKey,
+                calculatedCost: apiProvidedCost, // Add API-provided cost when available
+                useForDisplay // Flag from server indicating this cost should be used for display
               };
             }
           }

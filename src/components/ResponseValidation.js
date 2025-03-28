@@ -30,40 +30,9 @@ import DownloadIcon from '@mui/icons-material/Download';
 import AssessmentIcon from '@mui/icons-material/Assessment';
 import EditIcon from '@mui/icons-material/Edit';
 import { validateResponsesInParallel } from '../utils/parallelValidationProcessor';
+import { calculateCost } from '../config/llmConfig';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
-
-// Function to calculate cost based on model and token usage
-const calculateCost = (model, tokens) => {
-  // Default to lowest cost if model not found
-  if (!tokens) return 0;
-  
-  const costs = {
-    // OpenAI models
-    'gpt-4o': 0.00003,
-    'gpt-4o-mini': 0.00002,
-    'o3-mini': 0.00002,
-    // Azure models
-    'azure-gpt-4o': 0.000025,
-    'azure-gpt-4o-mini': 0.000015,
-    'azure-o3-mini': 0.000015,
-    // Anthropic models
-    'claude-3-5-sonnet-latest': 0.00002,
-    'claude-3-7-sonnet-latest': 0.000025,
-    // Ollama models are free
-    'llama3.2:latest': 0,
-    'gemma3:12b': 0,
-    'mistral:latest': 0
-  };
-
-  // Get base model name without Set prefix
-  const baseModel = model.replace(/^Set \d+-/, '');
-  
-  // Get cost per token, default to lowest cost if model not found
-  const costPerToken = costs[baseModel] || Math.min(...Object.values(costs));
-  
-  return tokens * costPerToken;
-};
 
 // Helper function to find metrics for any model regardless of storage pattern
 const findMetrics = (metrics, modelKey) => {
@@ -75,6 +44,18 @@ const findMetrics = (metrics, modelKey) => {
     return metrics[modelKey];
   }
   
+  // Normalize the model name for consistent lookup
+  let normalizedModelKey = modelKey;
+  if (typeof window !== 'undefined' && window.costTracker) {
+    normalizedModelKey = window.costTracker.normalizeModelName(modelKey);
+  }
+  
+  // Try with normalized name
+  if (normalizedModelKey !== modelKey && metrics[normalizedModelKey]) {
+    console.log(`Found metrics for normalized name ${normalizedModelKey}`);
+    return metrics[normalizedModelKey];
+  }
+  
   // Check if this is a composite key like "Set 1-gpt-4o-mini"
   if (modelKey.includes('-')) {
     // Try to extract set name and model name
@@ -84,16 +65,35 @@ const findMetrics = (metrics, modelKey) => {
       const setName = setMatch[1]; // e.g., "Set 2"
       const modelName = setMatch[2]; // e.g., "gpt-4o-mini"
       
+      // Try normalized base model name
+      let normalizedModelName = modelName;
+      if (typeof window !== 'undefined' && window.costTracker) {
+        normalizedModelName = window.costTracker.normalizeModelName(modelName);
+      }
+      
       // Case 1: Nested structure - metrics[setName][modelName]
       if (metrics[setName] && metrics[setName][modelName]) {
         console.log(`Found nested metrics for ${modelName} in ${setName}`);
         return metrics[setName][modelName];
       }
       
+      // Try with normalized model name
+      if (normalizedModelName !== modelName && 
+          metrics[setName] && metrics[setName][normalizedModelName]) {
+        console.log(`Found nested metrics for normalized ${normalizedModelName} in ${setName}`);
+        return metrics[setName][normalizedModelName];
+      }
+      
       // Case 2: Just the model name
       if (metrics[modelName]) {
         console.log(`Found metrics by model name ${modelName}`);
         return metrics[modelName];
+      }
+      
+      // Try with normalized model name
+      if (normalizedModelName !== modelName && metrics[normalizedModelName]) {
+        console.log(`Found metrics by normalized model name ${normalizedModelName}`);
+        return metrics[normalizedModelName];
       }
       
       // Case 3: Just the set name
@@ -109,40 +109,30 @@ const findMetrics = (metrics, modelKey) => {
         return metrics[dotKey];
       }
       
-      // Case 5: Check special sets that might contain this model
-      const commonSets = ["Set 1", "Set 2", "Set 3", "Set 4", "Set 5"];
-      for (const set of commonSets) {
-        if (metrics[set] && metrics[set][modelName]) {
-          console.log(`Found metrics in ${set} for ${modelName}`);
-          return metrics[set][modelName];
-        }
-      }
-      
-      // Case 6: For hyphenated model names like "gpt-4o-mini", try base model
-      if (modelName.includes('-')) {
-        const baseParts = modelName.split('-');
-        // Try various combinations of the base model name
-        for (let i = 1; i < baseParts.length; i++) {
-          const baseModel = baseParts.slice(0, i+1).join('-');
-          
-          // Try base model in the set
-          if (metrics[setName] && metrics[setName][baseModel]) {
-            console.log(`Found metrics for base model ${baseModel} in ${setName}`);
-            return metrics[setName][baseModel];
-          }
-          
-          // Try base model directly
-          if (metrics[baseModel]) {
-            console.log(`Found metrics for base model ${baseModel}`);
-            return metrics[baseModel];
-          }
-        }
+      // Try with normalized model name
+      const normalizedDotKey = `${setName}.${normalizedModelName}`;
+      if (normalizedModelName !== modelName && metrics[normalizedDotKey]) {
+        console.log(`Found metrics with dot notation using normalized name ${normalizedDotKey}`);
+        return metrics[normalizedDotKey];
       }
     }
   }
   
-  // If all else fails, log but return null
-  console.warn(`Could not find metrics for ${modelKey} in any expected location`);
+  // Try checking all metrics keys for partial matches
+  for (const key in metrics) {
+    if (key.includes(modelKey)) {
+      console.log(`Found metrics with partial key match: ${key}`);
+      return metrics[key];
+    }
+    
+    // Try with normalized model name
+    if (normalizedModelKey !== modelKey && key.includes(normalizedModelKey)) {
+      console.log(`Found metrics with partial normalized key match: ${key}`);
+      return metrics[key];
+    }
+  }
+  
+  console.log(`No metrics found for ${modelKey}`);
   return null;
 };
 
@@ -171,8 +161,8 @@ const ModelDropdown = ({ value, onChange, sx = {} }) => (
     <MenuItem disabled>
       <Typography variant="subtitle2">Anthropic Models</Typography>
     </MenuItem>
-    <MenuItem value="claude-3-5-sonnet-latest">Claude 3.5 Sonnet</MenuItem>
-    <MenuItem value="claude-3-7-sonnet-latest">Claude 3.7 Sonnet</MenuItem>
+    <MenuItem value="claude-3-5-sonnet">Claude 3.5 Sonnet</MenuItem>
+    <MenuItem value="claude-3-7-sonnet">Claude 3.7 Sonnet</MenuItem>
     
     <Divider />
     <MenuItem disabled>
@@ -190,7 +180,6 @@ const getReliableValidatorModel = (preferredModel) => {
   const reliableModels = [
     'gpt-4o',       // Most reliable but most expensive 
     'gpt-4o-mini',  // Good balance
-    'claude-3-5-sonnet-latest', // Good alternative
     'azure-gpt-4o-mini' // Azure alternative
   ];
   
@@ -508,9 +497,17 @@ const ResponseValidation = ({
     }
   };
 
-  const formatCost = (cost) => {
-    if (cost === 0) return 'Free';
-    return cost < 0.01 ? `$${cost.toFixed(6)}` : `$${cost.toFixed(4)}`;
+  // Function to format cost values
+  const formatCost = (costValue) => {
+    if (!costValue || isNaN(costValue)) return 'N/A';
+    
+    // For very small values, use fixed decimal notation with 10 decimal places
+    if (costValue > 0 && costValue < 0.0000001) {
+      return `$${costValue.toFixed(10)}`;
+    }
+    
+    // For small costs, show more decimal places
+    return costValue < 0.01 ? `$${costValue.toFixed(7)}` : `$${costValue.toFixed(4)}`;
   };
 
   const formatResponseTime = (ms) => {
@@ -577,7 +574,19 @@ const ResponseValidation = ({
       doc.setFontSize(10);
       Object.keys(metrics || {}).forEach((model, index) => {
         if (metrics[model]) {
-          const cost = calculateCost(model, metrics[model]?.tokenUsage?.total || 0);
+          // Try to get the cost from the response first
+          const modelResponse = responses?.[model] || 
+                               (responses?.models && Object.values(responses.models)
+                                  .flatMap(set => Object.entries(set))
+                                  .find(([key]) => key === model)?.[1]);
+          
+          // Normalize model name using consistent algorithm
+          const normalizedModelName = window.costTracker?.normalizeModelName?.(model) || model;
+          
+          const cost = modelResponse?.cost || 
+                     modelResponse?.rawResponse?.cost || 
+                     calculateCost(normalizedModelName, metrics[model]?.tokenUsage?.total || 0);
+          
           const costText = formatCost(cost);
           
           doc.text(model, margin, yPos);
@@ -738,9 +747,21 @@ const ResponseValidation = ({
           
           // Add cost information
           if (metrics && metrics[model]) {
-            const cost = calculateCost(model, metrics[model]?.tokenUsage?.total || 0);
+            // Try to get the cost from the response first
+            const modelResponse = responses?.[model] || 
+                                 (responses?.models && Object.values(responses.models)
+                                    .flatMap(set => Object.entries(set))
+                                    .find(([key]) => key === model)?.[1]);
+            
+            // Normalize model name using consistent algorithm
+            const normalizedModelName = window.costTracker?.normalizeModelName?.(model) || model;
+            
+            const modelCost = modelResponse?.cost || 
+                       modelResponse?.rawResponse?.cost || 
+                       calculateCost(normalizedModelName, metrics[model]?.tokenUsage?.total || 0);
+            
             doc.setFontSize(11);
-            doc.text(`Estimated Cost: ${formatCost(cost)}`, margin, yPos);
+            doc.text(`Estimated Cost: ${formatCost(modelCost)}`, margin, yPos);
             yPos += 7;
             
             doc.setFontSize(9);
@@ -869,97 +890,120 @@ const ResponseValidation = ({
         if (model.includes('-')) {
           const match = model.match(/^(?:Set \d+-)?(.+)$/);
           if (match) {
-            modelForCost = match[1]; // Extract the base model name without the Set prefix
+            modelForCost = match[1]; // Extract the base model name without Set prefix
           }
         }
         
-        // Calculate cost
-        const cost = calculateCost(modelForCost, tokenUsage);
+        // Calculate cost using the unified cost calculation method
+        let cost = 0;
+        if (window.costTracker) {
+          // Use the global costTracker for consistent calculation
+          const costInfo = window.costTracker.computeCost(modelForCost, { total: tokenUsage });
+          cost = costInfo.cost;
+        } else {
+          // Fallback to the legacy calculation
+          const costResult = calculateCost(modelForCost, { 
+            input: tokenUsage / 2, 
+            output: tokenUsage / 2 
+          });
+          cost = costResult.totalCost;
+        }
+        
         console.log(`Calculated cost for ${model} (${modelForCost}): ${cost} based on ${tokenUsage} tokens`);
         
-        // Calculate a speed factor (inverse of response time, normalized)
-        // The faster, the higher the factor - with a maximum value
-        const speedFactor = responseTime > 0 ? Math.min(10000 / responseTime, 10) : 10;
+        // Calculate an efficiency score based on quality vs cost
+        // Efficiency = (quality score / cost) * 1000 - scale for readability
+        let efficiencyScore = 0;
         
-        // Calculate a cost factor (inverse of cost, normalized)
-        // The cheaper, the higher the factor - with a maximum value
-        // Cost-free models (like Ollama) get a fixed bonus value
-        const costFactor = cost > 0 ? Math.min(0.01 / cost, 10) : 10;
+        if (cost > 0) {
+          // Higher is better - how much quality per dollar
+          efficiencyScore = Math.round((score / cost) * 1000);
+        } else if (cost === 0) {
+          // For free models (e.g., local Ollama models), use a high efficiency score
+          efficiencyScore = score * 1000;
+        }
         
-        // Calculate an efficiency score that balances quality, speed, and cost
-        // Quality is the primary factor, multiplied by speed and cost bonuses
-        const efficiencyScore = score * (1 + (speedFactor / 20) + (costFactor / 20));
-        
+        // Store results for this model
         results[model] = {
-          qualityScore: score,
-          responseTime: responseTime,
-          cost: cost,
-          speedFactor: speedFactor,
-          costFactor: costFactor,
-          efficiencyScore: efficiencyScore
+          score,
+          responseTime,
+          tokenUsage,
+          cost,
+          efficiencyScore
         };
       });
       
-      // Check if we have any valid results
-      if (Object.keys(results || {}).length === 0) {
-        console.error('No valid results after processing validations');
-        return { error: 'Could not calculate valid effectiveness scores from validations' };
+      // Calculate overall average scores across all models
+      const modelCount = Object.keys(results).length;
+      
+      if (modelCount === 0) {
+        return { error: "No valid model results to process" };
       }
       
-      // Find the most effective model (highest efficiency score)
-      let mostEffectiveModel = '';
-      let mostEffectiveScore = 0;
-      let mostEffectiveResponseTime = 0;
+      const averages = {
+        score: 0,
+        responseTime: 0,
+        tokenUsage: 0,
+        cost: 0,
+        efficiencyScore: 0
+      };
       
-      // Find the best value model (consider efficiency with cost)
-      let bestValueModel = '';
-      let bestValueEfficiency = 0;
+      // Sum up all values
+      Object.values(results).forEach(result => {
+        averages.score += result.score || 0;
+        averages.responseTime += result.responseTime || 0;
+        averages.tokenUsage += result.tokenUsage || 0;
+        averages.cost += result.cost || 0;
+        averages.efficiencyScore += result.efficiencyScore || 0;
+      });
       
-      // Find the fastest model
-      let fastestModel = '';
-      let fastestResponseTime = Infinity;
-      let fastestScore = 0;
+      // Calculate averages
+      Object.keys(averages).forEach(key => {
+        averages[key] = averages[key] / modelCount;
+      });
       
-      Object.entries(results || {}).forEach(([model, data]) => {
-        // Most effective model
-        if (data && data.efficiencyScore > mostEffectiveScore) {
-          mostEffectiveModel = model;
-          mostEffectiveScore = data.efficiencyScore;
-          mostEffectiveResponseTime = data.responseTime;
+      // Identify the best model for each metric
+      const best = {
+        score: { model: null, value: 0 },
+        responseTime: { model: null, value: Number.MAX_SAFE_INTEGER },
+        cost: { model: null, value: Number.MAX_SAFE_INTEGER },
+        efficiencyScore: { model: null, value: 0 }
+      };
+      
+      Object.entries(results).forEach(([model, result]) => {
+        // Best score (highest)
+        if (result.score > best.score.value) {
+          best.score.model = model;
+          best.score.value = result.score;
         }
         
-        // Best value model (consider efficiency with cost)
-        if (data) {
-          const valueMetric = data.efficiencyScore * data.costFactor;
-          if (valueMetric > bestValueEfficiency) {
-            bestValueModel = model;
-            bestValueEfficiency = valueMetric;
-          }
+        // Best response time (lowest)
+        if (result.responseTime < best.responseTime.value && result.responseTime > 0) {
+          best.responseTime.model = model;
+          best.responseTime.value = result.responseTime;
         }
         
-        // Fastest model
-        if (data && data.responseTime < fastestResponseTime) {
-          fastestModel = model;
-          fastestResponseTime = data.responseTime;
-          fastestScore = data.qualityScore;
+        // Best cost (lowest)
+        if (result.cost < best.cost.value && result.cost > 0) {
+          best.cost.model = model;
+          best.cost.value = result.cost;
+        }
+        
+        // Best efficiency (highest)
+        if (result.efficiencyScore > best.efficiencyScore.value) {
+          best.efficiencyScore.model = model;
+          best.efficiencyScore.value = result.efficiencyScore;
         }
       });
       
-      // Return the calculated results
       return {
-        mostEffectiveModel,
-        mostEffectiveScore,
-        mostEffectiveResponseTime,
-        bestValueModel,
-        bestValueEfficiency,
-        fastestModel,
-        fastestResponseTime,
-        fastestScore,
-        modelData: results
+        modelData: results,
+        averages,
+        best
       };
     } catch (error) {
-      console.error('Error calculating effectiveness score:', error);
-      return { error: `Error calculating effectiveness score: ${error.message}` };
+      console.error("Error calculating effectiveness scores:", error);
+      return { error: "Failed to calculate effectiveness scores" };
     }
   };
 
@@ -1664,9 +1708,20 @@ const ResponseValidation = ({
                           }
                         }
                         
-                        // Calculate cost
-                        modelCosts[model] = calculateCost(modelForCost, tokenUsage);
-                        console.log(`Cost for ${model} (${modelForCost}): ${modelCosts[model]} based on ${tokenUsage} tokens`);
+                        // Try to get the cost from the response first
+                        const modelResponse = responses?.[model] || 
+                                           (responses?.models && Object.values(responses.models)
+                                              .flatMap(set => Object.entries(set))
+                                              .find(([key]) => key === model)?.[1]);
+                        
+                        // Normalize model name using consistent algorithm
+                        const normalizedModelName = window.costTracker?.normalizeModelName?.(modelForCost) || modelForCost;
+                        
+                        modelCosts[model] = modelResponse?.cost || 
+                                         modelResponse?.rawResponse?.cost || 
+                                         calculateCost(normalizedModelName, tokenUsage);
+                                         
+                        console.log(`Cost for ${model} (${normalizedModelName}): ${modelCosts[model]} based on ${tokenUsage} tokens`);
                       });
                       
                       // Get all unique criteria

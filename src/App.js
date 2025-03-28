@@ -92,7 +92,7 @@ function App() {
   // Store query interface state to preserve it when navigating back
   const [lastQueryState, setLastQueryState] = useState({
     query: '',
-    selectedModels: ['gpt-4o-mini', 'claude-3-5-sonnet-latest'],
+    selectedModels: ['gpt-4o-mini'],
     selectedNamespaces: ['default'],
     globalSystemPrompt: '',
     useCustomPrompts: false,
@@ -123,7 +123,7 @@ function App() {
     setValidationResults({});
     setLastQueryState({
       query: '',
-      selectedModels: ['gpt-4o-mini', 'claude-3-5-sonnet-latest'],
+      selectedModels: ['gpt-4o-mini'],
       selectedNamespaces: ['default'],
       globalSystemPrompt: '',
       useCustomPrompts: false,

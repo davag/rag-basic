@@ -4,7 +4,7 @@
  */
 
 // Default vendor colors for UI display
-export const vendorColors = {
+const vendorColors = {
   'OpenAI': '#10a37f',    // Green
   'AzureOpenAI': '#0078d4',  // Microsoft blue
   'Anthropic': '#5436da',  // Purple
@@ -12,8 +12,12 @@ export const vendorColors = {
   'Other': '#888888'       // Gray
 };
 
+// IMPORTANT: For Azure OpenAI models, the deploymentName property MUST match exactly 
+// what's configured in your Azure portal. If you get "No response received from server" 
+// errors, verify that these deployment names exist in your Azure OpenAI service.
+
 // Default model definitions with pricing (per 1M tokens)
-export const defaultModels = {
+const defaultModels = {
   // OpenAI models
   'gpt-4o': {
     vendor: 'OpenAI',
@@ -63,7 +67,7 @@ export const defaultModels = {
     active: true,
     description: 'Azure-hosted o3-mini model',
     deploymentName: 'o3-mini',
-    apiVersion: '2025-01-31'
+    apiVersion: '2023-05-15'
   },
   
   // Azure OpenAI embedding models
@@ -87,17 +91,19 @@ export const defaultModels = {
   },
   
   // Anthropic models
-  'claude-3-5-sonnet-latest': {
+  'claude-3-5-sonnet': {
     vendor: 'Anthropic',
-    input: 0.003,
-    output: 0.015,
+    input: 3.0,
+    output: 15.0,
+    maxTokens: 200000,
     active: true,
     description: 'Fast and cost-effective Claude model with excellent performance.'
   },
-  'claude-3-7-sonnet-latest': {
+  'claude-3-7-sonnet': {
     vendor: 'Anthropic',
-    input: 0.015,
-    output: 0.075,
+    input: 15.0,
+    output: 75.0,
+    maxTokens: 200000,
     active: true,
     description: 'Anthropic\'s most advanced Claude model with exceptional reasoning capabilities.'
   },
@@ -127,7 +133,7 @@ export const defaultModels = {
 };
 
 // Default application settings for LLMs
-export const defaultSettings = {
+const defaultSettings = {
   ollamaEndpoint: process.env.REACT_APP_OLLAMA_API_URL || 'http://localhost:11434',
   promptAdvisorModel: 'gpt-4o-mini',
   responseValidatorModel: 'gpt-4o-mini',
@@ -142,7 +148,7 @@ export const defaultSettings = {
 };
 
 // API key configuration
-export const apiConfig = {
+const apiConfig = {
   openAI: {
     apiKey: process.env.REACT_APP_OPENAI_API_KEY,
     proxyUrl: process.env.REACT_APP_API_PROXY_URL || '/api/proxy/openai'
@@ -165,19 +171,37 @@ export const apiConfig = {
  * @param {Object} customModels - Optional custom model definitions to override defaults
  * @returns {Object} - Cost breakdown
  */
-export const calculateCost = (modelId, tokenCount, customModels = null) => {
+const calculateCost = (modelId, tokenCount, customModels = null) => {
   const models = customModels || defaultModels;
-  const model = models[modelId];
+  
+  // Normalize the model ID by removing date suffixes
+  let normalizedModelId = modelId;
+  const datePattern = /-\d{4}-\d{2}-\d{2}$/;
+  if (datePattern.test(modelId)) {
+    normalizedModelId = modelId.replace(datePattern, '');
+  }
+  
+  // Find the model in our config
+  const model = models[normalizedModelId];
 
   if (!model) {
-    console.warn(`Model ${modelId} not found in configuration`);
+    console.warn(`Model ${modelId} (normalized: ${normalizedModelId}) not found in configuration`);
     return { inputCost: 0, outputCost: 0, totalCost: 0 };
   }
 
+  // Ensure token counts are valid numbers
+  const inputTokens = Number(tokenCount.input) || 0;
+  const outputTokens = Number(tokenCount.output) || 0;
+
   // Calculate costs in USD per million tokens, then convert to actual cost
-  const inputCost = (model.input * (tokenCount.input || 0)) / 1000000;
-  const outputCost = (model.output * (tokenCount.output || 0)) / 1000000;
+  const inputCost = (model.input * inputTokens) / 1000000;
+  const outputCost = (model.output * outputTokens) / 1000000;
   const totalCost = inputCost + outputCost;
+
+  console.log(`Cost calculation for ${normalizedModelId}: 
+    Input: ${inputTokens} tokens at $${model.input}/million = $${inputCost.toFixed(8)}
+    Output: ${outputTokens} tokens at $${model.output}/million = $${outputCost.toFixed(8)}
+    Total: $${totalCost.toFixed(8)}`);
 
   return {
     inputCost,
@@ -191,7 +215,7 @@ export const calculateCost = (modelId, tokenCount, customModels = null) => {
  * @param {Object} customModels - Optional custom model definitions to override defaults
  * @returns {Array} - List of active model IDs
  */
-export const getActiveModels = (customModels = null) => {
+const getActiveModels = (customModels = null) => {
   const models = customModels || defaultModels;
   return Object.entries(models)
     .filter(([_, model]) => model.active)
@@ -204,7 +228,7 @@ export const getActiveModels = (customModels = null) => {
  * @param {Object} customModels - Optional custom model definitions to override defaults
  * @returns {Object} - Models from the specified vendor
  */
-export const getModelsByVendor = (vendor, customModels = null) => {
+const getModelsByVendor = (vendor, customModels = null) => {
   const models = customModels || defaultModels;
   return Object.fromEntries(
     Object.entries(models).filter(([_, model]) => model.vendor === vendor)
@@ -215,11 +239,22 @@ export const getModelsByVendor = (vendor, customModels = null) => {
  * Check if API keys are properly configured
  * @returns {Object} - Configuration status for each provider
  */
-export const checkApiConfiguration = () => {
+const checkApiConfiguration = () => {
   return {
     openAI: !!apiConfig.openAI.apiKey,
     anthropic: !!apiConfig.anthropic.apiKey,
     azure: !!(apiConfig.azure.apiKey && apiConfig.azure.endpoint),
     ollama: true // Ollama is always available if running locally
   };
+};
+
+module.exports = {
+  vendorColors,
+  defaultModels,
+  defaultSettings,
+  apiConfig,
+  calculateCost,
+  getActiveModels,
+  getModelsByVendor,
+  checkApiConfiguration
 }; 

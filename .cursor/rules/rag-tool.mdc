@@ -18,3 +18,4 @@ alwaysApply: true
 ## Critical rules
 - Server is already started. Never run 'mpn start dev' on your own. The developement server is already started!
 - Be careful with Azure Open Models. Don't change names or versions without me asking
+- If server is up always check eslint errors/Warning in compile from terminal

@@ -175,6 +175,7 @@ export const processModelsInParallel = async (
 export class ParallelLLMProcessor {
   constructor(options = {}) {
     this.onProgressUpdate = options.onProgressUpdate || (() => {});
+    this.processedModels = {};
   }
   
   async processQuery({
@@ -185,9 +186,25 @@ export class ParallelLLMProcessor {
     promptSets,
     queryId = null // Add queryId parameter with default of null
   }) {
+    // Reset the processedModels tracking for a new query
+    this.processedModels = {};
+    
     // Validate inputs
     if (!query || !vectorStore || !selectedModels || !selectedNamespaces) {
       throw new Error('Missing required parameters for query processing');
+    }
+    
+    // Additional check to ensure selectedModels is not empty
+    if (!selectedModels.length) {
+      console.warn('No models selected, aborting query processing');
+      return { 
+        metadata: { 
+          query, 
+          error: 'No models selected', 
+          timestamps: { start: Date.now(), end: Date.now() } 
+        }, 
+        models: {} 
+      };
     }
     
     // Start measuring total operation time
@@ -259,6 +276,8 @@ Given the context information and not prior knowledge, answer the question: ${qu
       
       // Create promises for all models
       const modelPromises = selectedModels.map(model => {
+        console.log(`Creating promise for model: ${model} in prompt set ${promptSet.id}`);
+        
         return this.processModel({
           model,
           prompt,
@@ -306,14 +325,35 @@ Given the context information and not prior knowledge, answer the question: ${qu
     queryId = null // Add queryId parameter with default of null
   }) {
     // Start timer outside try block so it's available in catch
-    const startTime = Date.now();
+    const startTime = performance.now();
+    let answerText = '';
+    let elapsedTime = 0;
+    
+    // Track which normalized models we've already processed to prevent duplicates
+    // This is especially important for Claude models that might have multiple variants
+    const normalizedModel = model.replace(/-latest$/, '');
+    
+    // Create a model-specific queryId to ensure proper cost tracking
+    const modelSpecificQueryId = queryId ? 
+      (model.includes('claude') ? 
+        `${queryId}-${normalizedModel}` : // Use normalized model name for Claude models
+        `${queryId}-${model}`) : 
+      null;
+    
+    // If this is a Claude model, check if we're making a duplicate call
+    if (model.includes('claude') && this.processedModels && this.processedModels[normalizedModel]) {
+      console.log(`Skipping duplicate call to Claude model variant: ${model} (already processed ${this.processedModels[normalizedModel]})`);
+      
+      // Return the same result as the already processed model
+      return this.processedModels[normalizedModel].result;
+    }
     
     try {
       // Update progress
       this.updateProgress({
         model: `${model} / ${setKey}`,
-        step: `Processing with ${model}`,
-        status: 'pending'
+        step: 'Processing',
+        status: 'processing'
       });
       
       // Create LLM instance with custom options
@@ -326,10 +366,9 @@ Given the context information and not prior knowledge, answer the question: ${qu
       
       // End timer
       const endTime = Date.now();
-      const elapsedTime = endTime - startTime;
+      elapsedTime = endTime - startTime;
       
       // Get the answer text with special handling for different return types
-      let answerText;
       if (answer === null || answer === undefined) {
         console.error(`[ERROR] ${model} returned null or undefined response`);
         answerText = `Error: ${model} returned an empty response`;
@@ -389,9 +428,7 @@ Given the context information and not prior knowledge, answer the question: ${qu
                 responseInfo = ` The model reached its token limit (${usage.completion_tokens || 'unknown'} tokens used).`;
               }
               
-              if (answer.cost) {
-                responseInfo += ` Cost: $${answer.cost.toFixed(4)}.`;
-              }
+              responseInfo += ` Cost: $${typeof answer.cost === 'number' ? answer.cost.toFixed(4) : Number(answer.cost || 0).toFixed(4)}.`;
             }
             
             answerText = `The o3-mini model didn't return a valid response.${responseInfo} Try using a shorter prompt or a different model like azure-gpt-4o-mini.`;
@@ -410,17 +447,32 @@ Given the context information and not prior knowledge, answer the question: ${qu
       };
       
       // Extract cost if available in the model response
-      const cost = answer.cost || 0;
+      const initialCost = answer.cost || 0;
+      let apiReportedCost = null;
+      let useForDisplayFlag = false;
       
       // Track token usage via API
       try {
-        await axios.post('/api/cost-tracking/track-model-usage', {
+        const response = await axios.post('/api/cost-tracking/track-model-usage', {
           model,
           usage: tokenUsage,
           operation: 'chat',
-          queryId
+          queryId: modelSpecificQueryId
         });
         console.log(`Token usage tracking sent for ${model}`);
+        
+        // Check if the response includes a useForDisplay flag
+        if (response.data && response.data.useForDisplay === true) {
+          // This flag indicates the cost should be displayed in the UI
+          console.log(`[COST INFO] Cost for ${model} should be used for display: $${response.data.cost}`);
+          useForDisplayFlag = true;
+          
+          // Use the API-reported cost if available
+          if (response.data.cost !== undefined) {
+            console.log(`[COST INFO] Will use API-reported cost: $${response.data.cost} instead of ${initialCost}`);
+            apiReportedCost = response.data.cost;
+          }
+        }
       } catch (error) {
         // Don't throw - just log the error and continue
         console.warn(`Error tracking token usage for ${model}:`, error.message);
@@ -429,19 +481,25 @@ Given the context information and not prior knowledge, answer the question: ${qu
       // Update progress
       this.updateProgress({
         model: `${model} / ${setKey}`,
-        step: `Completed ${model}`,
+        step: 'Completed',
         status: 'completed'
       });
       
       // Return model response with metadata
-      return {
+      const result = {
         text: answerText,
         sources,
         elapsedTime,
         tokenUsage,
-        cost,
+        cost: apiReportedCost !== null ? apiReportedCost : initialCost, // Use API cost if available
+        useForDisplay: useForDisplayFlag,
         rawResponse: answer // Add the raw response for more detailed processing downstream
       };
+      
+      // Store the result in processedModels
+      this.processedModels[normalizedModel] = { result };
+      
+      return result;
     } catch (error) {
       // Special logging for o3-mini errors
       if (model.includes('o3-mini')) {

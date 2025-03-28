@@ -1060,7 +1060,7 @@ const LlmSettings = ({ showAppSettingsOnly = false }) => {
                 >
                   <MenuItem value="gpt-4o">GPT-4o</MenuItem>
                   <MenuItem value="gpt-4o-mini">GPT-4o-mini</MenuItem>
-                  <MenuItem value="claude-3-5-sonnet-latest">Claude 3.5 Sonnet</MenuItem>
+                  <MenuItem value="claude-3-5-sonnet">Claude 3.5 Sonnet</MenuItem>
                   <MenuItem value="llama3.2:latest">Llama 3</MenuItem>
                 </Select>
                 <FormHelperText>

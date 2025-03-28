@@ -252,3 +252,11 @@ If you encounter a 404 error when using Azure models, check that:
 4. Your endpoint URL is correctly formatted (should end with `.openai.azure.com`)
 
 Debug logs will be visible in the browser console for troubleshooting.
+
+## Recent Updates
+
+### Cost Tracking Optimization
+- Modified the application to use cost data directly from API responses when available, rather than recalculating
+- Updated components: ResponseComparison and ResponseValidation
+- Maintains fallback to calculated costs when API response doesn't include cost data
+- This ensures more accurate cost tracking, particularly for API providers that calculate costs differently based on model version or other factors

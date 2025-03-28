@@ -26,6 +26,9 @@ class CostTracker {
     // Flag to enable/disable detailed logging
     this.detailedLogging = true;
     
+    // Track which queries have already been processed to prevent duplicates
+    this.processedQueries = new Set();
+    
     CostTracker.instance = this;
   }
   
@@ -42,70 +45,254 @@ class CostTracker {
   }
   
   /**
-   * Normalize model name by removing date suffix
-   * @param {string} modelName - The model name that might contain a date suffix
-   * @returns {string} - Normalized model name
+   * Normalize a model name by removing date/version suffixes
+   * @param {string} model - The model name to normalize 
+   * @returns {string} Normalized model name
    */
-  normalizeModelName(modelName) {
-    if (!modelName) return 'unknown';
+  normalizeModelName(model) {
+    if (!model) return 'unknown';
     
-    // Remove date suffix in format -YYYY-MM-DD
-    const normalizedName = modelName.replace(/-\d{4}-\d{2}-\d{2}$/, '');
-    
-    if (normalizedName !== modelName && this.detailedLogging) {
-      console.log(`Cost tracker: Normalized model name from ${modelName} to ${normalizedName}`);
+    // Handle common date/version patterns in model names
+    const datePattern = /-\d{4}-\d{2}-\d{2}$/;
+    if (datePattern.test(model)) {
+      return model.replace(datePattern, '');
     }
     
-    return normalizedName;
+    // Azure models often have formats like azure-gpt-4
+    if (model.startsWith('azure-')) {
+      return model.substring(6); // Remove 'azure-' prefix
+    }
+    
+    // Handle Claude model naming variants - use canonical names
+    if (model.includes('claude')) {
+      // All claude-3-5-sonnet variants map to claude-3-5-sonnet
+      if (model.includes('claude-3-5-sonnet')) {
+        return 'claude-3-5-sonnet';
+      }
+      
+      // All claude-3-opus variants map to claude-3-opus
+      if (model.includes('claude-3-opus')) {
+        return 'claude-3-opus';
+      }
+      
+      // All claude-3-haiku variants map to claude-3-haiku
+      if (model.includes('claude-3-haiku')) {
+        return 'claude-3-haiku';
+      }
+      
+      // All claude-3-7-sonnet variants map to claude-3-7-sonnet
+      if (model.includes('claude-3-7-sonnet')) {
+        return 'claude-3-7-sonnet';
+      }
+      
+      // All claude-2 variants map to claude-2
+      if (model.includes('claude-2')) {
+        return 'claude-2';
+      }
+      
+      // Strip any date suffixes or versions
+      if (model.includes('-20')) {
+        // Extract the base model name without the date suffix
+        const parts = model.split('-');
+        const dateIndex = parts.findIndex(part => part.startsWith('20') && part.length >= 8);
+        if (dateIndex > 0) {
+          return parts.slice(0, dateIndex).join('-');
+        }
+      }
+      
+      // Remove -latest suffix if present
+      if (model.endsWith('-latest')) {
+        return model.replace('-latest', '');
+      }
+    }
+    
+    // Handle GPT model naming variants
+    if (model.includes('gpt-4o')) {
+      if (model.includes('gpt-4o-mini')) {
+        return 'gpt-4o-mini'; // Standard form for gpt-4o-mini
+      }
+      return 'gpt-4o'; // Standard form for gpt-4o
+    }
+    
+    return model;
   }
   
   /**
-   * Track cost for an LLM API call
+   * Get a unique ID for cost tracking to prevent duplicates
+   * @param {string} model - The model name
+   * @param {string} queryId - The query identifier
+   * @returns {string} Unique tracking ID
+   */
+  getUniqueTrackingId(model, queryId) {
+    if (!queryId) return null;
+    
+    // Extract the base queryId (first part before model suffix, if present)
+    let baseQueryId = queryId;
+    const lastDashPos = queryId.lastIndexOf('-');
+    if (lastDashPos > 0) {
+      // Check if the part after the last dash looks like a model name
+      const possibleModel = queryId.substring(lastDashPos + 1);
+      if (possibleModel.includes('gpt') || 
+          possibleModel.includes('claude') || 
+          possibleModel.includes('o3') ||
+          possibleModel.includes('llama')) {
+        baseQueryId = queryId.substring(0, lastDashPos);
+      }
+    }
+    
+    const normalizedModel = this.normalizeModelName(model);
+    return `${baseQueryId}-${normalizedModel}`;
+  }
+
+  /**
+   * Unified cost computation method - single source of truth for all cost calculations
+   * @param {string} model - The model name
+   * @param {object} usage - Token usage data
+   * @param {string} operation - Operation type
+   * @param {string} queryId - Query identifier
+   * @param {string} source - Source of the cost (API, calculated, etc.)
+   * @returns {object} Cost information
+   */
+  computeCost(model, usage, operation = 'chat', queryId = null, source = 'calculated') {
+    if (!model) {
+      console.warn(`Cost tracker: Missing model name`);
+      return { cost: 0, model: 'unknown', operation, usage: { totalTokens: 0 } };
+    }
+    
+    const normalizedModel = this.normalizeModelName(model);
+    const trackingId = this.getUniqueTrackingId(model, queryId);
+    
+    // Check if this exact query+model combination has already been processed
+    if (trackingId && this.processedQueries.has(trackingId)) {
+      console.log(`Cost already tracked for ${normalizedModel} with ID ${trackingId}`);
+      
+      // Find and return the existing cost entry
+      for (const modelKey in this.costs.llm) {
+        const foundEntry = this.costs.llm[modelKey].find(entry => 
+          entry.trackingId === trackingId
+        );
+        
+        if (foundEntry) {
+          return foundEntry;
+        }
+      }
+      
+      return { cost: 0, model: normalizedModel, operation, usage: { totalTokens: 0 } };
+    }
+    
+    // Normalize the usage data consistently
+    const normalizedUsage = this.normalizeUsageData(usage, normalizedModel);
+    
+    // Determine the cost - API provided or calculated
+    let cost = 0;
+    
+    // Check if cost is already provided directly (from API)
+    if (usage && usage.cost !== undefined) {
+      cost = Number(usage.cost);
+      console.log(`Using API-provided cost for ${normalizedModel}: $${cost.toFixed(8)}`);
+    } 
+    // Otherwise calculate based on token usage and pricing
+    else {
+      // Handle different model types
+      if (normalizedModel.includes('llama') || normalizedModel.includes('mistral') || normalizedModel.includes('gemma')) {
+        cost = 0; // Local models are free
+      } else {
+        // Use centralized cost calculation function
+        const inputTokens = normalizedUsage.promptTokens || 0;
+        const outputTokens = normalizedUsage.completionTokens || 0;
+        
+        const costResult = calculateCost(normalizedModel, {
+          input: inputTokens,
+          output: outputTokens
+        });
+        
+        cost = costResult.totalCost;
+      }
+      
+      console.log(`Calculated cost for ${normalizedModel}: $${cost.toFixed(8)} based on ${normalizedUsage.totalTokens} tokens`);
+    }
+    
+    // Create cost entry
+    const timestamp = new Date();
+    const costEntry = {
+      timestamp,
+      model: normalizedModel,
+      originalModel: model !== normalizedModel ? model : undefined,
+      operation,
+      usage: normalizedUsage,
+      cost,
+      queryId,
+      trackingId,
+      source
+    };
+    
+    // Add to tracking data
+    if (!this.costs.llm[normalizedModel]) {
+      this.costs.llm[normalizedModel] = [];
+    }
+    
+    // Store the cost entry
+    this.costs.llm[normalizedModel].push(costEntry);
+    this.costs.total += cost;
+    
+    // Mark as processed to prevent duplicates
+    if (trackingId) {
+      this.processedQueries.add(trackingId);
+    }
+    
+    // Log if detailed logging is enabled
+    if (this.detailedLogging) {
+      console.log(`Cost tracker: LLM operation logged - ${normalizedModel}, ${operation}, $${cost.toFixed(8)}`);
+      console.log(`Token usage: ${normalizedUsage.totalTokens} total tokens (${normalizedUsage.estimated ? 'estimated' : 'reported'})`);
+    }
+    
+    return costEntry;
+  }
+  
+  /**
+   * Track cost for an LLM API call - uses the unified computeCost method
    * @param {string} model - The model name
    * @param {object} usage - Token usage object {promptTokens, completionTokens, total} or {prompt_tokens, completion_tokens, total_tokens}
    * @param {string} operation - Operation type (e.g., 'chat', 'completion')
    * @param {string} queryId - Optional query identifier to group related costs
    * @returns {object} Cost information
    */
-  trackLlmCost(model, usage, operation = 'chat', queryId = null) {
-    // More detailed logging to help debug token usage
+  trackLlmCost(model, usage, operation = 'chat', queryId = null, source = 'client') {
     console.log(`Cost tracker called for model: ${model}`);
     console.log(`Usage data received:`, usage);
     
-    if (!model) {
-      console.warn(`Cost tracker: Missing model name`);
-      return { cost: 0, model: 'unknown', operation, usage: { totalTokens: 0 } };
-    }
-    
-    // Normalize the model name by removing any date suffix
-    const normalizedModel = this.normalizeModelName(model);
-    
+    // Use the unified cost computation method
+    return this.computeCost(model, usage, operation, queryId, source);
+  }
+  
+  /**
+   * Normalize token usage data to a consistent format
+   * @param {object|number} usage - Token usage data or total token count
+   * @param {string} model - Model name for special handling
+   * @returns {object} Normalized usage data
+   */
+  normalizeUsageData(usage, model) {
+    // Handle missing usage data
     if (!usage || typeof usage !== 'object') {
-      console.warn(`Cost tracker: Missing or invalid usage data for ${normalizedModel}`);
-      
-      // For Ollama models, provide a default token estimate since they don't report usage
-      if (normalizedModel.includes('llama') || normalizedModel.includes('mistral') || normalizedModel.includes('gemma')) {
-        console.log(`Cost tracker: Creating default token estimate for Ollama model ${normalizedModel}`);
-        const defaultUsage = {
+      // For Ollama models, provide a default token estimate
+      if (model && (model.includes('llama') || model.includes('mistral') || model.includes('gemma'))) {
+        return {
           promptTokens: 500,
           completionTokens: 500,
           totalTokens: 1000,
           estimated: true
         };
-        
-        return {
-          cost: 0, // Ollama models are free for local inference
-          model: normalizedModel,
-          operation,
-          usage: defaultUsage,
-          queryId
-        };
       }
       
-      return { cost: 0, model: normalizedModel, operation, usage: { totalTokens: 0 } };
+      return { 
+        promptTokens: 0, 
+        completionTokens: 0, 
+        totalTokens: 0,
+        estimated: false 
+      };
     }
     
-    // Handle different usage formats with more flexibility
+    // Create normalized structure
     let normalizedUsage = {
       promptTokens: 0,
       completionTokens: 0,
@@ -113,16 +300,29 @@ class CostTracker {
       estimated: false
     };
     
+    // First, prioritize getting token usage from API response objects
+    if (usage.rawResponse?.usage) {
+      console.log(`[CostTracker] Found API-reported token usage for ${model}:`, usage.rawResponse.usage);
+      normalizedUsage.promptTokens = usage.rawResponse.usage.prompt_tokens || 0;
+      normalizedUsage.completionTokens = usage.rawResponse.usage.completion_tokens || 0;
+      normalizedUsage.totalTokens = usage.rawResponse.usage.total_tokens || 0;
+      normalizedUsage.estimated = false;
+      normalizedUsage.source = 'api';
+      return normalizedUsage;
+    }
+    
     // Check all possible token keys
     // For prompt tokens
     if (usage.promptTokens !== undefined) normalizedUsage.promptTokens = usage.promptTokens;
     else if (usage.prompt_tokens !== undefined) normalizedUsage.promptTokens = usage.prompt_tokens;
     else if (usage.input_tokens !== undefined) normalizedUsage.promptTokens = usage.input_tokens;
+    else if (usage.input !== undefined) normalizedUsage.promptTokens = usage.input;
     
     // For completion tokens
     if (usage.completionTokens !== undefined) normalizedUsage.completionTokens = usage.completionTokens;
     else if (usage.completion_tokens !== undefined) normalizedUsage.completionTokens = usage.completion_tokens;
     else if (usage.output_tokens !== undefined) normalizedUsage.completionTokens = usage.output_tokens;
+    else if (usage.output !== undefined) normalizedUsage.completionTokens = usage.output;
     
     // For total tokens
     if (usage.totalTokens !== undefined) normalizedUsage.totalTokens = usage.totalTokens;
@@ -145,9 +345,8 @@ class CostTracker {
       normalizedUsage.estimated = true;
     }
     
-    // As a last resort for models that don't report token usage (e.g., Azure, Ollama), create an estimate
+    // If we still have no token information, try to estimate from text length
     if (normalizedUsage.totalTokens === 0) {
-      // Check response length if available
       let estimatedTotal = 0;
       
       if (usage.response && typeof usage.response === 'string') {
@@ -158,7 +357,6 @@ class CostTracker {
         estimatedTotal = Math.round(usage.answer.length / 4);
       }
       
-      // If we can estimate from text length
       if (estimatedTotal > 0) {
         normalizedUsage.totalTokens = estimatedTotal;
         normalizedUsage.promptTokens = Math.floor(estimatedTotal / 2);
@@ -173,37 +371,7 @@ class CostTracker {
       }
     }
     
-    console.log(`Cost tracker: Normalized usage for ${normalizedModel}:`, normalizedUsage);
-    
-    // Calculate cost based on token usage and model
-    const cost = calculateCost(normalizedModel, normalizedUsage.totalTokens);
-    
-    // Create cost entry
-    const timestamp = new Date();
-    const costEntry = {
-      timestamp,
-      model: normalizedModel,
-      originalModel: model !== normalizedModel ? model : undefined, // Keep original model name for reference if different
-      operation,
-      usage: normalizedUsage,
-      cost,
-      queryId
-    };
-    
-    // Add to tracking data
-    if (!this.costs.llm[normalizedModel]) {
-      this.costs.llm[normalizedModel] = [];
-    }
-    this.costs.llm[normalizedModel].push(costEntry);
-    this.costs.total += cost;
-    
-    // Log if detailed logging is enabled
-    if (this.detailedLogging) {
-      console.log(`Cost tracker: LLM operation logged - ${normalizedModel}, ${operation}, $${cost.toFixed(6)}`);
-      console.log(`Token usage: ${normalizedUsage.totalTokens} total tokens (${normalizedUsage.estimated ? 'estimated' : 'reported'})`);
-    }
-    
-    return costEntry;
+    return normalizedUsage;
   }
   
   /**
@@ -287,6 +455,25 @@ class CostTracker {
     
     // Normalize the model name
     const normalizedModel = this.normalizeModelName(model);
+    const trackingId = this.getUniqueTrackingId(model, queryId);
+    
+    // Check if this exact query+model combination has already been processed
+    if (trackingId && this.processedQueries.has(trackingId)) {
+      console.log(`Embedding cost already tracked for ${normalizedModel} with ID ${trackingId}`);
+      
+      // Find and return the existing cost entry
+      for (const modelKey in this.costs.embeddings) {
+        const foundEntry = this.costs.embeddings[modelKey].find(entry => 
+          entry.trackingId === trackingId
+        );
+        
+        if (foundEntry) {
+          return foundEntry;
+        }
+      }
+      
+      return { cost: 0, model: normalizedModel, operation };
+    }
     
     // Find matching model in defaultModels configuration
     const matchedModel = this.findMatchingEmbeddingModel(normalizedModel);
@@ -318,20 +505,27 @@ class CostTracker {
         tokenCount
       },
       cost,
-      queryId
+      queryId,
+      trackingId
     };
     
     // Add to tracking data
     if (!this.costs.embeddings[normalizedModel]) {
       this.costs.embeddings[normalizedModel] = [];
     }
+    
     this.costs.embeddings[normalizedModel].push(costEntry);
     this.costs.total += cost;
     
+    // Mark as processed to prevent duplicates
+    if (trackingId) {
+      this.processedQueries.add(trackingId);
+    }
+    
     // Log if detailed logging is enabled
     if (this.detailedLogging) {
-      console.log(`Cost tracker: Embedding operation logged - ${normalizedModel} (matched to ${matchedModel}), ${operation}, $${cost.toFixed(6)}`);
-      console.log(`Used price per million tokens: $${pricePerMillion}`);
+      console.log(`Cost tracker: Embedding operation logged - ${normalizedModel}, ${operation}, $${cost.toFixed(8)}`);
+      console.log(`Token count: ${tokenCount}`);
     }
     
     return costEntry;

@@ -2,9 +2,9 @@ const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
 const path = require('path');
-const bodyParser = require('body-parser');
 const dotenv = require('dotenv');
 const { createProxyMiddleware } = require('http-proxy-middleware');
+const { defaultModels, calculateCost } = require('./src/config/llmConfig');
 
 // Simple cost tracker implementation for the server
 const costTracker = {
@@ -21,36 +21,221 @@ const costTracker = {
     'text-embedding-3-large': 0.00013
   },
   
+  apiTrackedQueryIds: new Set(), // Track which queryIds had costs from API responses
+  
   // Normalize model name by removing date suffix
   normalizeModelName(modelName) {
     if (!modelName) return 'unknown';
     
-    // Remove date suffix in format -YYYY-MM-DD
-    const normalizedName = modelName.replace(/-\d{4}-\d{2}-\d{2}$/, '');
-    
-    if (normalizedName !== modelName && this.detailedLogging) {
-      console.log(`Server cost tracker: Normalized model name from ${modelName} to ${normalizedName}`);
+    // Handle common date/version patterns in model names
+    const datePattern = /-\d{4}-\d{2}-\d{2}$/;
+    if (datePattern.test(modelName)) {
+      return modelName.replace(datePattern, '');
     }
     
-    return normalizedName;
+    // Azure models often have formats like azure-gpt-4
+    if (modelName.startsWith('azure-')) {
+      return modelName.substring(6); // Remove 'azure-' prefix
+    }
+    
+    // Handle Claude model naming variants - use canonical names
+    if (modelName.includes('claude')) {
+      // All claude-3-5-sonnet variants map to claude-3-5-sonnet
+      if (modelName.includes('claude-3-5-sonnet')) {
+        return 'claude-3-5-sonnet';
+      }
+      
+      // All claude-3-opus variants map to claude-3-opus
+      if (modelName.includes('claude-3-opus')) {
+        return 'claude-3-opus';
+      }
+      
+      // All claude-3-haiku variants map to claude-3-haiku
+      if (modelName.includes('claude-3-haiku')) {
+        return 'claude-3-haiku';
+      }
+      
+      // All claude-3-7-sonnet variants map to claude-3-7-sonnet
+      if (modelName.includes('claude-3-7-sonnet')) {
+        return 'claude-3-7-sonnet';
+      }
+      
+      // All claude-2 variants map to claude-2
+      if (modelName.includes('claude-2')) {
+        return 'claude-2';
+      }
+      
+      // Strip any date suffixes or versions
+      if (modelName.includes('-20')) {
+        // Extract the base model name without the date suffix
+        const parts = modelName.split('-');
+        const dateIndex = parts.findIndex(part => part.startsWith('20') && part.length >= 8);
+        if (dateIndex > 0) {
+          return parts.slice(0, dateIndex).join('-');
+        }
+      }
+      
+      // Remove -latest suffix if present
+      if (modelName.endsWith('-latest')) {
+        return modelName.replace('-latest', '');
+      }
+    }
+    
+    // Handle GPT model naming variants
+    if (modelName.includes('gpt-4o')) {
+      if (modelName.includes('gpt-4o-mini')) {
+        return 'gpt-4o-mini'; // Standard form for gpt-4o-mini
+      }
+      return 'gpt-4o'; // Standard form for gpt-4o
+    }
+    
+    return modelName;
   },
   
-  trackLlmCost(model, usage, operation = 'chat', queryId = null) {
+  // Get cost for a specific model and queryId
+  getModelCost(queryId, modelName) {
+    if (!queryId || !modelName) return 0;
+    
+    const normalizedModel = this.normalizeModelName(modelName);
+    
+    // Extract the base UUID part of the queryId (first 5 parts)
+    const baseUuidParts = queryId.split('-').slice(0, 5);
+    const baseUuid = baseUuidParts.join('-');
+    
+    // Search in all model entries for a matching cost entry
+    for (const modelKey in this.costs.llm) {
+      for (const entry of this.costs.llm[modelKey]) {
+        if (!entry.queryId) continue;
+        
+        // Get UUID part of the entry
+        const entryUuidParts = entry.queryId.split('-').slice(0, 5);
+        const entryUuid = entryUuidParts.join('-');
+        
+        const exactModelMatch = entry.model === normalizedModel || 
+                               entry.model === modelName || 
+                               (entry.originalModel && entry.originalModel === modelName);
+                               
+        // If API already tracked cost for this UUID + model, use that cost
+        if (entryUuid === baseUuid && exactModelMatch && entry.source === 'API') {
+          return entry.cost;
+        }
+        
+        // Also match on exact queryId
+        if (entry.queryId === queryId && exactModelMatch) {
+          return entry.cost;
+        }
+      }
+    }
+    
+    return 0;
+  },
+  
+  // Get a list of all API-tracked UUIDs (just the base UUID part)
+  getApiTrackedUuids() {
+    const baseUuids = new Set();
+    
+    Array.from(this.apiTrackedQueryIds).forEach(queryId => {
+      const uuidParts = queryId.split('-').slice(0, 5);
+      const baseUuid = uuidParts.join('-');
+      baseUuids.add(baseUuid);
+    });
+    
+    return baseUuids;
+  },
+  
+  // Check if a UUID has been tracked by the API
+  hasApiTrackedUuid(queryId) {
+    if (!queryId) return false;
+    
+    const uuidParts = queryId.split('-').slice(0, 5);
+    const baseUuid = uuidParts.join('-');
+    
+    return this.getApiTrackedUuids().has(baseUuid);
+  },
+  
+  // Get the total accumulated cost
+  getTotalCost() {
+    return this.costs.total;
+  },
+  
+  trackLlmCost(model, usage, operation = 'chat', queryId = null, source = 'unknown') {
     // Log for debugging
     console.log(`Server cost tracker: ${model}, ${operation}, ${queryId || 'no-query-id'}`);
     console.log('Usage data:', usage);
+    console.log(`Cost tracking source: ${source}`);
     
     if (!model || !usage) {
       return { cost: 0, model: model || 'unknown', operation, usage: { totalTokens: 0 } };
     }
-    
-    // Normalize the model name
+
+    // Normalize the model name first
     const normalizedModel = this.normalizeModelName(model);
+    
+    // Log the normalization process
+    if (normalizedModel !== model) {
+      console.log(`Server cost tracker: Normalized model name from ${model} to ${normalizedModel}`);
+    }
+
+    // Check if this specific model has already been tracked for this queryId
+    // Need to check both the original and normalized model names
+    if (queryId) {
+      // Extract the base queryId (without model suffix)
+      let baseQueryId = queryId;
+      const splitPos = queryId.lastIndexOf('-');
+      if (splitPos > 0) {
+        baseQueryId = queryId.substring(0, splitPos);
+      }
+      
+      // Check both the normalized model and original model name in the actual tracking data
+      const alreadyTracked = Object.values(this.costs.llm).some(modelEntries => 
+        modelEntries.some(entry => {
+          // Check for exact match on model and queryId
+          const exactMatch = entry.queryId === queryId && 
+                             (entry.model === normalizedModel || entry.model === model);
+                             
+          // For Claude models, we need to check normalized form with base queryId too
+          const claudeMatch = (normalizedModel.includes('claude') || model.includes('claude')) && 
+                             entry.queryId.startsWith(baseQueryId) && 
+                             (entry.model === normalizedModel || entry.model === model);
+                             
+          return exactMatch || claudeMatch;
+        })
+      );
+      
+      if (alreadyTracked) {
+        console.log(`Cost already tracked for model ${model} (${normalizedModel}) with queryId ${queryId}, skipping duplicate tracking`);
+        
+        // Find the existing entry and return it
+        let existingEntry = null;
+        
+        // Search through all model entries
+        for (const modelKey in this.costs.llm) {
+          const foundEntry = this.costs.llm[modelKey].find(entry => 
+            (entry.queryId === queryId && (entry.model === normalizedModel || entry.model === model)) ||
+            ((normalizedModel.includes('claude') || model.includes('claude')) && 
+             entry.queryId.startsWith(baseQueryId) && 
+             (entry.model === normalizedModel || entry.model === model))
+          );
+          
+          if (foundEntry) {
+            existingEntry = foundEntry;
+            break;
+          }
+        }
+        
+        return existingEntry || { cost: 0, model: normalizedModel, operation, usage: { totalTokens: 0 } };
+      }
+    }
+
+    // Initialize the model's array if it doesn't exist
+    if (!this.costs.llm[normalizedModel]) {
+      this.costs.llm[normalizedModel] = [];
+    }
     
     // Normalize the usage data
     const normalizedUsage = {
-      promptTokens: usage.promptTokens || usage.prompt_tokens || usage.input || 0,
-      completionTokens: usage.completionTokens || usage.completion_tokens || usage.output || 0,
+      promptTokens: usage.promptTokens || usage.prompt_tokens || usage.input_tokens || usage.input || 0,
+      completionTokens: usage.completionTokens || usage.completion_tokens || usage.output_tokens || usage.output || 0,
       totalTokens: usage.totalTokens || usage.total_tokens || usage.total || 0
     };
     
@@ -60,56 +245,56 @@ const costTracker = {
       normalizedUsage.totalTokens = normalizedUsage.promptTokens + normalizedUsage.completionTokens;
     }
     
-    // Calculate cost based on the model and token count
-    // Simple pricing model for demonstration
+    // Calculate cost using the appropriate pricing
     let cost = 0;
-    if (normalizedModel.includes('gpt-4')) {
-      // GPT-4 pricing estimate
-      cost = (normalizedUsage.promptTokens * 0.00003) + (normalizedUsage.completionTokens * 0.00006);
-    } else if (normalizedModel.includes('gpt-3.5')) {
-      // GPT-3.5 pricing estimate
-      cost = (normalizedUsage.promptTokens * 0.000005) + (normalizedUsage.completionTokens * 0.000015);
-    } else if (normalizedModel.includes('claude-3-5')) {
-      // Claude 3.5 Sonnet pricing estimate
-      cost = normalizedUsage.totalTokens * 0.000009;
-    } else if (normalizedModel.includes('claude-3-opus')) {
-      // Claude 3 Opus pricing estimate
-      cost = normalizedUsage.totalTokens * 0.00015;
-    } else if (normalizedModel.includes('claude-3-haiku')) {
-      // Claude 3 Haiku pricing estimate
-      cost = normalizedUsage.totalTokens * 0.00025;
-    } else if (normalizedModel.includes('claude-2')) {
-      // Claude 2 pricing estimate
-      cost = normalizedUsage.totalTokens * 0.00008;
-    } else if (normalizedModel.includes('mistral') || normalizedModel.includes('llama') || normalizedModel.includes('gemma')) {
-      // Local models are free
-      cost = 0;
+    const baseModel = normalizedModel.replace('azure-', ''); // Handle azure prefix
+    const modelConfig = defaultModels[normalizedModel] || defaultModels[baseModel];
+    
+    if (modelConfig) {
+      // For Claude models, usage might be in a different format
+      if (normalizedModel.includes('claude')) {
+        // Check if this is the Claude API format
+        const inputTokens = normalizedUsage.promptTokens || usage.input_tokens || 0;
+        const outputTokens = normalizedUsage.completionTokens || usage.output_tokens || 0;
+        
+        // Calculate cost using per-token rates (per million tokens)
+        const inputCost = (modelConfig.input / 1000000) * inputTokens;
+        const outputCost = (modelConfig.output / 1000000) * outputTokens;
+        cost = inputCost + outputCost;
+        
+        // Format for logging - use fixed decimal notation with 10 places for very small values
+        const costFormatted = cost < 0.000001 ? cost.toFixed(10) : cost.toFixed(7);
+        console.log(`Claude cost calculation: Input ${inputTokens} tokens at $${modelConfig.input}/million + Output ${outputTokens} tokens at $${modelConfig.output}/million = $${costFormatted}`);
+      } else {
+        // Standard calculation for other models
+        const costResult = calculateCost(normalizedModel, {
+          input: normalizedUsage.promptTokens,
+          output: normalizedUsage.completionTokens
+        });
+        cost = costResult.totalCost;
+      }
     } else {
-      // Default pricing for unknown models
-      cost = normalizedUsage.totalTokens * 0.00001;
+      console.warn(`No pricing found for model ${normalizedModel}, assuming zero cost`);
     }
     
     // Store the cost data
-    if (!this.costs.llm[normalizedModel]) {
-      this.costs.llm[normalizedModel] = [];
-    }
-    
     const timestamp = new Date();
     const costEntry = {
       timestamp,
       model: normalizedModel,
-      originalModel: model !== normalizedModel ? model : undefined, // Keep original model name for reference if different
+      originalModel: model !== normalizedModel ? model : undefined,
       operation,
       usage: normalizedUsage,
       cost,
-      queryId
+      queryId,
+      source
     };
     
     this.costs.llm[normalizedModel].push(costEntry);
     this.costs.total += cost;
     
-    console.log(`Cost calculated for ${normalizedModel}: $${cost.toFixed(6)}`);
-    console.log(`Total accumulated cost: $${this.costs.total.toFixed(6)}`);
+    console.log(`Cost calculated for ${normalizedModel}: $${cost.toFixed(7)} (source: ${source})`);
+    console.log(`Total accumulated cost: $${this.costs.total.toFixed(7)}`);
     
     return costEntry;
   },
@@ -164,14 +349,17 @@ const costTracker = {
     // Add to total cost
     this.costs.total += cost;
     
-    console.log(`Embedding cost calculated for ${normalizedModel}: $${cost.toFixed(6)} (${tokenCount} tokens)`);
-    console.log(`Total accumulated cost: $${this.costs.total.toFixed(6)}`);
+    // Format the cost value - use fixed decimal notation with 10 decimal places for very small values
+    const costFormatted = cost < 0.000001 ? cost.toFixed(10) : cost.toFixed(7);
+    
+    console.log(`Embedding cost calculated for ${normalizedModel}: $${costFormatted} (${tokenCount} tokens)`);
+    console.log(`Total accumulated cost: $${this.costs.total.toFixed(7)}`);
     
     return costEntry;
   },
   
   getCostSummary() {
-    console.log('Returning cost summary with total:', this.costs.total.toFixed(6));
+    console.log('Returning cost summary with total:', this.costs.total.toFixed(10));
     
     // Prepare llm data in array format
     let llmArray = [];
@@ -179,7 +367,7 @@ const costTracker = {
       llmArray = llmArray.concat(this.costs.llm[model]);
     }
     
-    // Prepare embeddings data in array format (similar to llm)
+    // Prepare embeddings data in array format
     let embeddingsArray = [];
     for (const model in this.costs.embeddings) {
       embeddingsArray = embeddingsArray.concat(this.costs.embeddings[model]);
@@ -348,13 +536,190 @@ const costTracker = {
     this.costs.total = totalCost;
     
     console.log(`Migration complete. Data now has ${Object.keys(this.costs.llm).length} LLM models and ${Object.keys(this.costs.embeddings).length} embedding models.`);
-    console.log(`Total cost: $${this.costs.total.toFixed(6)}`);
+    console.log(`Total cost: $${this.costs.total.toFixed(7)}`);
     
     return true;
   },
   
-  getTotalCost() {
-    return this.costs.total;
+  getApiProvidedCost(queryId) {
+    if (!queryId) return 0;
+    
+    let cost = 0;
+    // Look through all tracked LLM costs for this queryId
+    Object.values(this.costs.llm).forEach(modelEntries => {
+      modelEntries.forEach(entry => {
+        if (entry.queryId === queryId) {
+          cost = entry.cost;
+        }
+      });
+    });
+    
+    return cost;
+  },
+  
+  computeCost(model, usage, operation = 'chat', queryId = null, source = 'unknown') {
+    // Log for debugging
+    console.log(`Server cost tracker: ${model}, ${operation}, ${queryId || 'no-query-id'}`);
+    console.log('Usage data:', usage);
+    console.log(`Cost tracking source: ${source}`);
+    
+    if (!model || !usage) {
+      return { cost: 0, model: model || 'unknown', operation, usage: { totalTokens: 0 } };
+    }
+
+    // Normalize the model name first
+    const normalizedModel = this.normalizeModelName(model);
+    
+    // Log the normalization process
+    if (normalizedModel !== model) {
+      console.log(`Server cost tracker: Normalized model name from ${model} to ${normalizedModel}`);
+    }
+
+    // Check if this specific model has already been tracked for this queryId
+    // Need to check both the original and normalized model names
+    if (queryId) {
+      // Extract the base queryId (without model suffix)
+      let baseQueryId = queryId;
+      const splitPos = queryId.lastIndexOf('-');
+      if (splitPos > 0) {
+        baseQueryId = queryId.substring(0, splitPos);
+      }
+      
+      // Check both the normalized model and original model name in the actual tracking data
+      const alreadyTracked = Object.values(this.costs.llm).some(modelEntries => 
+        modelEntries.some(entry => {
+          // Check for exact match on model and queryId
+          const exactMatch = entry.queryId === queryId && 
+                             (entry.model === normalizedModel || entry.model === model);
+                             
+          // For Claude models, we need to check normalized form with base queryId too
+          const claudeMatch = (normalizedModel.includes('claude') || model.includes('claude')) && 
+                             entry.queryId.startsWith(baseQueryId) && 
+                             (entry.model === normalizedModel || entry.model === model);
+                             
+          return exactMatch || claudeMatch;
+        })
+      );
+      
+      if (alreadyTracked) {
+        console.log(`Cost already tracked for model ${model} (${normalizedModel}) with queryId ${queryId}, skipping duplicate tracking`);
+        
+        // Find the existing entry and return it
+        let existingEntry = null;
+        
+        // Search through all model entries
+        for (const modelKey in this.costs.llm) {
+          const foundEntry = this.costs.llm[modelKey].find(entry => 
+            (entry.queryId === queryId && (entry.model === normalizedModel || entry.model === model)) ||
+            ((normalizedModel.includes('claude') || model.includes('claude')) && 
+             entry.queryId.startsWith(baseQueryId) && 
+             (entry.model === normalizedModel || entry.model === model))
+          );
+          
+          if (foundEntry) {
+            existingEntry = foundEntry;
+            break;
+          }
+        }
+        
+        return existingEntry || { cost: 0, model: normalizedModel, operation, usage: { totalTokens: 0 } };
+      }
+    }
+
+    // Initialize the model's array if it doesn't exist
+    if (!this.costs.llm[normalizedModel]) {
+      this.costs.llm[normalizedModel] = [];
+    }
+    
+    // Normalize the usage data
+    const normalizedUsage = {
+      promptTokens: usage.promptTokens || usage.prompt_tokens || usage.input_tokens || usage.input || 0,
+      completionTokens: usage.completionTokens || usage.completion_tokens || usage.output_tokens || usage.output || 0,
+      totalTokens: usage.totalTokens || usage.total_tokens || usage.total || 0
+    };
+    
+    // If total tokens isn't set, calculate it
+    if (normalizedUsage.totalTokens === 0 && 
+        (normalizedUsage.promptTokens > 0 || normalizedUsage.completionTokens > 0)) {
+      normalizedUsage.totalTokens = normalizedUsage.promptTokens + normalizedUsage.completionTokens;
+    }
+    
+    // Calculate cost using the appropriate pricing
+    let cost = 0;
+    const baseModel = normalizedModel.replace('azure-', ''); // Handle azure prefix
+    const modelConfig = defaultModels[normalizedModel] || defaultModels[baseModel];
+    
+    if (modelConfig) {
+      // For Claude models, usage might be in a different format
+      if (normalizedModel.includes('claude')) {
+        // Check if this is the Claude API format
+        const inputTokens = normalizedUsage.promptTokens || usage.input_tokens || 0;
+        const outputTokens = normalizedUsage.completionTokens || usage.output_tokens || 0;
+        
+        // Calculate cost using per-token rates (per million tokens)
+        const inputCost = (modelConfig.input / 1000000) * inputTokens;
+        const outputCost = (modelConfig.output / 1000000) * outputTokens;
+        cost = inputCost + outputCost;
+        
+        // Format for logging - use fixed decimal notation with 10 places for very small values
+        const costFormatted = cost < 0.000001 ? cost.toFixed(10) : cost.toFixed(7);
+        console.log(`Claude cost calculation: Input ${inputTokens} tokens at $${modelConfig.input}/million + Output ${outputTokens} tokens at $${modelConfig.output}/million = $${costFormatted}`);
+      } else {
+        // Standard calculation for other models
+        const costResult = calculateCost(normalizedModel, {
+          input: normalizedUsage.promptTokens,
+          output: normalizedUsage.completionTokens
+        });
+        cost = costResult.totalCost;
+      }
+    } else {
+      console.warn(`No pricing found for model ${normalizedModel}, assuming zero cost`);
+    }
+    
+    // Store the cost data
+    const timestamp = new Date();
+    const costEntry = {
+      timestamp,
+      model: normalizedModel,
+      originalModel: model !== normalizedModel ? model : undefined,
+      operation,
+      usage: normalizedUsage,
+      cost,
+      queryId,
+      source
+    };
+    
+    this.costs.llm[normalizedModel].push(costEntry);
+    this.costs.total += cost;
+    
+    console.log(`Cost calculated for ${normalizedModel}: $${cost.toFixed(7)} (source: ${source})`);
+    console.log(`Total accumulated cost: $${this.costs.total.toFixed(7)}`);
+    
+    return costEntry;
+  },
+  
+  /**
+   * Get costs for a specific model queryId
+   * @param {string} queryId - The query identifier
+   * @returns {Array} - Array of cost entries for this queryId
+   */
+  getModelCosts(queryId) {
+    if (!queryId) return [];
+    
+    const results = [];
+    
+    // Check LLM costs
+    for (const model in this.costs.llm) {
+      const modelEntries = this.costs.llm[model].filter(entry => 
+        entry.queryId === queryId || entry.trackingId === queryId
+      );
+      
+      if (modelEntries.length > 0) {
+        results.push(...modelEntries);
+      }
+    }
+    
+    return results;
   }
 };
 
@@ -366,8 +731,8 @@ const PORT = process.env.BACKEND_PORT || process.env.PORT || 3002;
 
 // Middleware
 app.use(cors());
-app.use(bodyParser.json({ limit: '10mb' }));
-app.use(bodyParser.urlencoded({ extended: true, limit: '10mb' }));
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Serve static files from the React app in production
 app.use(express.static(path.join(__dirname, 'build')));
@@ -377,53 +742,140 @@ app.use(express.static(path.join(__dirname, 'build')));
 // 2. Our own direct implementation below
 // We need to ensure they don't conflict.
 
+// Extract the base queryId if it contains a model name
+function extractBaseQueryId(queryId) {
+  if (!queryId) return queryId;
+  
+  if (queryId.includes('-')) {
+    const lastDashPos = queryId.lastIndexOf('-');
+    if (lastDashPos > 0) {
+      // Check if the part after the last dash looks like a model name
+      const possibleModel = queryId.substring(lastDashPos + 1);
+      if (possibleModel.includes('gpt') || 
+          possibleModel.includes('claude') || 
+          possibleModel.includes('o3') ||
+          possibleModel.includes('llama')) {
+        return queryId.substring(0, lastDashPos);
+      }
+    }
+  }
+  
+  return queryId;
+}
+
 // Replace the existing Anthropic proxy implementation with this version
-app.post('/api/anthropic-proxy', async (req, res) => {
+app.post('/api/proxy/anthropic/messages', async (req, res) => {
   try {
-    // Use API key from request body or fall back to environment variable
+    // Extract relevant data from request
     const apiKey = req.body.anthropicApiKey || process.env.REACT_APP_ANTHROPIC_API_KEY;
+    const { model, messages, queryId, isForValidation, isDeliberateCall } = req.body;
+    
+    // Strong validation - block ALL API calls that don't have a queryId
+    // This prevents any automatic API calls that might happen in the background
+    if (!queryId) {
+      console.log(`\n=============== BLOCKING ANTHROPIC API CALL ===============`);
+      console.log(`Blocked API call to model: ${model}`);
+      console.log(`Reason: No queryId provided, indicating this is not a user-requested call`);
+      console.log(`=============== END BLOCKED CALL ===============\n`);
+      
+      return res.status(200).json({
+        content: [{ text: "This call was blocked because no queryId was provided, indicating it wasn't explicitly requested by the user." }],
+        model: model,
+        blocked: true
+      });
+    }
+    
+    // Special check for automatic Claude calls when no models are selected
+    // When isDeliberateCall is not true and there's no queryId, it's likely an automatic call
+    if (!isDeliberateCall && model.includes('claude-3-5-sonnet')) {
+      console.log(`\n=============== CHECKING CLAUDE CALL TYPE ===============`);
+      console.log(`Model requested: ${model}`);
+      console.log(`QueryId provided: ${queryId ? 'Yes' : 'No'}`);
+      console.log(`isDeliberateCall flag: ${isDeliberateCall ? 'Yes' : 'No'}`);
+      
+      // If queryId exists, this is likely a deliberate call even if isDeliberateCall is false
+      if (queryId) {
+        console.log(`QueryId present (${queryId}), considering this a deliberate call`);
+      } else {
+        console.log(`\n=============== BLOCKING AUTOMATIC CLAUDE CALL ===============`);
+        console.log(`Blocked automatic call to model: ${model}`);
+        console.log(`This appears to be an automatic call without any models explicitly selected`);
+        console.log(`=============== END BLOCKED CALL ===============\n`);
+        
+        return res.status(200).json({
+          content: [{ text: "This call was blocked because no models were explicitly selected." }],
+          model: model,
+          blocked: true
+        });
+      }
+    }
+    
+    // Extract the base queryId for consistent tracking
+    const baseQueryId = extractBaseQueryId(queryId);
+    
+    // Make model-specific query ID to avoid duplicate cost tracking
+    const modelSpecificQueryId = baseQueryId ? `${baseQueryId}-${model}` : null;
+    
+    // Log request details
+    console.log(`\n=============== ANTHROPIC API REQUEST ===============`);
+    console.log(`Model: ${model}`);
+    console.log(`QueryId: ${queryId || 'none'}`);
+    console.log(`BaseQueryId: ${baseQueryId || 'none'}`);
+    console.log(`ModelSpecificQueryId: ${modelSpecificQueryId || 'none'}`);
     
     if (!apiKey) {
+      console.error('No Anthropic API key provided');
       return res.status(400).json({ error: 'Anthropic API key is required' });
     }
     
-    // Extract API key and queryId from the request
-    const { anthropicApiKey, queryId, ...cleanRequestBody } = req.body;
+    // Create clean request body with only parameters the Anthropic API accepts
+    // This is more robust than trying to delete each custom parameter
+    const cleanRequestBody = {
+      model: req.body.model,
+      messages: req.body.messages,
+      system: req.body.system,
+      max_tokens: req.body.max_tokens || 4096,
+      temperature: req.body.temperature
+    };
     
-    console.log('Proxying request to Anthropic API...');
-    console.log(`Request includes queryId for tracking: ${queryId ? 'yes' : 'no'}`);
+    // Optional parameters
+    if (req.body.top_p !== undefined) cleanRequestBody.top_p = req.body.top_p;
+    if (req.body.top_k !== undefined) cleanRequestBody.top_k = req.body.top_k;
+    if (req.body.stop_sequences) cleanRequestBody.stop_sequences = req.body.stop_sequences;
+    if (req.body.stream === true) cleanRequestBody.stream = true;
     
+    // Forward request to Anthropic API
     const response = await axios.post('https://api.anthropic.com/v1/messages', cleanRequestBody, {
       headers: {
         'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        'anthropic-version': '2023-06-01'
       }
     });
     
-    console.log('Received response from Anthropic API');
+    console.log('Anthropic API response status:', response.status);
     
     // Track costs if usage information is available
     if (response.data && response.data.usage) {
-      // Extract model and usage information
-      const model = response.data.model || cleanRequestBody.model;
-      const usage = {
-        prompt_tokens: response.data.usage.input_tokens || 0,
-        completion_tokens: response.data.usage.output_tokens || 0,
-        total_tokens: (response.data.usage.input_tokens || 0) + (response.data.usage.output_tokens || 0)
-      };
+      // Use the unified cost computation method to ensure consistency
+      const costInfo = costTracker.computeCost(model, response.data.usage, 'chat', modelSpecificQueryId, 'API');
+      console.log(`Cost tracked for Anthropic API call: $${costInfo.cost.toFixed(10)}`);
       
-      // Track cost
-      const costInfo = costTracker.trackLlmCost(model, usage, 'chat', queryId);
-      console.log(`Cost tracked for Anthropic API call: $${costInfo.cost.toFixed(6)}`);
-      
-      // Add cost info to response
+      // Add calculated cost info to response
       response.data.cost = costInfo.cost;
+    } else {
+      console.log('No usage information available in Anthropic response for cost tracking');
     }
     
     res.json(response.data);
   } catch (error) {
-    console.error('Error proxying to Anthropic API:', error.response?.data || error.message);
+    console.error('Error proxying to Anthropic API:', error.message);
+    
+    if (error.response) {
+      console.error('Response status:', error.response.status);
+      console.error('Response data:', JSON.stringify(error.response.data, null, 2));
+    }
+    
     res.status(error.response?.status || 500).json({
       error: error.response?.data || { message: error.message }
     });
@@ -467,7 +919,7 @@ app.post('/api/openai-proxy/:endpoint(*)', async (req, res) => {
         const operation = Array.isArray(cleanRequestBody.input) && cleanRequestBody.input.length > 1 ? 'document' : 'query';
         
         const costInfo = costTracker.trackEmbeddingCost(model, tokenCount, operation, queryId);
-        console.log(`Cost tracked for OpenAI embedding: $${costInfo.cost.toFixed(6)}`);
+        console.log(`Cost tracked for OpenAI embedding: $${costInfo.cost.toFixed(7)}`);
         console.log(`Tokens processed: ${tokenCount}, Model: ${model}, Operation: ${operation}`);
         
         // Add cost info to response
@@ -477,11 +929,52 @@ app.post('/api/openai-proxy/:endpoint(*)', async (req, res) => {
         const model = response.data.model || cleanRequestBody.model;
         const usage = response.data.usage;
         
-        const costInfo = costTracker.trackLlmCost(model, usage, 'chat', queryId);
-        console.log(`Cost tracked for OpenAI API call: $${costInfo.cost.toFixed(6)}`);
+        // Create a model-specific queryId for proper cost tracking
+        const modelSpecificQueryId = queryId ? `${queryId}-${model}` : null;
         
-        // Add cost info to response
-        response.data.cost = costInfo.cost;
+        // Check if this specific model has already been tracked for this queryId
+        let alreadyTracked = false;
+        if (modelSpecificQueryId) {
+          const normalizedModel = costTracker.normalizeModelName(model);
+          
+          // Extract the base queryId (without model suffix)
+          let baseQueryId = modelSpecificQueryId;
+          const splitPos = modelSpecificQueryId.lastIndexOf('-');
+          if (splitPos > 0) {
+            baseQueryId = modelSpecificQueryId.substring(0, splitPos);
+          }
+          
+          // Check for exact or related matches
+          alreadyTracked = Object.values(costTracker.costs.llm).some(modelEntries => 
+            modelEntries.some(entry => {
+              // Check for exact match on model and queryId
+              const exactMatch = entry.queryId === modelSpecificQueryId && 
+                               (entry.model === normalizedModel || entry.model === model);
+              
+              return exactMatch;
+            })
+          );
+        }
+        
+        if (alreadyTracked) {
+          console.log(`Cost already tracked for model ${model} with queryId ${modelSpecificQueryId}, skipping duplicate tracking`);
+        } else {
+          try {
+            const costInfo = costTracker.computeCost(model, usage, 'chat', modelSpecificQueryId, 'API');
+            if (costInfo && typeof costInfo.cost === 'number') {
+              console.log(`Cost tracked for OpenAI API call: $${costInfo.cost.toFixed(10)}`);
+              
+              // Add this queryId to the set of API-tracked costs to prevent duplication
+              if (modelSpecificQueryId) {
+                costTracker.apiTrackedQueryIds.add(modelSpecificQueryId);
+              }
+            } else {
+              console.warn('Invalid cost info returned from computeCost:', costInfo);
+            }
+          } catch (costError) {
+            console.error('Error tracking cost:', costError.message);
+          }
+        }
       }
     }
     
@@ -504,12 +997,67 @@ app.post('/api/openai-proxy/:endpoint(*)', async (req, res) => {
 // Proxy endpoint for Azure OpenAI API to avoid CORS issues
 app.post('/api/proxy/azure/chat/completions', async (req, res) => {
   try {
+    // COMPLETE REQUEST DUMP
+    console.log('========================= AZURE OPENAI REQUEST DUMP =========================');
+    console.log('Request headers:', req.headers);
+    console.log('Request body stringified:', JSON.stringify(req.body, null, 2));
+    console.log('DeploymentName direct access:', req.body.deploymentName);
+    console.log('Model direct access:', req.body.model);
+    console.log('==========================================================================');
+    
+    // IMMEDIATE FIX FOR DEPLOYMENT NAME
+    // This is a critical fix that ensures we always have a deployment name
+    let forcedDeploymentName;
+    if (req.body.model && req.body.model.startsWith('azure-')) {
+      forcedDeploymentName = req.body.model.replace('azure-', '');
+    } else if (req.body.model) {
+      forcedDeploymentName = req.body.model;
+    } else {
+      // Last resort
+      forcedDeploymentName = 'gpt-4o';
+    }
+    
+    console.log(`[AZURE CRITICAL] Force setting deployment name to: ${forcedDeploymentName}`);
+    req.body.deploymentName = forcedDeploymentName;
+    
+    // Extract query ID if provided
+    const queryId = req.body.queryId;
+    
+    // Get model name from the request (this is reliably present)
+    const model = req.body.model;
+    
+    // Get deployment name directly from model name when missing
+    // This is the KEY fix - making sure we always have a deployment name
+    let deploymentName = req.body.deploymentName;
+    if (!deploymentName && model) {
+      if (model.startsWith('azure-')) {
+        deploymentName = model.replace('azure-', '');
+      } else {
+        deploymentName = model; // Use model name directly as fallback
+      }
+      console.log(`[AZURE DIRECT FIX] Using model name to set deployment name: ${deploymentName}`);
+      
+      // Update request body with the fixed deployment name
+      req.body.deploymentName = deploymentName;
+    }
+    
+    // Final model/deployment name
+    const finalModel = model || `azure-${deploymentName}`;
+    
+    // Extract the base queryId for consistent tracking
+    const baseQueryId = extractBaseQueryId(queryId);
+    
+    // Make model-specific query ID to avoid duplicate cost tracking
+    const modelSpecificQueryId = baseQueryId ? `${baseQueryId}-${finalModel}` : null;
+    
+    console.log(`Azure OpenAI API request: model=${finalModel}, deployment=${deploymentName}, queryId=${queryId}`);
+    console.log(`BaseQueryId: ${baseQueryId || 'none'}`);
+    console.log(`ModelSpecificQueryId: ${modelSpecificQueryId || 'none'}`);
+    
     // Extract the Azure OpenAI API key and endpoint from the request
     const apiKey = req.body.azureApiKey;
     const endpoint = req.body.azureEndpoint;
     const apiVersion = req.body.apiVersion || process.env.REACT_APP_AZURE_OPENAI_API_VERSION || '2024-02-15-preview';
-    const deploymentName = req.body.deploymentName;
-    const queryId = req.body.queryId; // Extract queryId for cost tracking
     
     console.log('[DEBUG] Azure API Proxy Request:');
     console.log(`- Request URL: ${req.originalUrl}`);
@@ -539,10 +1087,10 @@ app.post('/api/proxy/azure/chat/completions', async (req, res) => {
     }
     
     if (!deploymentName) {
-      console.error('[AZURE ERROR] Missing deployment name in request');
+      console.error('[AZURE ERROR] Missing deployment name in request and unable to derive from model');
       return res.status(400).json({
         error: {
-          message: 'Azure OpenAI deployment name is required'
+          message: 'Azure OpenAI deployment name is required and could not be derived from model'
         }
       });
     }
@@ -651,6 +1199,14 @@ app.post('/api/proxy/azure/chat/completions', async (req, res) => {
     const targetUrl = `${formattedEndpoint}/openai/deployments/${deploymentName}/chat/completions?api-version=${apiVersion}`;
     console.log(`[DEBUG] Final Azure API target URL: ${targetUrl}`);
     
+    // Final validation of key parameters before sending the request
+    console.log('[AZURE PRE-FLIGHT CHECK]');
+    console.log(`- Deployment name: '${deploymentName}'`);
+    console.log(`- API key length: ${apiKey ? apiKey.length : 'MISSING'}`);
+    console.log(`- Endpoint: '${formattedEndpoint}'`);
+    console.log(`- API version: '${apiVersion}'`);
+    console.log(`- Messages count: ${cleanRequestBody.messages?.length || 0}`);
+    
     // Make the request to Azure OpenAI API
     console.log(`[DEBUG] About to make Azure API request to: ${targetUrl}`);
     console.log(`[DEBUG] Request body: ${JSON.stringify(cleanRequestBody, null, 2)}`);
@@ -681,156 +1237,33 @@ app.post('/api/proxy/azure/chat/completions', async (req, res) => {
       if (azureResponse.data.choices && azureResponse.data.choices.length > 0) {
         const firstChoice = azureResponse.data.choices[0];
         console.log(`[O3-MINI RESPONSE] First choice keys: ${Object.keys(firstChoice).join(', ')}`);
-        console.log(`[O3-MINI RESPONSE] Finish reason: ${firstChoice.finish_reason}`);
-        
-        if (firstChoice.message) {
-          console.log(`[O3-MINI RESPONSE] Message keys: ${Object.keys(firstChoice.message).join(', ')}`);
-          console.log(`[O3-MINI RESPONSE] Content empty?: ${!firstChoice.message.content || firstChoice.message.content.trim() === ''}`);
-          console.log(`[O3-MINI RESPONSE] Content length: ${firstChoice.message.content?.length || 0}`);
-          
-          // If content is empty but we have completion tokens, log a warning
-          if ((!firstChoice.message.content || firstChoice.message.content.trim() === '') && 
-              azureResponse.data.usage && 
-              azureResponse.data.usage.completion_tokens > 0) {
-            console.warn(`[O3-MINI WARNING] Empty content despite using ${azureResponse.data.usage.completion_tokens} completion tokens`);
-            console.warn(`[O3-MINI WARNING] This is a known issue with o3-mini and finish_reason=${firstChoice.finish_reason}`);
-          }
-        }
-      }
-      
-      // Add cost information to the response for client-side handling
-      if (azureResponse.data.usage) {
-        // Calculate cost based on token usage
-        const inputTokens = azureResponse.data.usage.prompt_tokens || 0;
-        const outputTokens = azureResponse.data.usage.completion_tokens || 0;
-        
-        // Use o3-mini pricing (very rough estimate)
-        const inputCost = (inputTokens * 1.10) / 1000000;  // $1.10 per 1M tokens
-        const outputCost = (outputTokens * 4.40) / 1000000; // $4.40 per 1M tokens
-        const totalCost = inputCost + outputCost;
-        
-        // Add cost to the response
-        azureResponse.data.cost = totalCost;
-        console.log(`[O3-MINI RESPONSE] Estimated cost: $${totalCost.toFixed(6)}`);
+        console.log('[O3-MINI RESPONSE] Analyzing first choice content');
       }
     }
     
-    // Check if the response data has a specific structure expected for Azure OpenAI
-    if (azureResponse.data && azureResponse.data.choices) {
-      console.log('Azure OpenAI response data structure:');
-      console.log(`- choices: Array with ${azureResponse.data.choices.length} items`);
-      if (azureResponse.data.usage) {
-        console.log(`- usage: ${JSON.stringify(azureResponse.data.usage)}`);
-      }
+    // Track costs if usage information is available
+    if (azureResponse.data && azureResponse.data.usage) {
+      const usage = azureResponse.data.usage;
       
-      // Track cost if queryId is provided and the request is successful
-      if (queryId && azureResponse.data.usage) {
-        const usage = azureResponse.data.usage;
-        const tokenUsage = {
-          prompt_tokens: usage.prompt_tokens,
-          completion_tokens: usage.completion_tokens,
-          total_tokens: usage.total_tokens
-        };
-        
-        // Normalize model name (removing Azure prefix if present)
-        const modelName = deploymentName.includes('gpt-') ? 
-          deploymentName : 
-          `${deploymentName}-${apiVersion}`;
-        
-        // Track cost
-        costTracker.trackLlmCost(modelName, tokenUsage, 'chat', queryId);
-      }
+      // Use the unified cost computation method
+      const costInfo = costTracker.computeCost(finalModel, usage, 'chat', modelSpecificQueryId, 'API');
+      console.log(`Cost tracked for Azure OpenAI API call: $${costInfo.cost.toFixed(10)}`);
+      
+      // Add calculated cost info to response
+      azureResponse.data.cost = costInfo.cost;
+      console.log(`Added calculated cost to Azure response: $${costInfo.cost.toFixed(10)}`);
     } else {
-      console.warn('Unexpected response structure from Azure OpenAI API');
-      console.log('Response data:', azureResponse.data);
+      console.log('No usage information available in Azure OpenAI response for cost tracking');
     }
     
-    // Return the Azure OpenAI API response
     res.json(azureResponse.data);
   } catch (error) {
     console.error('Error proxying to Azure OpenAI API:', error.message);
     
-    // Check if the error is from Azure OpenAI and contains a structured error response
-    if (error.response && error.response.data) {
-      console.error('Azure OpenAI API error response:', error.response.data);
-      
-      // Return the error with the same structure as the Azure OpenAI API
-      return res.status(error.response.status).json({
-        error: error.response.data.error || {
-          message: error.message,
-          code: error.response.status,
-          status: error.response.statusText
-        }
-      });
-    }
-    
-    // Generic error response
-    res.status(500).json({
-      error: {
-        message: `Error proxying to Azure OpenAI API: ${error.message}`
-      }
-    });
-  }
-});
-
-// Endpoint to list Azure OpenAI deployments
-app.post('/api/list-azure-deployments', async (req, res) => {
-  try {
-    // Extract the Azure OpenAI API key and endpoint from the request or env
-    const apiKey = req.body.azureApiKey || process.env.REACT_APP_AZURE_OPENAI_API_KEY;
-    const endpoint = req.body.azureEndpoint || process.env.REACT_APP_AZURE_OPENAI_ENDPOINT;
-    const apiVersion = req.body.apiVersion || process.env.REACT_APP_AZURE_OPENAI_API_VERSION || '2023-05-15';
-    
-    console.log('[DEBUG] Azure Deployments Request:');
-    console.log(`- Azure endpoint: ${endpoint}`);
-    console.log(`- API version: ${apiVersion}`);
-    console.log(`- API key provided: ${apiKey ? 'Yes' : 'No'}`);
-    
-    if (!apiKey) {
-      return res.status(401).json({
-        error: {
-          message: 'Azure OpenAI API key is required'
-        }
-      });
-    }
-    
-    if (!endpoint) {
-      return res.status(400).json({
-        error: {
-          message: 'Azure OpenAI endpoint is required'
-        }
-      });
-    }
-    
-    // Ensure the endpoint URL is properly formatted
-    let formattedEndpoint = endpoint;
-    if (formattedEndpoint.endsWith('/')) {
-      formattedEndpoint = formattedEndpoint.slice(0, -1);
-    }
-    
-    // List deployments endpoint
-    const deploymentsUrl = `${formattedEndpoint}/openai/deployments?api-version=${apiVersion}`;
-    console.log(`[DEBUG] Requesting Azure deployments from: ${deploymentsUrl}`);
-    
-    const response = await axios.get(
-      deploymentsUrl,
-      {
-        headers: {
-          'api-key': apiKey
-        }
-      }
-    );
-    
-    res.json(response.data);
-  } catch (error) {
-    console.error('Error getting Azure deployments:', error.message);
-    
     // Log more detailed error information
     if (error.response) {
       console.error('Response status:', error.response.status);
-      console.error('Response data:', error.response.data);
-    } else if (error.request) {
-      console.error('No response received. Request:', error.request);
+      console.error('Response data:', JSON.stringify(error.response.data, null, 2));
     }
     
     res.status(error.response?.status || 500).json({
@@ -839,208 +1272,58 @@ app.post('/api/list-azure-deployments', async (req, res) => {
   }
 });
 
-// Cost tracking API endpoints
-app.get('/api/cost-tracking-summary', (req, res) => {
-  try {
-    const summary = costTracker.getCostSummary();
-    res.json(summary);
-  } catch (error) {
-    console.error('Error getting cost summary:', error);
-    res.status(500).json({ error: 'Failed to get cost summary' });
-  }
-});
-
-// Add slash-format endpoints to match frontend expectations
-app.get('/api/cost-tracking/summary', (req, res) => {
-  try {
-    const summary = costTracker.getCostSummary();
-    res.json(summary);
-  } catch (error) {
-    console.error('Error getting cost summary:', error);
-    res.status(500).json({ error: 'Failed to get cost summary' });
-  }
-});
-
-app.get('/api/cost-tracking-export', (req, res) => {
-  try {
-    const costData = costTracker.exportCostData();
-    res.setHeader('Content-Type', 'application/json');
-    res.setHeader('Content-Disposition', 'attachment; filename="cost-tracking-data.json"');
-    res.json(costData);
-  } catch (error) {
-    console.error('Error exporting cost data:', error);
-    res.status(500).json({ error: 'Failed to export cost data' });
-  }
-});
-
-// Add slash-format endpoint for export
-app.get('/api/cost-tracking/export', (req, res) => {
-  try {
-    const costData = costTracker.exportCostData();
-    res.setHeader('Content-Type', 'application/json');
-    res.setHeader('Content-Disposition', 'attachment; filename="cost-tracking-data.json"');
-    res.json(costData);
-  } catch (error) {
-    console.error('Error exporting cost data:', error);
-    res.status(500).json({ error: 'Failed to export cost data' });
-  }
-});
-
-app.post('/api/cost-tracking-reset', (req, res) => {
-  try {
-    costTracker.resetCostData();
-    res.json({ success: true, message: 'Cost data has been reset' });
-  } catch (error) {
-    console.error('Error resetting cost data:', error);
-    res.status(500).json({ error: 'Failed to reset cost data' });
-  }
-});
-
-// Add slash-format endpoint for reset
-app.post('/api/cost-tracking/reset', (req, res) => {
-  try {
-    costTracker.resetCostData();
-    res.json({ success: true, message: 'Cost data has been reset' });
-  } catch (error) {
-    console.error('Error resetting cost data:', error);
-    res.status(500).json({ error: 'Failed to reset cost data' });
-  }
-});
-
-app.post('/api/cost-tracking-settings', (req, res) => {
-  try {
-    const { detailedLogging } = req.body;
-    
-    if (detailedLogging !== undefined) {
-      costTracker.setDetailedLogging(detailedLogging);
-    }
-    
-    res.json({ success: true, message: 'Settings updated successfully' });
-  } catch (error) {
-    console.error('Error updating cost tracking settings:', error);
-    res.status(500).json({ error: 'Failed to update settings' });
-  }
-});
-
-// Add slash-format endpoint for settings
-app.post('/api/cost-tracking/settings', (req, res) => {
-  try {
-    const { detailedLogging } = req.body;
-    
-    if (detailedLogging !== undefined) {
-      costTracker.setDetailedLogging(detailedLogging);
-    }
-    
-    res.json({ success: true, message: 'Settings updated successfully' });
-  } catch (error) {
-    console.error('Error updating cost tracking settings:', error);
-    res.status(500).json({ error: 'Failed to update settings' });
-  }
-});
-
-// Add a new endpoint to track model usage directly
-app.post('/api/cost-tracking/track-model-usage', (req, res) => {
-  try {
-    const { model, usage, operation, queryId } = req.body;
-    
-    if (!model || !usage) {
-      return res.status(400).json({ error: 'Model and usage data are required' });
-    }
-    
-    console.log(`Server tracking cost for model ${model}:`, usage);
-    
-    // Track the cost
-    const costInfo = costTracker.trackLlmCost(model, usage, operation || 'chat', queryId);
-    
-    console.log(`Server tracked cost for ${model}: $${costInfo.cost.toFixed(6)}`);
-    console.log(`Total cost accumulating: $${costTracker.getTotalCost().toFixed(6)}`);
-    
-    // Return the cost information
-    res.json(costInfo);
-  } catch (error) {
-    console.error('Error tracking model usage:', error);
-    res.status(500).json({ error: 'Failed to track model usage' });
-  }
-});
-
-// Add a specific endpoint for tracking embedding costs
-app.post('/api/cost-tracking/track-embedding-usage', (req, res) => {
-  try {
-    const { model, tokenCount, operation, queryId } = req.body;
-    
-    if (!model || !tokenCount) {
-      return res.status(400).json({ error: 'Model and token count are required' });
-    }
-    
-    console.log(`Server tracking embedding cost for model ${model} with ${tokenCount} tokens`);
-    
-    // Track the embedding cost
-    const costInfo = costTracker.trackEmbeddingCost(model, tokenCount, operation || 'document', queryId);
-    
-    console.log(`Server tracked embedding cost for ${model}: $${costInfo.cost.toFixed(6)}`);
-    console.log(`Total cost accumulating: $${costTracker.getTotalCost().toFixed(6)}`);
-    
-    // Return the cost information
-    res.json(costInfo);
-  } catch (error) {
-    console.error('Error tracking embedding usage:', error);
-    res.status(500).json({ error: 'Failed to track embedding usage' });
-  }
-});
-
-// Add OpenAI proxy endpoint with the expected path
-app.post('/api/proxy/openai/:endpoint(*)', async (req, res) => {
+// Add a dedicated endpoint for chat completions that properly tracks costs
+app.post('/api/proxy/openai/chat/completions', async (req, res) => {
   try {
     const apiKey = req.body.openaiApiKey || process.env.REACT_APP_OPENAI_API_KEY;
-    const endpoint = req.params.endpoint;
+    // Extract query ID if provided
+    const queryId = req.body.queryId;
     
-    console.log(`OpenAI proxy request to endpoint: ${endpoint}`);
+    // Get model name from request body
+    const model = req.body.model;
+    
+    // Extract the base queryId for consistent tracking
+    const baseQueryId = extractBaseQueryId(queryId);
+    
+    // Make model-specific query ID to avoid duplicate cost tracking
+    const modelSpecificQueryId = baseQueryId ? `${baseQueryId}-${model}` : null;
+    
+    console.log(`OpenAI API request: model=${model}, queryId=${queryId}`);
+    console.log(`BaseQueryId: ${baseQueryId || 'none'}`);
+    console.log(`ModelSpecificQueryId: ${modelSpecificQueryId || 'none'}`);
     
     if (!apiKey) {
       console.error('No OpenAI API key provided');
       return res.status(400).json({ error: 'OpenAI API key is required' });
     }
     
-    // Extract API key and queryId - don't send these to OpenAI
-    const { openaiApiKey, queryId, ...cleanRequestBody } = req.body;
+    // Create a clean request body by removing API key and queryId
+    const cleanRequestBody = { ...req.body };
+    delete cleanRequestBody.openaiApiKey;
+    delete cleanRequestBody.queryId;
     
-    console.log(`Request to OpenAI API endpoint: ${endpoint}`);
-    console.log(`Request includes queryId for cost tracking: ${queryId ? 'yes' : 'no'}`);
-    
-    const response = await axios.post(`https://api.openai.com/v1/${endpoint}`, cleanRequestBody, {
+    // Forward the request to OpenAI
+    const response = await axios.post('https://api.openai.com/v1/chat/completions', cleanRequestBody, {
       headers: {
         'Authorization': `Bearer ${apiKey}`,
         'Content-Type': 'application/json'
       }
     });
     
-    console.log(`OpenAI API response status: ${response.status}`);
+    console.log('OpenAI API response status:', response.status);
     
     // Track costs if usage information is available
     if (response.data && response.data.usage) {
-      if (endpoint.includes('embeddings')) {
-        // Handle embedding cost tracking
-        const model = response.data.model || cleanRequestBody.model;
-        const tokenCount = response.data.usage.total_tokens || 0;
-        const operation = Array.isArray(cleanRequestBody.input) && cleanRequestBody.input.length > 1 ? 'document' : 'query';
-        
-        const costInfo = costTracker.trackEmbeddingCost(model, tokenCount, operation, queryId);
-        console.log(`Cost tracked for OpenAI embedding: $${costInfo.cost.toFixed(6)}`);
-        console.log(`Tokens processed: ${tokenCount}, Model: ${model}, Operation: ${operation}`);
-        
-        // Add cost info to response
-        response.data.cost = costInfo.cost;
-      } else {
-        // Handle LLM cost tracking
-        const model = response.data.model || cleanRequestBody.model;
-        const usage = response.data.usage;
-        
-        const costInfo = costTracker.trackLlmCost(model, usage, 'chat', queryId);
-        console.log(`Cost tracked for OpenAI API call: $${costInfo.cost.toFixed(6)}`);
-        
-        // Add cost info to response
-        response.data.cost = costInfo.cost;
-      }
+      const usage = response.data.usage;
+      
+      // Use the unified cost computation method to ensure consistency
+      const costInfo = costTracker.computeCost(model, usage, 'chat', modelSpecificQueryId, 'API');
+      console.log(`Cost tracked for OpenAI API call: $${costInfo.cost.toFixed(10)}`);
+      
+      // Add calculated cost info to response
+      response.data.cost = costInfo.cost;
+    } else {
+      console.log('No usage information available in OpenAI response for cost tracking');
     }
     
     res.json(response.data);
@@ -1059,268 +1342,385 @@ app.post('/api/proxy/openai/:endpoint(*)', async (req, res) => {
   }
 });
 
-// Add Anthropic proxy endpoint with the expected path
-app.post('/api/proxy/anthropic', async (req, res) => {
+// Cost tracking endpoint
+app.post('/api/cost-tracking/track-model-usage', (req, res) => {
   try {
-    // Use API key from request body or fall back to environment variable
-    const apiKey = req.body.anthropicApiKey || process.env.REACT_APP_ANTHROPIC_API_KEY;
+    const { model, usage, operation, queryId } = req.body;
     
-    if (!apiKey) {
-      return res.status(400).json({ error: 'Anthropic API key is required' });
+    if (!model || !usage) {
+      return res.status(400).json({ error: 'Model and usage data are required' });
     }
     
-    // Extract API key and queryId from the request
-    const { anthropicApiKey, queryId, ...cleanRequestBody } = req.body;
+    console.log(`\n=============== COST TRACKING REQUEST ===============`);
+    console.log(`Model: ${model}`);
+    console.log(`QueryId: ${queryId || 'none'}`);
+    console.log(`Usage: ${JSON.stringify(usage)}`);
     
-    console.log('Proxying request to Anthropic API...');
-    console.log(`Request includes queryId for tracking: ${queryId ? 'yes' : 'no'}`);
-    
-    const response = await axios.post('https://api.anthropic.com/v1/messages', cleanRequestBody, {
-      headers: {
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-        'Content-Type': 'application/json'
+    // Extract the base queryId if it contains a model name
+    let baseQueryId = queryId;
+    if (queryId && queryId.includes('-')) {
+      const lastDashPos = queryId.lastIndexOf('-');
+      if (lastDashPos > 0) {
+        // Check if the part after the last dash looks like a model name
+        const possibleModel = queryId.substring(lastDashPos + 1);
+        if (possibleModel.includes('gpt') || 
+            possibleModel.includes('claude') || 
+            possibleModel.includes('o3') ||
+            possibleModel.includes('llama')) {
+          baseQueryId = queryId.substring(0, lastDashPos);
+          console.log(`Extracted base queryId: ${baseQueryId} from ${queryId}`);
+        }
       }
-    });
+    }
     
-    console.log('Received response from Anthropic API');
+    // Check if we already have an API-reported cost for this model + queryId
+    let apiReportedCost = null;
+    let costTrackingSource = 'client';
     
-    // Track costs if usage information is available
-    if (response.data && response.data.usage) {
-      // Extract model and usage information
-      const model = response.data.model || cleanRequestBody.model;
-      const usage = {
-        prompt_tokens: response.data.usage.input_tokens || 0,
-        completion_tokens: response.data.usage.output_tokens || 0,
-        total_tokens: (response.data.usage.input_tokens || 0) + (response.data.usage.output_tokens || 0)
+    // If queryId exists, check if we already have API-reported cost for this model
+    if (queryId) {
+      const modelSpecificId = baseQueryId + '-' + costTracker.normalizeModelName(model);
+      const existingCosts = costTracker.getModelCosts(modelSpecificId);
+      
+      // If we have API-reported costs for this model, use those instead of client calculation
+      if (existingCosts && existingCosts.length > 0) {
+        const apiCosts = existingCosts.filter(entry => entry.source === 'API');
+        if (apiCosts.length > 0) {
+          // Use the API-reported cost
+          apiReportedCost = apiCosts[0].cost;
+          costTrackingSource = 'API';
+          console.log(`Found existing API-reported cost for ${model}: $${apiReportedCost}`);
+        }
+      }
+    }
+    
+    // If we have API-reported cost already, use it
+    let costInfo;
+    if (apiReportedCost !== null) {
+      // Return the API-reported cost with a flag indicating to use this in the UI
+      costInfo = {
+        cost: apiReportedCost,
+        model: costTracker.normalizeModelName(model),
+        operation: operation || 'chat',
+        source: 'API',
+        useForDisplay: true, // Flag for client to prioritize this cost
+        queryId,
+        trackingId: queryId ? queryId + '-' + costTracker.normalizeModelName(model) : null
       };
       
-      // Track cost
-      const costInfo = costTracker.trackLlmCost(model, usage, 'chat', queryId);
-      console.log(`Cost tracked for Anthropic API call: $${costInfo.cost.toFixed(6)}`);
+      console.log(`Using API-reported cost for ${model}: $${apiReportedCost}`);
+    } else {
+      // Use the unified cost computation method to ensure consistency
+      costInfo = costTracker.computeCost(model, usage, operation || 'chat', baseQueryId, costTrackingSource);
       
-      // Add cost info to response
-      response.data.cost = costInfo.cost;
-    }
-    
-    res.json(response.data);
-  } catch (error) {
-    console.error('Error proxying to Anthropic API:', error.response?.data || error.message);
-    res.status(error.response?.status || 500).json({
-      error: error.response?.data || { message: error.message }
-    });
-  }
-});
-
-// Add Anthropic messages proxy endpoint
-app.post('/api/proxy/anthropic/messages', async (req, res) => {
-  try {
-    // Use API key from request body or fall back to environment variable
-    const apiKey = req.body.anthropicApiKey || process.env.REACT_APP_ANTHROPIC_API_KEY;
-    
-    if (!apiKey) {
-      return res.status(400).json({ error: 'Anthropic API key is required' });
-    }
-    
-    // Extract API key and queryId from the request
-    const { anthropicApiKey, queryId, ...cleanRequestBody } = req.body;
-    
-    console.log('Proxying request to Anthropic API (messages endpoint)...');
-    console.log(`Request includes queryId for tracking: ${queryId ? 'yes' : 'no'}`);
-    
-    const response = await axios.post('https://api.anthropic.com/v1/messages', cleanRequestBody, {
-      headers: {
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-        'Content-Type': 'application/json'
+      // Add the display flag if this cost came from API data
+      if (costInfo.source === 'API') {
+        costInfo.useForDisplay = true;
       }
-    });
-    
-    console.log('Received response from Anthropic API');
-    
-    // Track costs if usage information is available
-    if (response.data && response.data.usage) {
-      // Extract model and usage information
-      const model = response.data.model || cleanRequestBody.model;
-      const usage = {
-        prompt_tokens: response.data.usage.input_tokens || 0,
-        completion_tokens: response.data.usage.output_tokens || 0,
-        total_tokens: (response.data.usage.input_tokens || 0) + (response.data.usage.output_tokens || 0)
-      };
-      
-      // Track cost
-      const costInfo = costTracker.trackLlmCost(model, usage, 'chat', queryId);
-      console.log(`Cost tracked for Anthropic API call: $${costInfo.cost.toFixed(6)}`);
-      
-      // Add cost info to response
-      response.data.cost = costInfo.cost;
     }
     
-    res.json(response.data);
+    console.log(`COST TRACKED: $${costInfo.cost.toFixed(10)} for ${model}`);
+    console.log(`Total cost accumulating: $${costTracker.getTotalCost().toFixed(10)}`);
+    console.log(`=============== END COST TRACKING ===============\n`);
+    
+    // Return the cost information
+    res.json(costInfo);
   } catch (error) {
-    console.error('Error proxying to Anthropic API:', error.response?.data || error.message);
-    res.status(error.response?.status || 500).json({
-      error: error.response?.data || { message: error.message }
-    });
+    console.error('Error in cost tracking:', error);
+    res.status(500).json({ error: error.message });
   }
 });
 
-// Add Azure OpenAI embeddings proxy endpoint
-app.post('/api/proxy/azure/embeddings', async (req, res) => {
+// Add missing endpoint for tracking embedding usage
+app.post('/api/cost-tracking/track-embedding-usage', (req, res) => {
   try {
-    // Extract necessary parameters from the request
-    const apiKey = req.body.azureApiKey || process.env.REACT_APP_AZURE_OPENAI_API_KEY;
-    const endpoint = req.body.azureEndpoint || process.env.REACT_APP_AZURE_OPENAI_ENDPOINT;
-    const apiVersion = req.body.apiVersion || process.env.REACT_APP_AZURE_OPENAI_API_VERSION || '2023-05-15';
-    const deploymentName = req.body.deploymentName;
-    const input = req.body.input;
-    const queryId = req.body.queryId; // For cost tracking
+    const { model, tokenCount, operation, queryId } = req.body;
     
-    console.log('[DEBUG] Azure Embeddings API Proxy Request:');
-    console.log(`- Azure endpoint: ${endpoint}`);
-    console.log(`- Deployment name: ${deploymentName}`);
-    console.log(`- API version: ${apiVersion}`);
-    console.log(`- Has input: ${input ? 'Yes' : 'No'}`);
-    console.log(`- QueryId provided: ${queryId ? 'Yes' : 'No'}`);
-    
-    if (!apiKey) {
-      return res.status(401).json({
-        error: {
-          message: 'Azure OpenAI API key is required'
-        }
+    if (!model || !tokenCount) {
+      console.warn('[Embedding Cost Tracking] Missing required parameters:', req.body);
+      return res.status(400).json({ 
+        error: 'Model and token count are required',
+        received: { model, tokenCount, operation, queryId }
       });
     }
     
-    if (!endpoint) {
-      return res.status(400).json({
-        error: {
-          message: 'Azure OpenAI endpoint is required'
-        }
+    // Parse tokenCount as a number if it's a string
+    const parsedTokenCount = typeof tokenCount === 'string' ? parseInt(tokenCount, 10) : tokenCount;
+    
+    if (isNaN(parsedTokenCount)) {
+      console.warn('[Embedding Cost Tracking] Invalid token count:', tokenCount);
+      return res.status(400).json({ 
+        error: 'Token count must be a valid number',
+        received: { tokenCount }
       });
     }
     
-    if (!deploymentName) {
-      return res.status(400).json({
-        error: {
-          message: 'Azure OpenAI deployment name is required'
-        }
-      });
+    console.log(`\n=============== EMBEDDING COST TRACKING REQUEST ===============`);
+    console.log(`Model: ${model}`);
+    console.log(`QueryId: ${queryId || 'none'}`);
+    console.log(`Token count: ${parsedTokenCount}`);
+    console.log(`Operation: ${operation || 'document'}`);
+    
+    // Track the embedding cost
+    const costInfo = costTracker.trackEmbeddingCost(model, parsedTokenCount, operation || 'document', queryId);
+    
+    if (costInfo.error) {
+      console.warn(`[Embedding Cost Tracking] Warning: ${costInfo.error}`);
     }
     
-    if (!input) {
-      return res.status(400).json({
-        error: {
-          message: 'Input text is required'
-        }
-      });
-    }
+    console.log(`EMBEDDING COST TRACKED: $${costInfo.cost.toFixed(10)} for ${model}`);
+    console.log(`Total cost accumulating: $${costTracker.getTotalCost().toFixed(10)}`);
+    console.log(`=============== END EMBEDDING COST TRACKING ===============\n`);
     
-    // Ensure the endpoint URL is properly formatted
-    let formattedEndpoint = endpoint;
-    if (formattedEndpoint.endsWith('/')) {
-      formattedEndpoint = formattedEndpoint.slice(0, -1);
-    }
-    
-    // Create a clean request body without Azure-specific fields
-    const cleanRequestBody = {
-      input: input,
-      model: deploymentName // Include model for Azure endpoints that need it
-    };
-    
-    // Construct the full target URL
-    const targetUrl = `${formattedEndpoint}/openai/deployments/${deploymentName}/embeddings?api-version=${apiVersion}`;
-    console.log(`[DEBUG] Final Azure embeddings API target URL: ${targetUrl}`);
-    
-    // Make the request to Azure OpenAI API
-    const response = await axios.post(
-      targetUrl,
-      cleanRequestBody,
-      {
-        headers: {
-          'Content-Type': 'application/json',
-          'api-key': apiKey
-        }
-      }
-    );
-    
-    console.log('[DEBUG] Azure embeddings API response received');
-    
-    // Track embedding costs
-    if (response.data) {
-      // Calculate token count either from response or estimate from input
-      let tokenCount = 0;
-      
-      if (response.data.usage && response.data.usage.total_tokens) {
-        tokenCount = response.data.usage.total_tokens;
-      } else {
-        // Estimate token count (4 chars per token)
-        tokenCount = Math.ceil(typeof input === 'string' ? input.length / 4 : 
-          Array.isArray(input) ? input.reduce((sum, text) => sum + text.length, 0) / 4 : 0);
-      }
-      
-      // Determine operation type (single query or batch document)
-      const operation = Array.isArray(input) ? 'document' : 'query';
-      
-      // Track the cost with the appropriate model name
-      const model = `azure-${deploymentName}`;
-      const costInfo = costTracker.trackEmbeddingCost(model, tokenCount, operation, queryId);
-      console.log(`Cost tracked for Azure embedding (${operation}): $${costInfo.cost.toFixed(6)}`);
-      console.log(`Tokens processed: ${tokenCount}, Model: ${model}, Operation: ${operation}`);
-      console.log(`Total accumulated cost: $${costTracker.getTotalCost().toFixed(6)}`);
-      
-      // Add cost info to response
-      response.data.cost = costInfo.cost;
-    }
-    
-    res.json(response.data);
+    // Return the cost information
+    res.json(costInfo);
   } catch (error) {
-    console.error('Error proxying to Azure OpenAI Embeddings API:', error.message);
-    
-    // Log more detailed error information
-    if (error.response) {
-      console.error('Response status:', error.response.status);
-      console.error('Response data:', JSON.stringify(error.response.data, null, 2));
-    }
-    
-    res.status(error.response?.status || 500).json({
-      error: error.response?.data || { message: error.message }
+    console.error('Error tracking embedding usage:', error);
+    // Return a more detailed error message
+    res.status(500).json({ 
+      error: 'Failed to track embedding usage',
+      message: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
   }
 });
 
-// The "catchall" handler: for any request that doesn't match one above, send back the index.html file.
-app.get('*', (req, res) => {
-  res.sendFile(path.join(__dirname, 'build', 'index.html'));
-});
-
-// Log environment variables status (without showing the actual keys)
-console.log('Environment variables status:');
-console.log('OPENAI_API_KEY:', process.env.REACT_APP_OPENAI_API_KEY ? 'Set' : 'Not set');
-console.log('ANTHROPIC_API_KEY:', process.env.REACT_APP_ANTHROPIC_API_KEY ? 'Set' : 'Not set');
-console.log('AZURE_OPENAI_API_KEY:', process.env.REACT_APP_AZURE_OPENAI_API_KEY ? 'Set' : 'Not set');
-console.log('AZURE_OPENAI_ENDPOINT:', process.env.REACT_APP_AZURE_OPENAI_ENDPOINT ? 'Set' : 'Not set');
-console.log('OLLAMA_API_URL:', process.env.REACT_APP_OLLAMA_API_URL || 'Not set (using default)');
-
-// Add endpoint to trigger cost data migration
-app.post('/api/cost-tracking/migrate', (req, res) => {
+// Add endpoints for cost-tracking with dash format
+// Summary endpoint
+app.get('/api/cost-tracking-summary', (req, res) => {
   try {
-    costTracker.migrateExistingCostData();
-    res.json({ success: true, message: 'Cost data migration completed successfully' });
+    const summary = costTracker.getCostSummary();
+    res.json(summary);
   } catch (error) {
-    console.error('Error migrating cost data:', error);
-    res.status(500).json({ error: 'Failed to migrate cost data' });
+    console.error('Error getting cost summary:', error);
+    res.status(500).json({ error: 'Failed to get cost summary' });
   }
 });
 
+// Make sure we also have the slash format
+app.get('/api/cost-tracking/summary', (req, res) => {
+  try {
+    const summary = costTracker.getCostSummary();
+    res.json(summary);
+  } catch (error) {
+    console.error('Error getting cost summary:', error);
+    res.status(500).json({ error: 'Failed to get cost summary' });
+  }
+});
+
+// Export endpoint
+app.get('/api/cost-tracking-export', (req, res) => {
+  try {
+    const data = costTracker.exportCostData();
+    
+    // Set headers for file download
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Content-Disposition', 'attachment; filename=cost-tracking-export.json');
+    
+    res.json(data);
+  } catch (error) {
+    console.error('Error exporting cost data:', error);
+    res.status(500).json({ error: 'Failed to export cost data' });
+  }
+});
+
+// Make sure we also have the slash format
+app.get('/api/cost-tracking/export', (req, res) => {
+  try {
+    const data = costTracker.exportCostData();
+    
+    // Set headers for file download
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Content-Disposition', 'attachment; filename=cost-tracking-export.json');
+    
+    res.json(data);
+  } catch (error) {
+    console.error('Error exporting cost data:', error);
+    res.status(500).json({ error: 'Failed to export cost data' });
+  }
+});
+
+// Reset endpoint
+app.post('/api/cost-tracking-reset', (req, res) => {
+  try {
+    const result = costTracker.resetCostData();
+    res.json({ success: result });
+  } catch (error) {
+    console.error('Error resetting cost data:', error);
+    res.status(500).json({ error: 'Failed to reset cost data' });
+  }
+});
+
+// Make sure we also have the slash format
+app.post('/api/cost-tracking/reset', (req, res) => {
+  try {
+    const result = costTracker.resetCostData();
+    res.json({ success: result });
+  } catch (error) {
+    console.error('Error resetting cost data:', error);
+    res.status(500).json({ error: 'Failed to reset cost data' });
+  }
+});
+
+// Settings endpoint
+app.post('/api/cost-tracking-settings', (req, res) => {
+  try {
+    const { detailedLogging, embeddingPricing } = req.body;
+    
+    if (detailedLogging !== undefined) {
+      costTracker.setDetailedLogging(detailedLogging);
+    }
+    
+    if (embeddingPricing) {
+      costTracker.setEmbeddingPricing(embeddingPricing);
+    }
+    
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error updating cost tracking settings:', error);
+    res.status(500).json({ error: 'Failed to update cost tracking settings' });
+  }
+});
+
+// Make sure we also have the slash format
+app.post('/api/cost-tracking/settings', (req, res) => {
+  try {
+    const { detailedLogging, embeddingPricing } = req.body;
+    
+    if (detailedLogging !== undefined) {
+      costTracker.setDetailedLogging(detailedLogging);
+    }
+    
+    if (embeddingPricing) {
+      costTracker.setEmbeddingPricing(embeddingPricing);
+    }
+    
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error updating cost tracking settings:', error);
+    res.status(500).json({ error: 'Failed to update cost tracking settings' });
+  }
+});
+
+// By period endpoints
+app.get('/api/cost-tracking/by-period', (req, res) => {
+  try {
+    const { period, startDate, endDate } = req.query;
+    
+    // Get cost summary to process
+    const summary = costTracker.getCostSummary();
+    
+    // Filter data by period
+    const filteredData = filterDataByPeriod(summary, period, startDate, endDate);
+    
+    res.json(filteredData);
+  } catch (error) {
+    console.error('Error getting costs by period:', error);
+    res.status(500).json({ error: 'Failed to get costs by period' });
+  }
+});
+
+app.get('/api/cost-tracking-by-period', (req, res) => {
+  try {
+    const { period, startDate, endDate } = req.query;
+    
+    // Get cost summary to process
+    const summary = costTracker.getCostSummary();
+    
+    // Filter data by period
+    const filteredData = filterDataByPeriod(summary, period, startDate, endDate);
+    
+    res.json(filteredData);
+  } catch (error) {
+    console.error('Error getting costs by period:', error);
+    res.status(500).json({ error: 'Failed to get costs by period' });
+  }
+});
+
+// Start the server
 app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+  console.log(`Server is running on port ${PORT}`);
+});
+
+// Helper function to filter data by period
+function filterDataByPeriod(summary, period, startDate, endDate) {
+  const now = new Date();
+  let periodStartDate;
   
-  // Run cost data migration once on server startup
-  console.log('Running initial cost data migration to normalize model names...');
-  try {
-    costTracker.migrateExistingCostData();
-    console.log('Initial cost data migration completed successfully');
-  } catch (error) {
-    console.error('Error during initial cost data migration:', error);
+  // Set period start date based on requested period
+  switch (period) {
+    case 'today':
+      periodStartDate = new Date(now.setHours(0, 0, 0, 0));
+      break;
+    case 'yesterday':
+      periodStartDate = new Date(now.setDate(now.getDate() - 1));
+      periodStartDate.setHours(0, 0, 0, 0);
+      break;
+    case 'week':
+      periodStartDate = new Date(now.setDate(now.getDate() - 7));
+      break;
+    case 'month':
+      periodStartDate = new Date(now.setMonth(now.getMonth() - 1));
+      break;
+    case 'custom':
+      if (startDate && endDate) {
+        periodStartDate = new Date(startDate);
+        const periodEndDate = new Date(endDate);
+        
+        // Filter LLM data within date range
+        const filteredLlm = summary.llm.filter(entry => {
+          const entryDate = new Date(entry.timestamp);
+          return entryDate >= periodStartDate && entryDate <= periodEndDate;
+        });
+        
+        // Filter embeddings data within date range
+        const filteredEmbeddings = summary.embeddings.filter(entry => {
+          const entryDate = new Date(entry.timestamp);
+          return entryDate >= periodStartDate && entryDate <= periodEndDate;
+        });
+        
+        // Calculate total cost for this period
+        const periodTotalCost = [...filteredLlm, ...filteredEmbeddings]
+          .reduce((sum, entry) => sum + entry.cost, 0);
+        
+        // Build period-specific costs by model
+        const periodCostsByModel = {};
+        [...filteredLlm, ...filteredEmbeddings].forEach(entry => {
+          periodCostsByModel[entry.model] = (periodCostsByModel[entry.model] || 0) + entry.cost;
+        });
+        
+        return {
+          totalCost: periodTotalCost,
+          costsByModel: periodCostsByModel,
+          llm: filteredLlm,
+          embeddings: filteredEmbeddings
+        };
+      }
+      return { totalCost: 0, costsByModel: {}, llm: [], embeddings: [] };
+    default:
+      periodStartDate = new Date(0); // Default to all data
   }
-}); 
+  
+  // Filter LLM data after start date
+  const filteredLlm = summary.llm.filter(entry => new Date(entry.timestamp) >= periodStartDate);
+  
+  // Filter embeddings data after start date
+  const filteredEmbeddings = summary.embeddings.filter(entry => new Date(entry.timestamp) >= periodStartDate);
+  
+  // Calculate total cost for this period
+  const periodTotalCost = [...filteredLlm, ...filteredEmbeddings]
+    .reduce((sum, entry) => sum + entry.cost, 0);
+  
+  // Build period-specific costs by model
+  const periodCostsByModel = {};
+  [...filteredLlm, ...filteredEmbeddings].forEach(entry => {
+    periodCostsByModel[entry.model] = (periodCostsByModel[entry.model] || 0) + entry.cost;
+  });
+  
+  return {
+    totalCost: periodTotalCost,
+    costsByModel: periodCostsByModel,
+    llm: filteredLlm,
+    embeddings: filteredEmbeddings
+  };
+}

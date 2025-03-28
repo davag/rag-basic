@@ -4,12 +4,6 @@ import {
   Box, 
   Grid, 
   Paper, 
-  Card,
-  CardContent,
-  CardHeader,
-  Accordion,
-  AccordionSummary,
-  AccordionDetails,
   Table,
   TableBody,
   TableCell,
@@ -24,10 +18,8 @@ import {
   Tabs,
   Tab
 } from '@mui/material';
-import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import AccessTimeIcon from '@mui/icons-material/AccessTime';
 import TokenIcon from '@mui/icons-material/Token';
-import FolderIcon from '@mui/icons-material/Folder';
 import DownloadIcon from '@mui/icons-material/Download';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import SaveIcon from '@mui/icons-material/Save';
@@ -36,9 +28,7 @@ import AttachMoneyIcon from '@mui/icons-material/AttachMoney';
 import InfoIcon from '@mui/icons-material/Info';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
-import { calculateCost } from '../utils/apiServices';
-import TokenUsageAnalyzer from './TokenUsageAnalyzer';
-import ContextWindowVisualizer from './ContextWindowVisualizer';
+import { calculateCost } from '../config/llmConfig';
 import RetrievalEvaluation from './RetrievalEvaluation';
 import EmbeddingQualityAnalysis from './EmbeddingQualityAnalysis';
 import SourceContentAnalysis from './SourceContentAnalysis';
@@ -46,6 +36,8 @@ import CompareIcon from '@mui/icons-material/Compare';
 import AssessmentIcon from '@mui/icons-material/Assessment';
 import TuneIcon from '@mui/icons-material/Tune';
 import AnalyticsIcon from '@mui/icons-material/Analytics';
+import KeyboardArrowUpIcon from '@mui/icons-material/KeyboardArrowUp';
+import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
 
 const ResponseComparison = ({ 
   responses, 
@@ -64,6 +56,22 @@ const ResponseComparison = ({
   
   // Reference to the file input element
   const fileInputRef = useRef(null);
+  
+  // Add state for expanded raw responses
+  const [expandedRawResponses, setExpandedRawResponses] = useState({});
+  
+  // Add enhanced debugging for responses
+  console.log("DEBUG: Response Comparison Component Rendered");
+  console.log("DEBUG: Raw responses object:", JSON.stringify(responses, null, 2));
+  console.log("DEBUG: Response type:", typeof responses);
+  console.log("DEBUG: Response keys:", Object.keys(responses || {}));
+  
+  if (responses?.models) {
+    console.log("DEBUG: Found models structure, keys:", Object.keys(responses.models));
+    Object.entries(responses.models).forEach(([setKey, setModels]) => {
+      console.log(`DEBUG: Models in set ${setKey}:`, Object.keys(setModels));
+    });
+  }
   
   // Get sources from the response structure
   let sources = [];
@@ -184,24 +192,12 @@ const ResponseComparison = ({
       let aMetrics = null;
       let bMetrics = null;
       
-      // First check for the specific structure seen in the debug panel
-      if (a.setName && metrics[a.setName] && metrics[a.setName][a.displayName]) {
-        aMetrics = metrics[a.setName][a.displayName];
-      } else if (a.setName && metrics[`${a.setName}.${a.displayName}`]) {
-        aMetrics = metrics[`${a.setName}.${a.displayName}`];
-      } else {
-        aMetrics = metrics[a.metricsKey] || metrics[a.displayName] || metrics[`${a.setName}-${a.displayName}`] || metrics[a.setName];
-      }
+      // Try to find metrics using our robust lookup helper
+      aMetrics = findMetrics(metrics, a.displayName);
+      bMetrics = findMetrics(metrics, b.displayName);
       
-      if (b.setName && metrics[b.setName] && metrics[b.setName][b.displayName]) {
-        bMetrics = metrics[b.setName][b.displayName];
-      } else if (b.setName && metrics[`${b.setName}.${b.displayName}`]) {
-        bMetrics = metrics[`${b.setName}.${b.displayName}`];
-      } else {
-        bMetrics = metrics[b.metricsKey] || metrics[b.displayName] || metrics[`${b.setName}-${b.displayName}`] || metrics[b.setName];
-      }
-      
-      let aValue, bValue;
+      let aValue = 0;
+      let bValue = 0;
       
       // Calculate values based on sort key
       switch (sortConfig.key) {
@@ -216,10 +212,36 @@ const ResponseComparison = ({
           break;
           
         case 'cost':
-          const aTokenUsage = aMetrics?.tokenUsage?.total || 0;
-          const bTokenUsage = bMetrics?.tokenUsage?.total || 0;
-          aValue = calculateCost(a.displayName, aTokenUsage);
-          bValue = calculateCost(b.displayName, bTokenUsage);
+          // First check if cost is directly available in the response
+          const aResponse = responses?.models?.[a.setName]?.[a.displayName] || 
+                            responses?.[a.setName]?.[a.displayName] ||
+                            responses?.[a.displayName];
+          const bResponse = responses?.models?.[b.setName]?.[b.displayName] || 
+                            responses?.[b.setName]?.[b.displayName] ||
+                            responses?.[b.displayName];
+                            
+          // Use cost from API response if available, otherwise calculate
+          aValue = aResponse?.cost || aResponse?.rawResponse?.cost;
+          bValue = bResponse?.cost || bResponse?.rawResponse?.cost;
+          
+          // Fallback to calculation if no cost in response
+          if (aValue === undefined || aValue === null) {
+            const aTokenUsage = aMetrics?.tokenUsage?.total || 0;
+            const aCalculatedCost = calculateCost(window.costTracker?.normalizeModelName?.(a.displayName) || a.displayName, {
+              input: aTokenUsage / 2,  // estimate split
+              output: aTokenUsage / 2
+            });
+            aValue = aCalculatedCost.totalCost;
+          }
+          
+          if (bValue === undefined || bValue === null) {
+            const bTokenUsage = bMetrics?.tokenUsage?.total || 0;
+            const bCalculatedCost = calculateCost(window.costTracker?.normalizeModelName?.(b.displayName) || b.displayName, {
+              input: bTokenUsage / 2,  // estimate split
+              output: bTokenUsage / 2
+            });
+            bValue = bCalculatedCost.totalCost;
+          }
           break;
           
         default:
@@ -253,11 +275,14 @@ const ResponseComparison = ({
     return `${(ms / 1000).toFixed(2)}s`;
   };
 
-  const formatCost = (cost) => {
-    if (cost === 0) {
-      return 'Free';
+  const formatCost = (costValue) => {
+    console.log(`[COST DEBUG] formatCost called with: ${costValue}, type: ${typeof costValue}`);
+    if (costValue === null || costValue === undefined) return 'N/A';
+    // For very small costs, use fixed decimal notation with 10 decimal places
+    if (costValue > 0 && costValue < 0.0000001) {
+      return `$${costValue.toFixed(10)}`;
     }
-    return `$${cost.toFixed(4)}`; // Always show in dollars with 4 decimal places
+    return `$${costValue.toFixed(7)}`;
   };
 
   const formatElapsedTime = (ms) => {
@@ -283,8 +308,8 @@ const ResponseComparison = ({
     'o3-mini': '#10a37f',
     
     // Anthropic models (purple)
-    'claude-3-5-sonnet-latest': '#5436da',
-    'claude-3-7-sonnet-latest': '#5436da',
+    'claude-3-5-sonnet': '#5436da',
+    'claude-3-7-sonnet': '#5436da',
     
     // Ollama models (red)
     'llama3.2:latest': '#ff6b6b',
@@ -292,6 +317,7 @@ const ResponseComparison = ({
     'gemma3:12b': '#ff6b6b'
   };
 
+  // eslint-disable-next-line no-unused-vars
   const getModelVendor = (model) => {
     if (model.includes('azure-')) return 'AzureOpenAI';
     if (model.startsWith('gpt') || model.startsWith('o3')) return 'OpenAI';
@@ -303,6 +329,7 @@ const ResponseComparison = ({
   };
 
   // Group sources by namespace
+  // eslint-disable-next-line no-unused-vars
   const getSourcesByNamespace = (sources) => {
     if (!Array.isArray(sources)) return {};
     
@@ -479,9 +506,9 @@ const ResponseComparison = ({
         // Use the two specific models from the UI with the exact same approach as the UI table
         const knownModels = [
           { modelName: "gpt-4o-mini", setName: "Set 1" },
-          { modelName: "claude-3-5-sonnet-latest", setName: "Set 1" },
+          { modelName: "claude-3-5-sonnet", setName: "Set 1" },
           { modelName: "gpt-4o-mini", setName: "Set 2" },
-          { modelName: "claude-3-5-sonnet-latest", setName: "Set 2" }
+          { modelName: "claude-3-5-sonnet", setName: "Set 2" }
         ];
         
         knownModels.forEach(({ modelName, setName }) => {
@@ -524,12 +551,48 @@ const ResponseComparison = ({
           }
           
           // Get token usage
+          // eslint-disable-next-line no-unused-vars
           const tokenUsage = modelMetrics?.tokenUsage?.total;
           
-          // Calculate cost (pass the entire tokenUsage object instead of just total)
-          const cost = modelMetrics?.tokenUsage
-            ? calculateCost(modelName, modelMetrics.tokenUsage) 
-            : 0;
+          // Calculate cost using API-provided cost or fallback to calculation
+          const modelResponse = responses?.models?.[setName]?.[modelName] || 
+                               responses?.[setName]?.[modelName] ||
+                               responses?.[modelName];
+          
+          console.log(`[Cost Debug DUMP] Model ${modelName} response:`, modelResponse);
+          
+          // First check for API-reported cost
+          let cost = null;
+          let useApiCost = false;
+          
+          // Check if the model response has a cost and useForDisplay flag
+          if (modelResponse?.useForDisplay === true && modelResponse?.cost !== undefined) {
+            cost = Number(modelResponse.cost);
+            useApiCost = true;
+            console.log(`[Cost Debug] Using model response API cost for ${modelName}: $${cost} (useForDisplay=true)`);
+          }
+          // Check if raw response has cost
+          else if (modelResponse?.rawResponse?.useForDisplay === true && modelResponse?.rawResponse?.cost !== undefined) {
+            cost = Number(modelResponse.rawResponse.cost);
+            useApiCost = true;
+            console.log(`[Cost Debug] Using raw response API cost for ${modelName}: $${cost} (useForDisplay=true)`);
+          }
+          // Fall back to any available cost
+          else if (modelResponse?.cost !== undefined) {
+            cost = Number(modelResponse.cost);
+            console.log(`[Cost Debug] Using model response cost for ${modelName}: $${cost} (no useForDisplay flag)`);
+          }
+          else if (modelResponse?.rawResponse?.cost !== undefined) {
+            cost = Number(modelResponse.rawResponse.cost);
+            console.log(`[Cost Debug] Using raw response cost for ${modelName}: $${cost} (no useForDisplay flag)`);
+          }
+          
+          // Set useForDisplay flag on modelMetrics if we're using an API-reported cost
+          if (useApiCost && modelMetrics) {
+            modelMetrics.useForDisplay = true;
+            modelMetrics.calculatedCost = cost;
+            console.log(`[Cost Debug] Set calculatedCost=${cost} and useForDisplay=true on modelMetrics for ${modelName}`);
+          }
           
           tableData.push([
             `${modelName} / ${setName}`,
@@ -943,8 +1006,563 @@ const ResponseComparison = ({
   // Extract models and metadata
   const { models } = separateModelsAndMetadata(responses);
 
+  // Find metrics for a model using a robust lookup method
+  const findMetrics = (metrics, modelName) => {
+    if (!metrics || !modelName) return null;
+    
+    console.log(`[Cost Debug] Finding metrics for model: ${modelName}`);
+    
+    // Direct match
+    if (metrics[modelName]) {
+      console.log(`[Cost Debug] Found direct match in metrics for ${modelName}`);
+      console.log(`[Cost Debug] Metrics has calculatedCost: ${metrics[modelName].calculatedCost !== undefined ? 'YES' : 'NO'}`);
+      return metrics[modelName];
+    }
+    
+    // Normalize the model name for consistent lookup
+    let normalizedModelName = modelName;
+    if (typeof window !== 'undefined' && window.costTracker) {
+      normalizedModelName = window.costTracker.normalizeModelName(modelName);
+      console.log(`[Cost Debug] Normalized model name from ${modelName} to ${normalizedModelName}`);
+    }
+    
+    // Try with normalized name
+    if (normalizedModelName !== modelName && metrics[normalizedModelName]) {
+      console.log(`[Cost Debug] Found match with normalized name ${normalizedModelName}`);
+      console.log(`[Cost Debug] Metrics has calculatedCost: ${metrics[normalizedModelName].calculatedCost !== undefined ? 'YES' : 'NO'}`);
+      return metrics[normalizedModelName];
+    }
+    
+    // Check for model-specific tracking ID matches
+    for (const key in metrics) {
+      if (metrics[key]?.model === modelName || metrics[key]?.model === normalizedModelName) {
+        console.log(`[Cost Debug] Found match by model property: ${key}`);
+        console.log(`[Cost Debug] Metrics has calculatedCost: ${metrics[key].calculatedCost !== undefined ? 'YES' : 'NO'}`);
+        return metrics[key];
+      }
+    }
+    
+    // Check if this is a composite key like "Set 1-gpt-4o"
+    if (modelName.includes('-')) {
+      const setMatch = modelName.match(/^(Set \d+)-(.+)$/);
+      
+      if (setMatch) {
+        const setName = setMatch[1]; // e.g., "Set 1"
+        const baseModelName = setMatch[2]; // e.g., "gpt-4o"
+        
+        // Try normalized base model name
+        let normalizedBaseModelName = baseModelName;
+        if (typeof window !== 'undefined' && window.costTracker) {
+          normalizedBaseModelName = window.costTracker.normalizeModelName(baseModelName);
+        }
+        
+        // Check for metrics under the set key
+        if (metrics[setName]) {
+          // Try with the original or normalized model name
+          if (metrics[setName][baseModelName]) {
+            console.log(`[Cost Debug] Found in nested structure: ${setName}[${baseModelName}]`);
+            console.log(`[Cost Debug] Metrics has calculatedCost: ${metrics[setName][baseModelName].calculatedCost !== undefined ? 'YES' : 'NO'}`);
+            return metrics[setName][baseModelName];
+          }
+          if (normalizedBaseModelName !== baseModelName && metrics[setName][normalizedBaseModelName]) {
+            console.log(`[Cost Debug] Found in nested structure with normalized name: ${setName}[${normalizedBaseModelName}]`);
+            console.log(`[Cost Debug] Metrics has calculatedCost: ${metrics[setName][normalizedBaseModelName].calculatedCost !== undefined ? 'YES' : 'NO'}`);
+            return metrics[setName][normalizedBaseModelName];
+          }
+        }
+        
+        // Try just the base model name
+        if (metrics[baseModelName]) {
+          console.log(`[Cost Debug] Found with base model name: ${baseModelName}`);
+          console.log(`[Cost Debug] Metrics has calculatedCost: ${metrics[baseModelName].calculatedCost !== undefined ? 'YES' : 'NO'}`);
+          return metrics[baseModelName];
+        }
+        
+        // Try with normalized base model name
+        if (normalizedBaseModelName !== baseModelName && metrics[normalizedBaseModelName]) {
+          console.log(`[Cost Debug] Found with normalized base model name: ${normalizedBaseModelName}`);
+          console.log(`[Cost Debug] Metrics has calculatedCost: ${metrics[normalizedBaseModelName].calculatedCost !== undefined ? 'YES' : 'NO'}`);
+          return metrics[normalizedBaseModelName];
+        }
+        
+        // Check composite key directly
+        const compositeKey = `${setName}-${baseModelName}`;
+        if (metrics[compositeKey]) {
+          console.log(`[Cost Debug] Found with composite key: ${compositeKey}`);
+          console.log(`[Cost Debug] Metrics has calculatedCost: ${metrics[compositeKey].calculatedCost !== undefined ? 'YES' : 'NO'}`);
+          return metrics[compositeKey];
+        }
+        
+        // Check with normalized component
+        const normalizedCompositeKey = `${setName}-${normalizedBaseModelName}`;
+        if (normalizedBaseModelName !== baseModelName && metrics[normalizedCompositeKey]) {
+          console.log(`[Cost Debug] Found with normalized composite key: ${normalizedCompositeKey}`);
+          console.log(`[Cost Debug] Metrics has calculatedCost: ${metrics[normalizedCompositeKey].calculatedCost !== undefined ? 'YES' : 'NO'}`);
+          return metrics[normalizedCompositeKey];
+        }
+      }
+    }
+    
+    // Try checking all keys that might contain the model name
+    for (const key in metrics) {
+      if (key.includes(modelName)) {
+        console.log(`[Cost Debug] Found through partial key match: ${key}`);
+        console.log(`[Cost Debug] Metrics has calculatedCost: ${metrics[key].calculatedCost !== undefined ? 'YES' : 'NO'}`);
+        return metrics[key];
+      }
+      // Also check for normalized name
+      if (normalizedModelName !== modelName && key.includes(normalizedModelName)) {
+        console.log(`[Cost Debug] Found through partial normalized key match: ${key}`);
+        console.log(`[Cost Debug] Metrics has calculatedCost: ${metrics[key].calculatedCost !== undefined ? 'YES' : 'NO'}`);
+        return metrics[key];
+      }
+    }
+    
+    console.log(`[Cost Debug] No metrics found for ${modelName}`);
+    return null;
+  };
+
+  // Add a debug section at the top to show raw response data
+  const renderDebugSection = () => {
+    return (
+      <Paper elevation={1} sx={{ p: 2, mb: 3, bgcolor: '#f5f5f5' }}>
+        <Typography variant="h6" gutterBottom>
+          Debug Information
+        </Typography>
+        
+        <Box sx={{ mb: 2 }}>
+          <Typography variant="subtitle1">Query:</Typography>
+          <Paper elevation={0} sx={{ p: 1, bgcolor: 'white' }}>
+            <Typography variant="body2">{currentQuery || "No query found"}</Typography>
+          </Paper>
+        </Box>
+        
+        <Box sx={{ mb: 2 }}>
+          <Typography variant="subtitle1">Response Structure Check:</Typography>
+          <Paper elevation={0} sx={{ p: 1, bgcolor: 'white' }}>
+            <Typography variant="body2" component="div">
+              <ul style={{ margin: 0, paddingLeft: '1.5rem' }}>
+                <li>Response exists: <strong>{responses ? "Yes" : "No"}</strong></li>
+                <li>Response type: <strong>{typeof responses}</strong></li>
+                <li>Response has 'models' key: <strong>{responses?.models ? "Yes" : "No"}</strong></li>
+                <li>Response has 'Set X' keys: <strong>{Object.keys(responses || {}).some(k => k.startsWith('Set ')) ? "Yes" : "No"}</strong></li>
+                <li>Number of top-level keys: <strong>{Object.keys(responses || {}).length}</strong></li>
+                <li>Number of models detected: <strong>{modelRows?.length || 0}</strong></li>
+              </ul>
+            </Typography>
+          </Paper>
+        </Box>
+        
+        <Box sx={{ mb: 2 }}>
+          <Typography variant="subtitle1">Response Structure:</Typography>
+          <Paper elevation={0} sx={{ p: 1, bgcolor: 'white', maxHeight: '300px', overflow: 'auto' }}>
+            <pre style={{ margin: 0, fontSize: '12px' }}>
+              {JSON.stringify(responses, null, 2) || "No responses data"}
+            </pre>
+          </Paper>
+        </Box>
+        
+        <Box sx={{ mb: 2 }}>
+          <Typography variant="subtitle1">Metrics:</Typography>
+          <Paper elevation={0} sx={{ p: 1, bgcolor: 'white', maxHeight: '200px', overflow: 'auto' }}>
+            <pre style={{ margin: 0, fontSize: '12px' }}>
+              {JSON.stringify(metrics, null, 2) || "No metrics data"}
+            </pre>
+          </Paper>
+        </Box>
+        
+        <Box sx={{ mb: 2 }}>
+          <Typography variant="subtitle1">Available Models:</Typography>
+          <Paper elevation={0} sx={{ p: 1, bgcolor: 'white' }}>
+            <Typography variant="body2">{availableModels?.join(', ') || "No models found"}</Typography>
+          </Paper>
+        </Box>
+        
+        <Box>
+          <Typography variant="subtitle1">Troubleshooting Tips:</Typography>
+          <Paper elevation={0} sx={{ p: 1, bgcolor: 'white' }}>
+            <Typography variant="body2" component="div">
+              <ul style={{ margin: 0, paddingLeft: '1.5rem' }}>
+                <li>If you don't see responses, check the network logs for successful API calls</li>
+                <li>Look at the Response Structure to confirm the API returned content</li>
+                <li>If API responses are successful but content isn't displaying, the response format may be unexpected</li>
+                <li>Try different model types (OpenAI vs Claude) as they have different response formats</li>
+              </ul>
+            </Typography>
+          </Paper>
+        </Box>
+      </Paper>
+    );
+  };
+
+  // Improved function to extract model data from responses
+  const extractModelData = () => {
+    console.log("Extracting model data from:", responses);
+    const modelRows = [];
+    
+    // Check if responses exists and is an object
+    if (!responses || typeof responses !== 'object') {
+      console.log("Response is empty or not an object");
+      return modelRows;
+    }
+    
+    // CASE 1: New response structure with 'models' key
+    if (responses.models && typeof responses.models === 'object') {
+      console.log("Using new response structure with 'models' key");
+      
+      // Loop through each prompt set
+      Object.entries(responses.models).forEach(([setKey, modelSet]) => {
+        // Skip non-object entries
+        if (!modelSet || typeof modelSet !== 'object') return;
+        
+        // Loop through each model in the set
+        Object.entries(modelSet).forEach(([modelName, modelResponse]) => {
+          console.log(`Found model ${modelName} in set ${setKey}`);
+          modelRows.push({
+            setName: setKey,
+            displayName: modelName,
+            metricsKey: `${setKey}-${modelName}`,
+            response: modelResponse
+          });
+        });
+      });
+    } 
+    
+    // CASE 2: Check for 'Set X' keys at top level
+    const setKeys = Object.keys(responses).filter(key => key.startsWith('Set '));
+    if (setKeys.length > 0) {
+      console.log("Using legacy Set structure in response");
+      
+      setKeys.forEach(setKey => {
+        const setModels = responses[setKey];
+        if (typeof setModels === 'object' && !Array.isArray(setModels)) {
+          Object.entries(setModels).forEach(([modelName, modelResponse]) => {
+            console.log(`Found model ${modelName} in set ${setKey}`);
+            modelRows.push({
+              setName: setKey,
+              displayName: modelName,
+              metricsKey: `${setKey}-${modelName}`,
+              response: modelResponse
+            });
+          });
+        }
+      });
+    }
+    
+    // CASE 3: Check for direct model names at top level
+    const potentialModelKeys = Object.keys(responses).filter(key => 
+      !key.startsWith('Set ') && 
+      key !== 'metadata' && 
+      key !== 'models' && 
+      key !== 'sources' &&
+      key !== 'query' &&
+      key !== 'retrievalTime'
+    );
+    
+    if (potentialModelKeys.length > 0) {
+      console.log("Found potential direct model keys:", potentialModelKeys);
+      
+      // Try to detect models by name patterns
+      const modelKeyPatterns = [
+        /^gpt-/, /^claude-/, /^llama/, /^mistral/, /^gemma/, 
+        /^anthropic/, /^openai/, /^azure/, /^palm/, /^vertex/
+      ];
+      
+      potentialModelKeys.forEach(key => {
+        // Check if this looks like a model name
+        const isModelName = modelKeyPatterns.some(pattern => pattern.test(key));
+        
+        if (isModelName) {
+          console.log(`Found direct model: ${key}`);
+          modelRows.push({
+            setName: 'Default',
+            displayName: key,
+            metricsKey: key,
+            response: responses[key]
+          });
+        } else {
+          // For non-pattern matches, check if it has response-like properties
+          const value = responses[key];
+          if (value && typeof value === 'object' && 
+              (value.content || value.text || value.answer || 
+               value.response || value.choices || 
+               (value.rawResponse && value.rawResponse.choices))) {
+            console.log(`Found response-like object for key: ${key}`);
+            modelRows.push({
+              setName: 'Default',
+              displayName: key,
+              metricsKey: key,
+              response: value
+            });
+          }
+        }
+      });
+    }
+    
+    // EMERGENCY FALLBACK: If we still haven't found anything, create a single entry with all responses
+    if (modelRows.length === 0 && Object.keys(responses).length > 0) {
+      console.log("No model structure detected - using emergency fallback");
+      modelRows.push({
+        setName: 'Default',
+        displayName: 'Response',
+        metricsKey: 'response',
+        response: responses
+      });
+    }
+    
+    console.log("Extracted model rows:", modelRows);
+    return modelRows;
+  };
+  
+  // Get the model data using our improved function
+  const modelRows = extractModelData();
+  
+  // Sort the model rows using the sorting function
+  // eslint-disable-next-line no-unused-vars
+  const sortedMetricRows = sortData(modelRows);
+
+  // Helper to extract actual text content from model responses
+  const getResponseText = (modelResponse) => {
+    console.log("Getting text from model response:", modelResponse);
+    
+    // Handle string responses
+    if (typeof modelResponse === 'string') {
+      return modelResponse;
+    }
+    
+    // If response is not an object, try to convert to string
+    if (!modelResponse || typeof modelResponse !== 'object') {
+      return String(modelResponse || '');
+    }
+    
+    // Handle various object response formats - extended to handle more cases
+    
+    // Check for nested content in choices (common in OpenAI/Azure responses)
+    if (modelResponse.choices && Array.isArray(modelResponse.choices) && modelResponse.choices.length > 0) {
+      const choice = modelResponse.choices[0];
+      
+      if (choice.message && choice.message.content) {
+        return choice.message.content;
+      }
+      
+      if (choice.text) {
+        return choice.text;
+      }
+      
+      if (choice.delta && choice.delta.content) {
+        return choice.delta.content;
+      }
+    }
+    
+    // Check for raw response formats - common due to API wrapping
+    if (modelResponse.rawResponse) {
+      if (typeof modelResponse.rawResponse === 'string') {
+        return modelResponse.rawResponse;
+      }
+      
+      if (modelResponse.rawResponse.choices && 
+          Array.isArray(modelResponse.rawResponse.choices) && 
+          modelResponse.rawResponse.choices.length > 0) {
+        
+        const choice = modelResponse.rawResponse.choices[0];
+        
+        if (choice.message && choice.message.content) {
+          return choice.message.content;
+        }
+        
+        if (choice.text) {
+          return choice.text;
+        }
+      }
+    }
+    
+    // Check for answer field (common in RAG implementations)
+    if (modelResponse.answer) {
+      if (typeof modelResponse.answer === 'string') {
+        return modelResponse.answer;
+      } else if (modelResponse.answer.text) {
+        return modelResponse.answer.text;
+      }
+    }
+    
+    // Check for various text fields that might contain the response
+    if (modelResponse.text) {
+      return modelResponse.text;
+    }
+    
+    if (modelResponse.content) {
+      return modelResponse.content;
+    }
+    
+    if (modelResponse.response) {
+      if (typeof modelResponse.response === 'string') {
+        return modelResponse.response;
+      } else if (modelResponse.response.text) {
+        return modelResponse.response.text;
+      }
+    }
+    
+    // Anthropic format
+    if (modelResponse.completion) {
+      return modelResponse.completion;
+    }
+    
+    // Look for any property that might contain the response text
+    // Loop through all properties and check if any look like they have content
+    for (const key in modelResponse) {
+      const value = modelResponse[key];
+      
+      // Skip properties that are definitely not the content
+      if (key === 'sources' || key === 'cost' || key === 'tokenUsage' || 
+          key === 'elapsedTime' || key === 'metadata' || key === 'usage') {
+        continue;
+      }
+      
+      // If we find a string property that's reasonably long, it might be the content
+      if (typeof value === 'string' && value.length > 10) {
+        console.log(`Found potential content in property '${key}':`, value.substring(0, 50) + '...');
+        return value;
+      }
+      
+      // Check nested objects like message.content pattern
+      if (typeof value === 'object' && value !== null) {
+        if (value.content && typeof value.content === 'string') {
+          return value.content;
+        }
+        
+        if (value.text && typeof value.text === 'string') {
+          return value.text;
+        }
+        
+        if (value.message && value.message.content) {
+          return value.message.content;
+        }
+      }
+    }
+    
+    // Last resort: stringify the object
+    try {
+      return JSON.stringify(modelResponse, null, 2);
+    } catch (e) {
+      return "Could not display response";
+    }
+  };
+  
+  // Render model responses section
+  const renderModelResponses = () => {
+    if (!modelRows || modelRows.length === 0) {
+      return (
+        <Paper elevation={1} sx={{ p: 2, mb: 3 }}>
+          <Alert severity="warning">
+            No model responses were found. This could be due to an unexpected response format or an issue with the API call.
+          </Alert>
+        </Paper>
+      );
+    }
+    
+    return (
+      <Paper elevation={1} sx={{ p: 2, mb: 3 }}>
+        <Typography variant="h6" gutterBottom>Model Responses</Typography>
+        
+        {modelRows.map((model, index) => {
+          const responseText = getResponseText(model.response);
+          const hasContent = responseText && responseText.trim().length > 0;
+          
+          return (
+            <Box key={`${model.setName}-${model.displayName}`} sx={{ mb: 3 }}>
+              <Paper 
+                elevation={2} 
+                sx={{ 
+                  p: 2,
+                  borderLeft: 5,
+                  borderColor: hasContent ? modelColors[model.displayName] || '#1976d2' : 'error.main'
+                }}
+              >
+                <Typography variant="subtitle1" gutterBottom>
+                  <Box component="span" sx={{ fontWeight: 'bold' }}>
+                    {model.displayName}
+                  </Box>
+                  {model.setName !== 'Default' && 
+                    <Box component="span" sx={{ color: 'text.secondary', ml: 1 }}>
+                      ({model.setName})
+                    </Box>
+                  }
+                </Typography>
+                
+                {hasContent ? (
+                  <Paper 
+                    variant="outlined" 
+                    sx={{ 
+                      p: 2, 
+                      bgcolor: '#f9f9f9',
+                      whiteSpace: 'pre-wrap',
+                      fontFamily: 'Roboto, sans-serif',
+                      fontSize: '0.875rem',
+                      maxHeight: '300px',
+                      overflow: 'auto'
+                    }}
+                  >
+                    {responseText}
+                  </Paper>
+                ) : (
+                  <Alert severity="error" sx={{ mt: 1 }}>
+                    No response content found for this model. The API request might have succeeded, but the response format was unexpected or empty.
+                  </Alert>
+                )}
+                
+                {model.response && typeof model.response === 'object' && (
+                  <Box sx={{ mt: 2, display: 'flex', justifyContent: 'flex-end' }}>
+                    <Button 
+                      size="small" 
+                      onClick={() => {
+                        // Create an accordion state toggle for viewing raw response
+                        const newState = {...expandedRawResponses};
+                        newState[`${model.setName}-${model.displayName}`] = 
+                          !expandedRawResponses[`${model.setName}-${model.displayName}`];
+                        setExpandedRawResponses(newState);
+                      }}
+                      endIcon={expandedRawResponses[`${model.setName}-${model.displayName}`] 
+                        ? <KeyboardArrowUpIcon /> 
+                        : <KeyboardArrowDownIcon />}
+                    >
+                      {expandedRawResponses[`${model.setName}-${model.displayName}`] 
+                        ? 'Hide Raw Response' 
+                        : 'View Raw Response'}
+                    </Button>
+                  </Box>
+                )}
+                
+                {/* Expandable raw response section */}
+                {expandedRawResponses[`${model.setName}-${model.displayName}`] && (
+                  <Box sx={{ mt: 1 }}>
+                    <Paper 
+                      variant="outlined" 
+                      sx={{ 
+                        p: 2, 
+                        bgcolor: '#f0f0f0',
+                        whiteSpace: 'pre-wrap',
+                        fontFamily: 'monospace',
+                        fontSize: '0.75rem',
+                        maxHeight: '200px',
+                        overflow: 'auto'
+                      }}
+                    >
+                      {JSON.stringify(model.response, null, 2)}
+                    </Paper>
+                  </Box>
+                )}
+              </Paper>
+            </Box>
+          );
+        })}
+      </Paper>
+    );
+  };
+
   return (
     <Box>
+      {/* Remove debug section from UI display - this was only for troubleshooting */}
+      
       <Paper elevation={1} sx={{ p: 2, mb: 3 }}>
         <Grid container spacing={2} alignItems="center">
           <Grid item>
@@ -1088,28 +1706,51 @@ const ResponseComparison = ({
                 </TableHead>
                 <TableBody>
                   {(() => {
+                    // Log all metrics data for debugging
+                    console.log("[Cost Debug ALL] All metrics data:", metrics);
+                    console.log("[Cost Debug ALL] All responses data:", responses);
+                    
+                    // Build a list of models with sets to display in the metrics table
                     const metricRows = [];
                     
-                    if (models) {
-                      // Handle the new nested structure
-                      Object.entries(models).forEach(([setKey, setModels]) => {
-                        if (typeof setModels === 'object' && !Array.isArray(setModels)) {
-                          // For each model in the set
-                          Object.entries(setModels).forEach(([modelKey, modelResponse]) => {
-                            // The metrics key format is typically "Set N-modelName"
-                            const metricsKey = `${setKey}-${modelKey}`;
-                            
+                    if (responses?.models) {
+                      // Handle the modern nested structure
+                      Object.keys(responses.models).forEach(setKey => {
+                        Object.keys(responses.models[setKey]).forEach(modelKey => {
+                          metricRows.push({
+                            displayName: modelKey,
+                            setName: setKey,
+                            metricsKey: `${setKey}-${modelKey}`
+                          });
+                          console.log(`[Cost Debug] Added model ${modelKey} from set ${setKey} to metric rows`);
+                        });
+                      });
+                    } else {
+                      // Try to handle flat structures or older formats
+                      Object.keys(responses || {}).forEach(key => {
+                        if (key.startsWith('Set')) {
+                          // This is a prompt set containing models
+                          Object.keys(responses[key] || {}).forEach(modelKey => {
                             metricRows.push({
                               displayName: modelKey,
-                              setName: setKey,
-                              metricsKey: metricsKey
+                              setName: key,
+                              metricsKey: `${key}-${modelKey}`
                             });
+                            console.log(`[Cost Debug] Added model ${modelKey} from set ${key} to metric rows (flat structure)`);
                           });
+                        } else if (!key.includes('metadata')) {
+                          // This could be a direct model entry
+                          metricRows.push({
+                            displayName: key,
+                            setName: null,
+                            metricsKey: key
+                          });
+                          console.log(`[Cost Debug] Added model ${key} directly to metric rows`);
                         }
                       });
                     }
                     
-                    console.log("Metrics rows to render:", metricRows);
+                    console.log("[Cost Debug] Final metric rows:", metricRows);
                     
                     if (metricRows.length === 0) {
                       return (
@@ -1129,15 +1770,14 @@ const ResponseComparison = ({
                     return sortedMetricRows.map(({ displayName, setName, metricsKey }) => {
                       // Try a few backup options for finding metrics in case the metricsKey doesn't work
                       let modelMetrics = null;
-                      let validMetricsKey = null;
                       let backupMetricsKeys = [];
+                      let validMetricsKey = null;
                       
-                      // First check for the specific structure seen in the debug panel
-                      // where metrics are nested under the set key with model as subkey
+                      // First try the specific structure seen in the debug panel
                       if (setName && metrics[setName] && metrics[setName][displayName]) {
                         modelMetrics = metrics[setName][displayName];
-                        console.log(`Found nested metrics for ${displayName} in ${setName}:`, modelMetrics);
-                      } 
+                        console.log(`Found metrics in nested structure for ${displayName}:`, modelMetrics);
+                      }
                       // Then try other possible formats
                       else if (setName && metrics[`${setName}.${displayName}`]) {
                         modelMetrics = metrics[`${setName}.${displayName}`];
@@ -1161,16 +1801,51 @@ const ResponseComparison = ({
                       // Get token usage
                       const tokenUsage = modelMetrics?.tokenUsage?.total;
                       
-                      // Calculate cost (pass the entire tokenUsage object instead of just total)
-                      const cost = modelMetrics?.tokenUsage
-                        ? calculateCost(displayName, modelMetrics.tokenUsage) 
-                        : 0;
+                      // Calculate cost using API-provided cost or fallback to calculation
+                      const modelResponse = responses?.models?.[setName]?.[displayName] || 
+                                           responses?.[setName]?.[displayName] ||
+                                           responses?.[displayName];
                       
-                      // For debugging - log what's happening with this row's metrics
-                      console.log(`Metrics for ${displayName} ${setName ? `(${setName})` : ''}:`, {
+                      console.log(`[Cost Debug DUMP] Model ${displayName} response:`, modelResponse);
+                      
+                      // First check for API-reported cost
+                      let cost = null;
+                      let useApiCost = false;
+                      
+                      // Check if the model response has a cost and useForDisplay flag
+                      if (modelResponse?.useForDisplay === true && modelResponse?.cost !== undefined) {
+                        cost = Number(modelResponse.cost);
+                        useApiCost = true;
+                        console.log(`[Cost Debug] Using model response API cost for ${displayName}: $${cost} (useForDisplay=true)`);
+                      }
+                      // Check if raw response has cost
+                      else if (modelResponse?.rawResponse?.useForDisplay === true && modelResponse?.rawResponse?.cost !== undefined) {
+                        cost = Number(modelResponse.rawResponse.cost);
+                        useApiCost = true;
+                        console.log(`[Cost Debug] Using raw response API cost for ${displayName}: $${cost} (useForDisplay=true)`);
+                      }
+                      // Fall back to any available cost
+                      else if (modelResponse?.cost !== undefined) {
+                        cost = Number(modelResponse.cost);
+                        console.log(`[Cost Debug] Using model response cost for ${displayName}: $${cost} (no useForDisplay flag)`);
+                      }
+                      else if (modelResponse?.rawResponse?.cost !== undefined) {
+                        cost = Number(modelResponse.rawResponse.cost);
+                        console.log(`[Cost Debug] Using raw response cost for ${displayName}: $${cost} (no useForDisplay flag)`);
+                      }
+                      
+                      // Set useForDisplay flag on modelMetrics if we're using an API-reported cost
+                      if (useApiCost && modelMetrics) {
+                        modelMetrics.useForDisplay = true;
+                        modelMetrics.calculatedCost = cost;
+                        console.log(`[Cost Debug] Set calculatedCost=${cost} and useForDisplay=true on modelMetrics for ${displayName}`);
+                      }
+                      
+                      // For debugging
+                      console.log(`Card metrics for ${displayName} ${setName ? `(${setName})` : ''}:`, {
                         triedKeys: backupMetricsKeys,
                         usedKey: validMetricsKey || 'none',
-                        metrics: modelMetrics,
+                        responseTime: modelMetrics?.responseTime,
                         tokenUsage: tokenUsage,
                         cost: cost
                       });
@@ -1210,23 +1885,125 @@ const ResponseComparison = ({
                             </Box>
                           </TableCell>
                           <TableCell>
-                            <Tooltip title={`Input: ~${modelMetrics?.tokenUsage?.input || modelMetrics?.tokenUsage?.prompt_tokens || 'Unknown'} tokens, Output: ~${modelMetrics?.tokenUsage?.output || modelMetrics?.tokenUsage?.completion_tokens || 'Unknown'} tokens`}>
-                              <Stack direction="row" spacing={0.5} alignItems="center">
-                                <TokenIcon fontSize="small" />
-                                <Typography variant="body2">
-                                  {modelMetrics?.tokenUsage?.estimated ? '~' : ''}
-                                  {modelMetrics?.tokenUsage?.total || 
-                                   (modelMetrics?.tokenUsage?.prompt_tokens && modelMetrics?.tokenUsage?.completion_tokens ? 
-                                     (modelMetrics.tokenUsage.prompt_tokens + modelMetrics.tokenUsage.completion_tokens) : 
-                                     'Unknown')} tokens
-                                </Typography>
-                              </Stack>
-                            </Tooltip>
+                            {(() => {
+                              // Get token counts from different possible formats
+                              const inputTokens = modelMetrics?.tokenUsage?.input || 
+                                                 modelMetrics?.tokenUsage?.prompt_tokens || 0;
+                              const outputTokens = modelMetrics?.tokenUsage?.output || 
+                                                  modelMetrics?.tokenUsage?.completion_tokens || 0;
+                              const totalTokens = modelMetrics?.tokenUsage?.total || 
+                                                 modelMetrics?.tokenUsage?.total_tokens || 
+                                                 (inputTokens + outputTokens) || 0;
+                              
+                              // Check if token counts are accurate or estimated
+                              const isEstimated = modelMetrics?.tokenUsage?.estimated === true;
+                              
+                              return (
+                                <Tooltip 
+                                  title={
+                                    <React.Fragment>
+                                      <Typography variant="body2" component="span">
+                                        <strong>Input:</strong> {isEstimated ? '~' : ''}{inputTokens} tokens<br />
+                                        <strong>Output:</strong> {isEstimated ? '~' : ''}{outputTokens} tokens<br />
+                                        {modelMetrics?.tokenUsage?.prompt_tokens_details && (
+                                          <>
+                                            <br />
+                                            <strong>Details:</strong><br />
+                                            {modelMetrics.tokenUsage.prompt_tokens_details.cached_tokens !== undefined && 
+                                              <>- Cached tokens: {modelMetrics.tokenUsage.prompt_tokens_details.cached_tokens}<br /></>
+                                            }
+                                          </>
+                                        )}
+                                      </Typography>
+                                    </React.Fragment>
+                                  }
+                                >
+                                  <Stack direction="row" spacing={0.5} alignItems="center">
+                                    <TokenIcon fontSize="small" />
+                                    <Typography variant="body2">
+                                      {isEstimated ? '~' : ''}
+                                      {totalTokens} tokens
+                                      {!isEstimated && (
+                                        <span style={{ fontSize: '0.8em', color: 'text.secondary', marginLeft: '4px' }}>
+                                          ({inputTokens}+{outputTokens})
+                                        </span>
+                                      )}
+                                    </Typography>
+                                  </Stack>
+                                </Tooltip>
+                              );
+                            })()}
                           </TableCell>
                           <TableCell>
                             <Box display="flex" alignItems="center">
                               <AttachMoneyIcon fontSize="small" sx={{ mr: 1 }} />
-                              {formatCost(cost)}
+                              {/* Get the API-reported cost or client-calculated cost */}
+                              {(() => {
+                                let costToDisplay;
+                                let sourceType = 'estimated';
+                                
+                                console.log(`[Cost Debug FINAL] Model ${displayName} options:`, {
+                                  modelResponseCost: modelResponse?.cost,
+                                  modelResponseUseForDisplay: modelResponse?.useForDisplay,
+                                  rawResponseCost: modelResponse?.rawResponse?.cost,
+                                  rawResponseUseForDisplay: modelResponse?.rawResponse?.useForDisplay,
+                                  metricsCalculatedCost: modelMetrics?.calculatedCost,
+                                  metricsUseForDisplay: modelMetrics?.useForDisplay,
+                                  localCostVariable: cost
+                                });
+                                
+                                // Priority 1: Direct useForDisplay=true costs
+                                if (modelResponse?.useForDisplay === true && modelResponse?.cost !== undefined) {
+                                  costToDisplay = Number(modelResponse.cost);
+                                  sourceType = 'API';
+                                  console.log(`[Cost Debug FINAL] Using model response API cost: ${costToDisplay}`);
+                                }
+                                else if (modelResponse?.rawResponse?.useForDisplay === true && 
+                                         modelResponse?.rawResponse?.cost !== undefined) {
+                                  costToDisplay = Number(modelResponse.rawResponse.cost);
+                                  sourceType = 'API';
+                                  console.log(`[Cost Debug FINAL] Using raw response API cost: ${costToDisplay}`);
+                                }
+                                else if (modelMetrics?.useForDisplay === true && modelMetrics?.calculatedCost !== undefined) {
+                                  costToDisplay = Number(modelMetrics.calculatedCost);
+                                  sourceType = 'API';
+                                  console.log(`[Cost Debug FINAL] Using metrics API cost: ${costToDisplay}`);
+                                }
+                                // Priority 2: Any calculatedCost
+                                else if (modelMetrics?.calculatedCost !== undefined) {
+                                  costToDisplay = Number(modelMetrics.calculatedCost);
+                                  console.log(`[Cost Debug FINAL] Using metrics calculated cost: ${costToDisplay}`);
+                                }
+                                // Priority 3: Any other cost
+                                else if (cost !== undefined && cost !== null) {
+                                  costToDisplay = Number(cost);
+                                  console.log(`[Cost Debug FINAL] Using local cost variable: ${costToDisplay}`);
+                                }
+                                // Fall back to 0
+                                else {
+                                  costToDisplay = 0;
+                                  console.log(`[Cost Debug FINAL] No cost found, using 0`);
+                                }
+                                
+                                // Format the cost for display with tooltip
+                                return (
+                                  <Tooltip title={`${sourceType === 'API' ? 'API-reported' : 'Estimated'} cost`}>
+                                    <Typography variant="body2">
+                                      {costToDisplay === 0 ? 'Free' : `$${costToDisplay.toFixed(7)}`}
+                                    </Typography>
+                                  </Tooltip>
+                                );
+                              })()}
+                              
+                              {/* Only show info icon if we have both API and estimated costs that differ */}
+                              {modelMetrics?.calculatedCost !== undefined && 
+                               cost !== undefined &&
+                               modelMetrics?.calculatedCost !== cost && 
+                               Math.abs(Number(modelMetrics.calculatedCost) - Number(cost)) > 0.000001 && (
+                                <Tooltip title={`${modelMetrics.useForDisplay ? 'API' : 'Estimated'} cost: $${Number(modelMetrics.calculatedCost).toFixed(7)}, Client estimated cost: $${typeof cost === 'number' ? cost.toFixed(7) : Number(cost).toFixed(7)}`}>
+                                  <InfoIcon fontSize="small" sx={{ ml: 1, color: modelMetrics.useForDisplay ? 'success.main' : 'warning.main' }} />
+                                </Tooltip>
+                              )}
                             </Box>
                           </TableCell>
                         </TableRow>
@@ -1238,537 +2015,10 @@ const ResponseComparison = ({
             </TableContainer>
 
             {/* Token Usage Analysis */}
-            <Box sx={{ mb: 4 }}>
-              <TokenUsageAnalyzer 
-                metrics={metrics} 
-                responses={responses} 
-                systemPrompts={systemPrompts} 
-                currentQuery={currentQuery}
-              />
-            </Box>
-
-            {/* Context Window Analysis */}
-            <Box sx={{ mb: 4 }}>
-              <ContextWindowVisualizer 
-                responses={responses}
-                systemPrompts={systemPrompts}
-                currentQuery={currentQuery}
-              />
-            </Box>
-
-            {/* Source Documents - Collapsible by default */}
-            <Typography variant="h6" gutterBottom>
-              Source Documents
-            </Typography>
-            <Alert severity="info" sx={{ mb: 3 }}>
-              <Typography variant="body2">
-                These documents were retrieved as context for the models' responses. The quality and relevance of these sources directly impacts the accuracy of the generated answers.
-              </Typography>
-            </Alert>
-            <Accordion defaultExpanded={false} sx={{ mb: 4 }}>
-              <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-                <Typography variant="subtitle1">
-                  View Source Documents {sources.length > 0 ? `(${sources.length})` : '(None)'}
-                </Typography>
-              </AccordionSummary>
-              <AccordionDetails>
-                {sources.length === 0 ? (
-                  <Alert severity="info">No source documents available for this response.</Alert>
-                ) : (
-                  Object.entries(getSourcesByNamespace(sources)).map(([namespace, namespaceSources], index) => (
-                    <Box key={`${namespace}-${index}`} sx={{ mb: 3 }}>
-                      <Paper variant="outlined" sx={{ p: 2 }}>
-                        <Typography variant="subtitle1" color="text.secondary" gutterBottom>
-                          <FolderIcon fontSize="small" sx={{ mr: 1, verticalAlign: 'middle' }} />
-                          {namespace}
-                        </Typography>
-                        <Box sx={{ pl: 4 }}>
-                          {namespaceSources.map((source, sourceIndex) => {
-                            // Extract content based on different possible structures
-                            const sourceContent = 
-                              typeof source.pageContent === 'string' ? source.pageContent :
-                              typeof source.content === 'string' ? source.content :
-                              source.text || "No content available";
-
-                            // Extract metadata
-                            const metadata = source.metadata || {};
-                            const filename = metadata.originalFileName || metadata.documentName || metadata.source || metadata.filename || 'Unknown';
-                            
-                            return (
-                              <Box 
-                                key={`${namespace}-${sourceIndex}`}
-                                sx={{ 
-                                  mb: 2,
-                                  p: 2,
-                                  bgcolor: 'grey.50',
-                                  borderRadius: 1,
-                                  border: '1px solid',
-                                  borderColor: 'grey.200'
-                                }}
-                              >
-                                <Typography variant="subtitle2" color="primary" gutterBottom>
-                                  File: {filename}
-                                </Typography>
-                                <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>
-                                  {sourceContent}
-                                </Typography>
-                                {metadata && (
-                                  <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
-                                    Source: {metadata.source || filename || 'Unknown'} 
-                                    {metadata.page && ` (Page ${metadata.page})`}
-                                  </Typography>
-                                )}
-                              </Box>
-                            );
-                          })}
-                        </Box>
-                      </Paper>
-                    </Box>
-                  ))
-                )}
-              </AccordionDetails>
-            </Accordion>
-
-            {/* Model Responses - Moved to bottom */}
-            <Typography variant="h6" gutterBottom>
-              Model Responses
-            </Typography>
-            <Box sx={{ mb: 4 }}>
-              <Grid container spacing={3}>
-                {(() => {
-                  const modelCards = [];
-                  
-                  // Utility function to diagnose o3-mini responses
-                  const diagnoseO3MiniResponse = (modelResponse) => {
-                    console.log(`[O3-MINI DIAGNOSTIC] Examining response:`, modelResponse);
-                    
-                    if (!modelResponse) {
-                      console.log('[O3-MINI DIAGNOSTIC] Response is null or undefined');
-                      return;
-                    }
-                    
-                    // Check for exact format as in example
-                    if (modelResponse.id && modelResponse.choices && modelResponse.choices[0]?.message?.content) {
-                      console.log('[O3-MINI DIAGNOSTIC] Found standard OpenAI format with choices[0].message.content:', 
-                                  modelResponse.choices[0].message.content.substring(0, 100) + '...');
-                    }
-                    
-                    // Check for text field
-                    if (modelResponse.text) {
-                      console.log('[O3-MINI DIAGNOSTIC] Found text field:', modelResponse.text.substring(0, 100) + '...');
-                    }
-                    
-                    // Check for raw response
-                    if (modelResponse.rawResponse) {
-                      console.log('[O3-MINI DIAGNOSTIC] Has rawResponse');
-                      if (modelResponse.rawResponse.choices && modelResponse.rawResponse.choices[0]?.message?.content) {
-                        console.log('[O3-MINI DIAGNOSTIC] Found content in rawResponse.choices[0].message.content:', 
-                                    modelResponse.rawResponse.choices[0].message.content.substring(0, 100) + '...');
-                      }
-                    }
-                  };
-                  
-                  // Debug log to understand the structure
-                  console.log("Response structure for model cards:", responses);
-                  
-                  // First check if we have the new nested structure with 'models' key
-                  if (responses && responses.models) {
-                    console.log("Using new nested models structure");
-                    
-                    // For each set in the models object
-                    Object.entries(responses.models).forEach(([setKey, setModels]) => {
-                      if (typeof setModels === 'object' && !Array.isArray(setModels)) {
-                        // For each model in the set
-                        Object.entries(setModels).forEach(([modelKey, modelResponse]) => {
-                          console.log(`Processing model ${modelKey} in ${setKey}`);
-                          
-                          // Special debug for o3-mini
-                          if (modelKey.includes('o3-mini')) {
-                            console.log(`[O3-MINI DEBUG] Found o3-mini model in ${setKey}`);
-                            diagnoseO3MiniResponse(modelResponse);
-                          }
-                          
-                          // Check if this is a real model key (not metadata)
-                          const isModelKey = 
-                            modelKey.includes('gpt-') || 
-                            modelKey.includes('claude-') ||
-                            modelKey.includes('llama') ||
-                            modelKey.includes('mistral') ||
-                            modelKey.includes('gemma') ||
-                            modelKey.includes('o3-mini');
-                            
-                          if (isModelKey) {
-                            modelCards.push({
-                              key: `${setKey}-${modelKey}`,
-                              displayName: modelKey,
-                              setName: setKey,
-                              response: modelResponse,
-                              metricsKey: `${setKey}-${modelKey}`
-                            });
-                          } else {
-                            console.log(`Skipping non-model key: ${modelKey}`);
-                          }
-                        });
-                      }
-                    });
-                  } 
-                  // Handle legacy format
-                  else if (responses) {
-                    // Define the models directly from responses for legacy formats
-                    const models = responses;
-                    
-                    // For validation results, handle the case where responses might have a 'models' property
-                    // but it might not be at the top level (could be nested under a validation key)
-                    const potentialModelsContainers = [];
-                    
-                    // Check if any property of responses contains a 'models' object
-                    Object.entries(responses).forEach(([key, value]) => {
-                      if (value && typeof value === 'object' && value.models) {
-                        console.log(`Found nested models structure in ${key}`);
-                        potentialModelsContainers.push(value);
-                      }
-                    });
-                    
-                    // If we found potential containers with models, process them
-                    if (potentialModelsContainers.length > 0) {
-                      potentialModelsContainers.forEach(container => {
-                        if (container.models) {
-                          Object.entries(container.models).forEach(([setKey, setModels]) => {
-                            if (typeof setModels === 'object' && !Array.isArray(setModels)) {
-                              Object.entries(setModels).forEach(([modelKey, modelResponse]) => {
-                                // Special debug for o3-mini
-                                if (modelKey.includes('o3-mini')) {
-                                  console.log(`[O3-MINI DEBUG] Found o3-mini model in ${setKey} (container)`);
-                                  diagnoseO3MiniResponse(modelResponse);
-                                }
-                                
-                                // Check if this is a real model key (not metadata)
-                                const isModelKey = 
-                                  modelKey.includes('gpt-') || 
-                                  modelKey.includes('claude-') ||
-                                  modelKey.includes('llama') ||
-                                  modelKey.includes('mistral') ||
-                                  modelKey.includes('gemma') ||
-                                  modelKey.includes('o3-mini');
-                                  
-                                if (isModelKey) {
-                                  modelCards.push({
-                                    key: `${setKey}-${modelKey}`,
-                                    displayName: modelKey,
-                                    setName: setKey,
-                                    response: modelResponse,
-                                    metricsKey: `${setKey}-${modelKey}`
-                                  });
-                                }
-                              });
-                            }
-                          });
-                        }
-                      });
-                    } else if (models) {
-                      // Process regular legacy format
-                      const modelKeyRegex = /^(gpt-|claude-|llama|mistral|gemma|o3-mini)/;
-                      
-                      // Handle legacy format or direct model responses
-                      Object.entries(models).forEach(([key, value]) => {
-                        if (modelKeyRegex.test(key)) {
-                          // Direct model response
-                          modelCards.push({
-                            key: key,
-                            displayName: key,
-                            setName: '',
-                            response: value,
-                            metricsKey: key
-                          });
-                        } else if (key.startsWith('Set ')) {
-                          // Set-based responses in legacy format
-                          const setContent = value;
-                          if (typeof setContent === 'object' && !Array.isArray(setContent)) {
-                            Object.entries(setContent).forEach(([modelKey, modelResponse]) => {
-                              // Filter out metadata keys that aren't models
-                              if (modelKeyRegex.test(modelKey)) {
-                                modelCards.push({
-                                  key: `${key}-${modelKey}`,
-                                  displayName: modelKey,
-                                  setName: key,
-                                  response: modelResponse,
-                                  metricsKey: `${key}-${modelKey}`
-                                });
-                              }
-                            });
-                          }
-                        }
-                      });
-                    }
-                  }
-                  
-                  console.log("Final model cards to render:", modelCards);
-                  
-                  if (modelCards.length === 0) {
-                    return (
-                      <Grid item xs={12}>
-                        <Alert severity="warning">
-                          No model responses found. The response structure may be in an unexpected format.
-                        </Alert>
-                      </Grid>
-                    );
-                  }
-                  
-                  return modelCards.map(({ key, displayName, setName, response, metricsKey }) => {
-                    // Try a few backup options for finding metrics in case the metricsKey doesn't work
-                    let modelMetrics = null;
-                    let validMetricsKey = null;
-                    let backupMetricsKeys = [];
-                    
-                    // First check for the specific structure seen in the debug panel
-                    // where metrics are nested under the set key with model as subkey
-                    if (setName && metrics[setName] && metrics[setName][displayName]) {
-                      modelMetrics = metrics[setName][displayName];
-                      console.log(`Found nested metrics for ${displayName} in ${setName}:`, modelMetrics);
-                    } 
-                    // Then try other possible formats
-                    else if (setName && metrics[`${setName}.${displayName}`]) {
-                      modelMetrics = metrics[`${setName}.${displayName}`];
-                      console.log(`Found metrics with special key ${setName}.${displayName}:`, modelMetrics);
-                    } else {
-                      // Try standard backup keys
-                      backupMetricsKeys = [metricsKey, displayName, `${setName}-${displayName}`, setName];
-                      
-                      // Find the first key with valid metrics
-                      validMetricsKey = backupMetricsKeys.find(key => 
-                        metrics[key] && (
-                          !isNaN(metrics[key]?.responseTime) || 
-                          (metrics[key]?.tokenUsage && metrics[key]?.tokenUsage?.total)
-                        )
-                      );
-                      
-                      // Get metrics from the valid key
-                      modelMetrics = validMetricsKey ? metrics[validMetricsKey] : null;
-                    }
-                    
-                    // Get token usage
-                    const tokenUsage = modelMetrics?.tokenUsage?.total;
-                    
-                    // Calculate cost (pass the entire tokenUsage object instead of just total)
-                    const cost = modelMetrics?.tokenUsage
-                      ? calculateCost(displayName, modelMetrics.tokenUsage) 
-                      : 0;
-                    
-                    // For debugging
-                    console.log(`Card metrics for ${displayName} ${setName ? `(${setName})` : ''}:`, {
-                      triedKeys: backupMetricsKeys,
-                      usedKey: validMetricsKey || 'none',
-                      responseTime: modelMetrics?.responseTime,
-                      tokenUsage: tokenUsage,
-                      cost: cost
-                    });
-                    
-                    return (
-                      <Grid item xs={12} md={6} key={key}>
-                        <Card 
-                          className="response-card" 
-                          variant="outlined"
-                          sx={{ 
-                            height: '100%',
-                            borderLeft: `4px solid ${modelColors[displayName] || '#888'}`
-                          }}
-                        >
-                          <CardHeader
-                            title={
-                              <Box display="flex" alignItems="center">
-                                <Box 
-                                  width={16} 
-                                  height={16} 
-                                  borderRadius="50%" 
-                                  bgcolor={modelColors[displayName] || '#888'} 
-                                  mr={1} 
-                                />
-                                {displayName}
-                                {setName && ` / ${setName}`}
-                              </Box>
-                            }
-                            subheader={`${getModelVendor(displayName) ? `${getModelVendor(displayName)} - ` : ''}Response time: ${modelMetrics && !isNaN(modelMetrics.responseTime) ? formatResponseTime(modelMetrics.responseTime) : 'Unknown'}`}
-                            action={
-                              <Stack direction="row" spacing={2} alignItems="center">
-                                <Tooltip title={`${tokenUsage || 'Unknown'} tokens used`}>
-                                  <Stack direction="row" spacing={0.5} alignItems="center">
-                                    <TokenIcon fontSize="small" />
-                                    <Typography variant="body2">
-                                      {tokenUsage || 'Unknown'}
-                                    </Typography>
-                                  </Stack>
-                                </Tooltip>
-                                <Tooltip title={`Estimated cost: ${formatCost(cost)}`}>
-                                  <Stack direction="row" spacing={0.5} alignItems="center">
-                                    <AttachMoneyIcon fontSize="small" />
-                                    <Typography variant="body2">
-                                      {formatCost(cost)}
-                                    </Typography>
-                                  </Stack>
-                                </Tooltip>
-                              </Stack>
-                            }
-                          />
-                          <CardContent sx={{ pt: 1 }}>
-                            <Typography 
-                              variant="body1" 
-                              component="div" 
-                              sx={{ 
-                                whiteSpace: 'pre-wrap',
-                                minHeight: '300px',
-                                maxHeight: '500px',
-                                overflowY: 'auto',
-                                p: 2,
-                                bgcolor: 'grey.50',
-                                borderRadius: 1
-                              }}
-                            >
-                              {(() => {
-                                if (!response) {
-                                  return "No response data available";
-                                }
-                                
-                                let content = '';
-                                
-                                // Special handling for o3-mini model which has a different response structure
-                                if (displayName.includes('o3-mini')) {
-                                  console.log('[RESPONSE DISPLAY] Processing o3-mini response:', response);
-                                  
-                                  // Function to extract content from o3-mini exact format as in example
-                                  const getO3MiniContent = (resp) => {
-                                    // Check if we have the exact format from the example
-                                    if (resp && resp.choices && 
-                                        resp.choices.length > 0 && 
-                                        resp.choices[0].message && 
-                                        resp.choices[0].message.content) {
-                                      return resp.choices[0].message.content;
-                                    }
-                                    return null;
-                                  };
-                                  
-                                  // First try direct format as in example
-                                  const directContent = getO3MiniContent(response);
-                                  if (directContent) {
-                                    content = directContent;
-                                    console.log('[RESPONSE DISPLAY] Found content directly in choices[0].message.content format:', 
-                                              content.substring(0, 100) + '...');
-                                  }
-                                  // Try text field
-                                  else if (response.text) {
-                                    content = response.text;
-                                    console.log('[RESPONSE DISPLAY] Using text field for o3-mini');
-                                  } 
-                                  // Check for the exact format shown in the example JSON
-                                  else if (response.id && response.choices && response.choices.length > 0 && 
-                                          response.choices[0].message && response.choices[0].message.content) {
-                                    content = response.choices[0].message.content;
-                                    console.log('[RESPONSE DISPLAY] Found content directly in choices[0].message.content format');
-                                  }
-                                  // Check if we have a raw response with choices
-                                  else if (response.rawResponse) {
-                                    const rawContent = getO3MiniContent(response.rawResponse);
-                                    if (rawContent) {
-                                      content = rawContent;
-                                      console.log('[RESPONSE DISPLAY] Found content in rawResponse choices[0].message.content');
-                                    }
-                                    else if (response.rawResponse.choices) {
-                                      const rawChoice = response.rawResponse.choices[0];
-                                      if (rawChoice && rawChoice.message && rawChoice.message.content) {
-                                        content = rawChoice.message.content;
-                                        console.log('[RESPONSE DISPLAY] Using rawResponse.choices[0].message.content for o3-mini');
-                                      }
-                                    }
-                                  }
-                                  // Try standard API response structure
-                                  else if (response.choices && response.choices[0]?.message?.content) {
-                                    content = response.choices[0].message.content;
-                                    console.log('[RESPONSE DISPLAY] Using direct choices[0].message.content for o3-mini');
-                                  }
-                                  // Last resort - try to parse the entire response
-                                  else if (typeof response === 'object') {
-                                    try {
-                                      // Check for content in a nested object
-                                      const objStr = JSON.stringify(response);
-                                      if (objStr.includes('"content"')) {
-                                        // Try to extract content from any nested object
-                                        const matches = objStr.match(/"content"\s*:\s*"([^"]+)"/);
-                                        if (matches && matches[1]) {
-                                          content = matches[1].replace(/\\n/g, '\n').replace(/\\"/g, '"');
-                                          console.log('[RESPONSE DISPLAY] Extracted content from JSON string for o3-mini');
-                                        }
-                                      }
-                                      
-                                      // If still no content found, try using the full JSON response
-                                      if (!content) {
-                                        console.log('[RESPONSE DISPLAY] No content found, displaying full response for o3-mini');
-                                        content = JSON.stringify(response, null, 2);
-                                      }
-                                    } catch (e) {
-                                      console.error('[RESPONSE DISPLAY] Error extracting content:', e);
-                                    }
-                                  }
-                                } 
-                                // Standard handling for other models
-                                else {
-                                  // Handle different response formats
-                                  if (typeof response === 'string') {
-                                    content = response;
-                                  } else if (response.text) {
-                                    content = response.text;
-                                  } else if (response.answer) {
-                                    content = typeof response.answer === 'object' && response.answer.text
-                                      ? response.answer.text 
-                                      : response.answer;
-                                  } else if (response.response) {
-                                    content = response.response;
-                                  } else if (response.content) {
-                                    content = response.content;
-                                  } else {
-                                    // Handle other potential response structures
-                                    try {
-                                      content = JSON.stringify(response, null, 2);
-                                    } catch (e) {
-                                      content = "Could not display response data";
-                                    }
-                                  }
-                                }
-                                
-                                // Format code with monospace font but don't hide it
-                                const isCode = typeof content === 'string' && (
-                                  content.includes('import ') || 
-                                  content.includes('function ') || 
-                                  content.includes('def ') ||
-                                  content.includes('class ')
-                                );
-                                
-                                // Simply return the content with appropriate formatting
-                                return isCode ? (
-                                  <pre style={{ 
-                                    margin: 0, 
-                                    fontFamily: 'monospace',
-                                    fontSize: '0.9rem',
-                                    whiteSpace: 'pre-wrap',
-                                    overflow: 'auto',
-                                    maxHeight: '100%'
-                                  }}>
-                                    {content}
-                                  </pre>
-                                ) : (
-                                  <div style={{ whiteSpace: 'pre-wrap' }}>
-                                    {content}
-                                  </div>
-                                );
-                              })()}
-                            </Typography>
-                          </CardContent>
-                        </Card>
-                      </Grid>
-                    );
-                  });
-                })()}
-              </Grid>
-            </Box>
           </Paper>
+          
+          {/* Place model responses at the bottom */}
+          {renderModelResponses()}
         </Box>
       )}
 

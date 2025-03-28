@@ -142,6 +142,12 @@ export const validateResponsesInParallel = async (
   
   console.log(`Generated ${validationTasks.length} validation tasks`);
   
+  // Early return if no validation tasks
+  if (validationTasks.length === 0) {
+    console.log("No validation tasks generated. Returning empty results.");
+    return {};
+  }
+  
   // Create validation promises for parallel execution
   const validationPromises = validationTasks.map(async ({ modelKey, displayKey, answer }) => {
     try {
