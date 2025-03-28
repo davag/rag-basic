@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { 
   Box, 
   Typography, 
@@ -94,55 +94,8 @@ const TokenUsageAnalyzer = ({ metrics, responses, systemPrompts, currentQuery })
   const [expanded, setExpanded] = useState(false);
   const [warnings, setWarnings] = useState({});
   
-  useEffect(() => {
-    // Calculate token breakdowns for each model
-    const breakdowns = {};
-    const modelWarnings = {};
-    
-    // Process each set in responses
-    Object.entries(responses || {}).forEach(([setKey, setResponses]) => {
-      // Skip if this is not a set of responses
-      if (['systemPrompts', 'temperatures', 'retrievalTime', 'query'].includes(setKey)) {
-        return;
-      }
-      
-      // Process each model in the set
-      Object.entries(setResponses || {}).forEach(([model, response]) => {
-        if (!response || !response.sources) {
-          return; // Skip this model if response or sources is undefined
-        }
-        
-        // Create a composite key for this model in this set
-        const modelKey = `${setKey}-${model}`;
-        
-        // Reconstruct the full prompt that was sent (similar to what's in QueryInterface submitQuery)
-        const context = (response.sources || []).map(s => s?.content || '').join('\n\n');
-        const prompt = `
-Context information is below.
----------------------
-${context}
----------------------
-Given the context information and not prior knowledge, answer the question: ${currentQuery || ''}
-`;
-        
-        // Get the system prompt used for this model - safely access system prompts
-        const systemPrompt = systemPrompts && systemPrompts[modelKey] ? systemPrompts[modelKey] : "";
-        
-        // Estimate token breakdown
-        const breakdown = estimateTokenBreakdown(prompt, systemPrompt);
-        breakdowns[modelKey] = breakdown;
-        
-        // Identify potential expensive areas
-        modelWarnings[modelKey] = identifyExpensiveAreas(breakdown);
-      });
-    });
-    
-    setTokenBreakdowns(breakdowns);
-    setWarnings(modelWarnings);
-  }, [responses, systemPrompts, currentQuery]);
-  
   // Helper to find metrics for a model
-  const findModelMetrics = (metrics, model) => {
+  const findModelMetrics = useCallback((metrics, model) => {
     if (!metrics || !model) return null;
     
     // Direct hit - metrics stored directly under the model key
@@ -183,10 +136,10 @@ Given the context information and not prior knowledge, answer the question: ${cu
     }
     
     return null;
-  };
+  }, []);
   
   // Helper to normalize token usage data from different LLM providers
-  const normalizeTokenUsage = (tokenUsage) => {
+  const normalizeTokenUsage = useCallback((tokenUsage) => {
     if (!tokenUsage) return { input: 0, output: 0, total: 0 };
     
     // Handle standard format with input/output
@@ -226,7 +179,146 @@ Given the context information and not prior knowledge, answer the question: ${cu
     }
     
     return { input: 0, output: 0, total: 0 };
-  };
+  }, []);
+  
+  useEffect(() => {
+    // Calculate token breakdowns for each model
+    const breakdowns = {};
+    const modelWarnings = {};
+    
+    console.log("TokenUsageAnalyzer - Calculating breakdown for responses:", responses);
+    console.log("TokenUsageAnalyzer - Available metrics:", metrics);
+    
+    // Handle new response structure with 'models' key
+    if (responses && responses.models) {
+      console.log("TokenUsageAnalyzer - Using new structure with models key");
+      
+      // Process each set in responses.models
+      Object.entries(responses.models).forEach(([setKey, setResponses]) => {
+        // Process each model in the set
+        Object.entries(setResponses).forEach(([model, modelResponse]) => {
+          if (!modelResponse || !modelResponse.sources) {
+            console.log(`TokenUsageAnalyzer - Skipping model ${model} in set ${setKey} (no response or sources)`);
+            return;
+          }
+          
+          // Create a composite key for this model in this set
+          const modelKey = `${setKey}-${model}`;
+          console.log(`TokenUsageAnalyzer - Processing model ${model} in set ${setKey}`);
+          
+          // Get metrics for this model
+          const modelMetrics = findModelMetrics(metrics, modelKey) || findModelMetrics(metrics, model);
+          console.log(`TokenUsageAnalyzer - Model metrics for ${modelKey}:`, modelMetrics);
+          
+          // If we have actual token usage from metrics, use that
+          if (modelMetrics && modelMetrics.tokenUsage && modelMetrics.tokenUsage.total) {
+            const tokenUsage = normalizeTokenUsage(modelMetrics.tokenUsage);
+            console.log(`TokenUsageAnalyzer - Using actual token counts for ${model}:`, tokenUsage);
+            
+            // Create a breakdown based on the actual usage
+            breakdowns[modelKey] = {
+              total: tokenUsage.total,
+              breakdown: {
+                input: tokenUsage.input,
+                output: tokenUsage.output
+              },
+              actualMetrics: true
+            };
+          } else {
+            // Fall back to estimating from response
+            console.log(`TokenUsageAnalyzer - No metrics found for ${modelKey}, estimating from response`);
+            
+            // Reconstruct the full prompt that was sent
+            const context = (modelResponse.sources || []).map(s => s?.content || '').join('\n\n');
+            const prompt = `
+Context information is below.
+---------------------
+${context}
+---------------------
+Given the context information and not prior knowledge, answer the question: ${currentQuery || ''}
+`;
+            
+            // Get the system prompt used for this model
+            const systemPrompt = systemPrompts && systemPrompts[modelKey] ? systemPrompts[modelKey] : "";
+            
+            // Estimate token breakdown
+            const breakdown = estimateTokenBreakdown(prompt, systemPrompt);
+            breakdowns[modelKey] = breakdown;
+          }
+          
+          // Identify potential expensive areas
+          modelWarnings[modelKey] = identifyExpensiveAreas(breakdowns[modelKey]);
+        });
+      });
+    } else {
+      // Legacy structure handling
+      console.log("TokenUsageAnalyzer - Using legacy response structure");
+      
+      // Process each set in responses
+      Object.entries(responses || {}).forEach(([setKey, setResponses]) => {
+        // Skip if this is not a set of responses
+        if (['systemPrompts', 'temperatures', 'retrievalTime', 'query'].includes(setKey)) {
+          return;
+        }
+        
+        // Process each model in the set
+        Object.entries(setResponses || {}).forEach(([model, response]) => {
+          if (!response || !response.sources) {
+            return; // Skip this model if response or sources is undefined
+          }
+          
+          // Create a composite key for this model in this set
+          const modelKey = `${setKey}-${model}`;
+          
+          // Get metrics for this model
+          const modelMetrics = findModelMetrics(metrics, modelKey);
+          
+          // If we have actual token usage from metrics, use that
+          if (modelMetrics && modelMetrics.tokenUsage && modelMetrics.tokenUsage.total) {
+            const tokenUsage = normalizeTokenUsage(modelMetrics.tokenUsage);
+            
+            // Create a breakdown based on the actual usage
+            breakdowns[modelKey] = {
+              total: tokenUsage.total,
+              breakdown: {
+                input: tokenUsage.input,
+                output: tokenUsage.output
+              },
+              actualMetrics: true
+            };
+          } else {
+            // Fall back to estimating from response
+            
+            // Reconstruct the full prompt that was sent
+            const context = (response.sources || []).map(s => s?.content || '').join('\n\n');
+            const prompt = `
+Context information is below.
+---------------------
+${context}
+---------------------
+Given the context information and not prior knowledge, answer the question: ${currentQuery || ''}
+`;
+            
+            // Get the system prompt used for this model
+            const systemPrompt = systemPrompts && systemPrompts[modelKey] ? systemPrompts[modelKey] : "";
+            
+            // Estimate token breakdown
+            const breakdown = estimateTokenBreakdown(prompt, systemPrompt);
+            breakdowns[modelKey] = breakdown;
+          }
+          
+          // Identify potential expensive areas
+          modelWarnings[modelKey] = identifyExpensiveAreas(breakdowns[modelKey]);
+        });
+      });
+    }
+    
+    console.log("TokenUsageAnalyzer - Final breakdowns:", breakdowns);
+    console.log("TokenUsageAnalyzer - Model warnings:", modelWarnings);
+    
+    setTokenBreakdowns(breakdowns);
+    setWarnings(modelWarnings);
+  }, [responses, systemPrompts, currentQuery, findModelMetrics, normalizeTokenUsage, metrics]);
   
   // Helper to calculate percentage of token usage
   const calculatePercentage = (part, total) => {
@@ -244,6 +336,20 @@ Given the context information and not prior knowledge, answer the question: ${cu
   const formatElapsedTime = (ms) => {
     if (!ms) return 'N/A';
     
+    // Some timestamps are already in seconds rather than milliseconds
+    // If the value is extremely large (like 1743154740000), it's likely a timestamp rather than a duration
+    if (ms > 1000000000000) {
+      // Convert to readable date if it's a full timestamp
+      const date = new Date(ms);
+      return `${date.toLocaleTimeString()}`;
+    }
+
+    // If the value is still quite large but less than a typical timestamp, it might be seconds since epoch
+    if (ms > 1000000000) {
+      return `${(ms/1000).toFixed(2)}s total`;
+    }
+    
+    // Handle actual durations
     const seconds = Math.floor(ms / 1000);
     const minutes = Math.floor(seconds / 60);
     const remainingSeconds = seconds % 60;
@@ -281,220 +387,442 @@ Given the context information and not prior knowledge, answer the question: ${cu
           </Typography>
           
           <Grid container spacing={3}>
-            {Object.entries(responses || {}).map(([setKey, setResponses]) => {
-              // Skip if this is not a set of responses
-              if (['systemPrompts', 'temperatures', 'retrievalTime', 'query'].includes(setKey)) {
-                return null;
-              }
-              
-              return Object.entries(setResponses || {}).map(([model, response]) => {
-                if (!response || !response.sources) {
+            {responses && responses.models ? (
+              // Handle new response structure with 'models' key
+              Object.entries(responses.models).map(([setKey, setResponses]) => 
+                Object.entries(setResponses).map(([model, modelResponse]) => {
+                  if (!modelResponse) return null;
+                  
+                  // Create a composite key for this model in this set
+                  const modelKey = `${setKey}-${model}`;
+                  
+                  // Extract model name properly
+                  const setNameMatch = modelKey.match(/^(Set \d+)-(.+)$/);
+                  const modelDisplay = setNameMatch ? setNameMatch[2] : model;
+                  const setKeyDisplay = setNameMatch ? setNameMatch[1] : setKey;
+                  
+                  const modelMetrics = findModelMetrics(metrics, modelKey) || findModelMetrics(metrics, model) || {};
+                  const tokenUsage = normalizeTokenUsage(modelMetrics.tokenUsage || {});
+                  
+                  const breakdown = tokenBreakdowns[modelKey];
+                  const modelWarnings = warnings[modelKey] || [];
+                  
+                  let modelCost = 0;
+                  if (modelMetrics && modelMetrics.calculatedCost !== undefined) {
+                    // Use API-provided cost if available
+                    modelCost = Number(modelMetrics.calculatedCost);
+                  } else if (tokenUsage && tokenUsage.total) {
+                    // Use the unified cost calculation through window.costTracker if available
+                    if (window.costTracker) {
+                      const costInfo = window.costTracker.computeCost(model, tokenUsage);
+                      modelCost = costInfo.cost;
+                    } else {
+                      // Fallback to the standard calculation method
+                      const costResult = calculateCost(model, { 
+                        input: tokenUsage.input || tokenUsage.total / 2, 
+                        output: tokenUsage.output || tokenUsage.total / 2 
+                      });
+                      modelCost = costResult.totalCost || 0;
+                    }
+                  }
+                    
+                  if (!breakdown) return null;
+                  
+                  return (
+                    <Grid item xs={12} md={6} key={modelKey}>
+                      <Card variant="outlined">
+                        <CardContent>
+                          <Typography variant="h6" gutterBottom>
+                            {modelDisplay} ({setKeyDisplay})
+                          </Typography>
+                          
+                          {/* Token Summary */}
+                          <Stack direction="row" spacing={2} sx={{ mb: 2, flexWrap: 'wrap', gap: 1 }}>
+                            <Chip 
+                              icon={<TokenIcon />} 
+                              label={`${formatNumber(tokenUsage.total)} Total Tokens`} 
+                              color="primary"
+                            />
+                            <Chip 
+                              icon={<AttachMoneyIcon />} 
+                              label={modelCost === 0 ? 'Free' : modelCost < 0.0000001 && modelCost > 0 ? `$${Number(modelCost).toFixed(10)}` : `$${Number(modelCost).toFixed(7)}`} 
+                              color="secondary"
+                            />
+                            {modelMetrics.calculatedCost !== undefined && modelMetrics.calculatedCost !== null && (
+                              <Tooltip title="This cost is reported directly by the API provider and represents the actual charge for this request">
+                                <Chip
+                                  variant="outlined"
+                                  label="Actual Cost from API"
+                                  color="info"
+                                  sx={{ ml: 0.5 }}
+                                />
+                              </Tooltip>
+                            )}
+                            {modelMetrics.elapsedTime && (
+                              <Chip
+                                icon={<AccessTimeIcon />}
+                                label={`${formatElapsedTime(modelMetrics.elapsedTime)}`}
+                                color="info"
+                              />
+                            )}
+                          </Stack>
+                          
+                          {/* Input/Output Breakdown */}
+                          <Typography variant="subtitle2" gutterBottom>Input/Output Split</Typography>
+                          <Box sx={{ mb: 2 }}>
+                            <LinearProgress
+                              variant="determinate"
+                              value={tokenUsage.total ? (tokenUsage.input / tokenUsage.total) * 100 : 0}
+                              sx={{
+                                height: 10,
+                                borderRadius: 1,
+                                backgroundColor: 'secondary.light',
+                                '& .MuiLinearProgress-bar': {
+                                  backgroundColor: 'primary.main',
+                                }
+                              }}
+                            />
+                            
+                            <Box sx={{ ml: 2, display: 'flex', fontSize: '0.75rem' }}>
+                              <Box sx={{ color: 'primary.main', display: 'flex', alignItems: 'center', mr: 1 }}>
+                                <Box sx={{ width: 8, height: 8, bgcolor: 'primary.main', borderRadius: 1, mr: 0.5 }} />
+                                Input: {formatNumber(tokenUsage.input)} tokens ({tokenUsage.total ? Math.round((tokenUsage.input / tokenUsage.total) * 100) : 0}%)
+                              </Box>
+                              <Box sx={{ color: 'secondary.main', display: 'flex', alignItems: 'center' }}>
+                                <Box sx={{ width: 8, height: 8, bgcolor: 'secondary.main', borderRadius: 1, mr: 0.5 }} />
+                                Output: {formatNumber(tokenUsage.output)} tokens ({tokenUsage.total ? Math.round((tokenUsage.output / tokenUsage.total) * 100) : 0}%)
+                              </Box>
+                            </Box>
+                          </Box>
+                          
+                          {/* Token Usage Details - only show if available */}
+                          {tokenUsage.details && (
+                            <>
+                              <Typography variant="subtitle2" gutterBottom>Additional Token Details</Typography>
+                              <TableContainer component={Paper} variant="outlined" sx={{ mb: 2 }}>
+                                <Table size="small">
+                                  <TableHead>
+                                    <TableRow>
+                                      <TableCell>Detail</TableCell>
+                                      <TableCell align="right">Value</TableCell>
+                                    </TableRow>
+                                  </TableHead>
+                                  <TableBody>
+                                    {/* Prompt token details */}
+                                    {tokenUsage.details?.prompt_tokens_details?.cached_tokens !== undefined && (
+                                      <TableRow>
+                                        <TableCell>Cached Input Tokens</TableCell>
+                                        <TableCell align="right">{tokenUsage.details.prompt_tokens_details.cached_tokens}</TableCell>
+                                      </TableRow>
+                                    )}
+                                    
+                                    {/* Completion token details */}
+                                    {tokenUsage.details?.completion_tokens_details?.reasoning_tokens !== undefined && (
+                                      <TableRow>
+                                        <TableCell>Reasoning Tokens</TableCell>
+                                        <TableCell align="right">{tokenUsage.details.completion_tokens_details.reasoning_tokens}</TableCell>
+                                      </TableRow>
+                                    )}
+                                    
+                                    {/* Display source if known */}
+                                    {!tokenUsage.estimated && (
+                                      <TableRow>
+                                        <TableCell>Token Count Source</TableCell>
+                                        <TableCell align="right">API Reported</TableCell>
+                                      </TableRow>
+                                    )}
+                                  </TableBody>
+                                </Table>
+                              </TableContainer>
+                            </>
+                          )}
+                          
+                          {/* Detailed Prompt Breakdown */}
+                          <Typography variant="subtitle2" gutterBottom>Prompt Breakdown</Typography>
+                          <TableContainer component={Paper} variant="outlined" sx={{ mb: 2 }}>
+                            <Table size="small">
+                              <TableHead>
+                                <TableRow>
+                                  <TableCell>Component</TableCell>
+                                  <TableCell align="right">Est. Tokens</TableCell>
+                                  <TableCell align="right">% of Total</TableCell>
+                                </TableRow>
+                              </TableHead>
+                              <TableBody>
+                                {breakdown && breakdown.breakdown && Object.entries(breakdown.breakdown || {}).map(([part, tokens]) => {
+                                  // Ensure tokens is a valid number
+                                  const tokenValue = Number.isFinite(tokens) ? tokens : 0;
+                                  // Calculate percentage of total tokens, not just input tokens
+                                  const totalTokens = tokenUsage.total || 1;
+                                  const percentage = calculatePercentage(tokenValue, totalTokens);
+                                  return (
+                                    <TableRow key={part}>
+                                      <TableCell component="th" scope="row">
+                                        {part.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase())}
+                                      </TableCell>
+                                      <TableCell align="right">{formatNumber(tokenValue)}</TableCell>
+                                      <TableCell 
+                                        align="right"
+                                        sx={{ 
+                                          color: getColorForPercentage(percentage),
+                                          fontWeight: percentage > 30 ? 'bold' : 'normal'
+                                        }}
+                                      >
+                                        {percentage}%
+                                      </TableCell>
+                                    </TableRow>
+                                  );
+                                })}
+                              </TableBody>
+                            </Table>
+                          </TableContainer>
+                          
+                          {/* Optimization Warnings */}
+                          {modelWarnings.length > 0 && (
+                            <Box sx={{ mt: 2 }}>
+                              <Typography variant="subtitle2" gutterBottom color="warning.main">
+                                <WarningIcon sx={{ mr: 1, verticalAlign: 'middle' }} />
+                                Optimization Suggestions
+                              </Typography>
+                              <Box component="ul" sx={{ pl: 2 }}>
+                                {modelWarnings.map((warning, index) => (
+                                  <Box component="li" key={index}>
+                                    <Typography variant="body2" color="text.secondary">
+                                      {warning.message}
+                                    </Typography>
+                                  </Box>
+                                ))}
+                              </Box>
+                            </Box>
+                          )}
+                        </CardContent>
+                      </Card>
+                    </Grid>
+                  );
+                })
+              )
+            ) : (
+              // Legacy structure handling
+              Object.entries(responses || {}).map(([setKey, setResponses]) => {
+                // Skip if this is not a set of responses
+                if (['systemPrompts', 'temperatures', 'retrievalTime', 'query'].includes(setKey)) {
                   return null;
                 }
                 
-                // Create a composite key for this model in this set
-                const modelKey = `${setKey}-${model}`;
-                
-                const modelMetrics = findModelMetrics(metrics, modelKey) || {};
-                const tokenUsage = normalizeTokenUsage(modelMetrics.tokenUsage || {});
-                
-                const breakdown = tokenBreakdowns[modelKey];
-                const modelWarnings = warnings[modelKey] || [];
-                
-                let modelCost = 0;
-                if (modelMetrics && modelMetrics.calculatedCost !== undefined) {
-                  // Use API-provided cost if available
-                  modelCost = Number(modelMetrics.calculatedCost);
-                } else if (tokenUsage && tokenUsage.total) {
-                  // Use the unified cost calculation through window.costTracker if available
-                  if (window.costTracker) {
-                    const costInfo = window.costTracker.computeCost(model, tokenUsage);
-                    modelCost = costInfo.cost;
-                  } else {
-                    // Fallback to the standard calculation method
-                    const costResult = calculateCost(model, { 
-                      input: tokenUsage.input || tokenUsage.total / 2, 
-                      output: tokenUsage.output || tokenUsage.total / 2 
-                    });
-                    modelCost = costResult.totalCost || 0;
+                return Object.entries(setResponses || {}).map(([model, response]) => {
+                  if (!response || !response.sources) {
+                    return null;
                   }
-                }
                   
-                if (!breakdown) return null;
-                
-                return (
-                  <Grid item xs={12} md={6} key={modelKey}>
-                    <Card variant="outlined">
-                      <CardContent>
-                        <Typography variant="h6" gutterBottom>
-                          {setKey} - {model}
-                        </Typography>
-                        
-                        {/* Token Summary */}
-                        <Stack direction="row" spacing={2} sx={{ mb: 2, flexWrap: 'wrap', gap: 1 }}>
-                          <Chip 
-                            icon={<TokenIcon />} 
-                            label={`${formatNumber(tokenUsage.total)} Total Tokens`} 
-                            color="primary"
-                          />
-                          <Chip 
-                            icon={<AttachMoneyIcon />} 
-                            label={modelCost === 0 ? 'Free' : modelCost < 0.0000001 && modelCost > 0 ? `$${Number(modelCost).toFixed(10)}` : `$${Number(modelCost).toFixed(7)}`} 
-                            color="secondary"
-                          />
-                          {modelMetrics.calculatedCost !== undefined && modelMetrics.calculatedCost !== null && (
-                            <Tooltip title="Cost reported directly by API">
-                              <Chip
-                                size="small"
-                                variant="outlined"
-                                label="API Cost"
-                                color="info"
-                                sx={{ ml: 0.5 }}
-                              />
-                            </Tooltip>
-                          )}
-                          {modelMetrics.elapsedTime && (
-                            <Chip
-                              icon={<AccessTimeIcon />}
-                              label={`${formatElapsedTime(modelMetrics.elapsedTime)}`}
-                              color="info"
-                            />
-                          )}
-                        </Stack>
-                        
-                        {/* Input/Output Breakdown */}
-                        <Typography variant="subtitle2" gutterBottom>Input/Output Split</Typography>
-                        <Box sx={{ mb: 2 }}>
-                          <LinearProgress
-                            variant="determinate"
-                            value={tokenUsage.total ? (tokenUsage.input / tokenUsage.total) * 100 : 0}
-                            sx={{
-                              height: 10,
-                              borderRadius: 1,
-                              backgroundColor: 'secondary.light',
-                              '& .MuiLinearProgress-bar': {
-                                backgroundColor: 'primary.main',
-                              }
-                            }}
-                          />
+                  // Create a composite key for this model in this set
+                  const modelKey = `${setKey}-${model}`;
+                  
+                  // Extract set and model name from the composite key - handle model names with dashes
+                  const setNameMatch = modelKey.match(/^(Set \d+)-(.+)$/);
+                  const setKeyDisplay = setNameMatch ? setNameMatch[1] : setKey;
+                  const modelDisplay = setNameMatch ? setNameMatch[2] : model;
+                  
+                  const modelMetrics = findModelMetrics(metrics, modelKey) || {};
+                  const tokenUsage = normalizeTokenUsage(modelMetrics.tokenUsage || {});
+                  
+                  const breakdown = tokenBreakdowns[modelKey];
+                  const modelWarnings = warnings[modelKey] || [];
+                  
+                  let modelCost = 0;
+                  if (modelMetrics && modelMetrics.calculatedCost !== undefined) {
+                    // Use API-provided cost if available
+                    modelCost = Number(modelMetrics.calculatedCost);
+                  } else if (tokenUsage && tokenUsage.total) {
+                    // Use the unified cost calculation through window.costTracker if available
+                    if (window.costTracker) {
+                      const costInfo = window.costTracker.computeCost(model, tokenUsage);
+                      modelCost = costInfo.cost;
+                    } else {
+                      // Fallback to the standard calculation method
+                      const costResult = calculateCost(model, { 
+                        input: tokenUsage.input || tokenUsage.total / 2, 
+                        output: tokenUsage.output || tokenUsage.total / 2 
+                      });
+                      modelCost = costResult.totalCost || 0;
+                    }
+                  }
+                    
+                  if (!breakdown) return null;
+                  
+                  return (
+                    <Grid item xs={12} md={6} key={modelKey}>
+                      <Card variant="outlined">
+                        <CardContent>
+                          <Typography variant="h6" gutterBottom>
+                            {modelDisplay} ({setKeyDisplay})
+                          </Typography>
                           
-                          <Box sx={{ ml: 2, display: 'flex', fontSize: '0.75rem' }}>
-                            <Box sx={{ color: 'primary.main', display: 'flex', alignItems: 'center', mr: 1 }}>
-                              <Box sx={{ width: 8, height: 8, bgcolor: 'primary.main', borderRadius: 1, mr: 0.5 }} />
-                              Input {tokenUsage.total ? calculatePercentage(tokenUsage.input, tokenUsage.total) : 0}%
-                            </Box>
-                            <Box sx={{ color: 'secondary.main', display: 'flex', alignItems: 'center' }}>
-                              <Box sx={{ width: 8, height: 8, bgcolor: 'secondary.main', borderRadius: 1, mr: 0.5 }} />
-                              Output {tokenUsage.total ? calculatePercentage(tokenUsage.output, tokenUsage.total) : 0}%
-                            </Box>
-                          </Box>
-                        </Box>
-                        
-                        {/* Token Usage Details - only show if available */}
-                        {tokenUsage.details && (
-                          <>
-                            <Typography variant="subtitle2" gutterBottom>Additional Token Details</Typography>
-                            <TableContainer component={Paper} variant="outlined" sx={{ mb: 2 }}>
-                              <Table size="small">
-                                <TableHead>
-                                  <TableRow>
-                                    <TableCell>Detail</TableCell>
-                                    <TableCell align="right">Value</TableCell>
-                                  </TableRow>
-                                </TableHead>
-                                <TableBody>
-                                  {/* Prompt token details */}
-                                  {tokenUsage.details?.prompt_tokens_details?.cached_tokens !== undefined && (
-                                    <TableRow>
-                                      <TableCell>Cached Input Tokens</TableCell>
-                                      <TableCell align="right">{tokenUsage.details.prompt_tokens_details.cached_tokens}</TableCell>
-                                    </TableRow>
-                                  )}
-                                  
-                                  {/* Completion token details */}
-                                  {tokenUsage.details?.completion_tokens_details?.reasoning_tokens !== undefined && (
-                                    <TableRow>
-                                      <TableCell>Reasoning Tokens</TableCell>
-                                      <TableCell align="right">{tokenUsage.details.completion_tokens_details.reasoning_tokens}</TableCell>
-                                    </TableRow>
-                                  )}
-                                  
-                                  {/* Display source if known */}
-                                  {!tokenUsage.estimated && (
-                                    <TableRow>
-                                      <TableCell>Token Count Source</TableCell>
-                                      <TableCell align="right">API Reported</TableCell>
-                                    </TableRow>
-                                  )}
-                                </TableBody>
-                              </Table>
-                            </TableContainer>
-                          </>
-                        )}
-                        
-                        {/* Detailed Prompt Breakdown */}
-                        <Typography variant="subtitle2" gutterBottom>Prompt Breakdown</Typography>
-                        <TableContainer component={Paper} variant="outlined" sx={{ mb: 2 }}>
-                          <Table size="small">
-                            <TableHead>
-                              <TableRow>
-                                <TableCell>Component</TableCell>
-                                <TableCell align="right">Est. Tokens</TableCell>
-                                <TableCell align="right">% of Input</TableCell>
-                              </TableRow>
-                            </TableHead>
-                            <TableBody>
-                              {breakdown && breakdown.breakdown && Object.entries(breakdown.breakdown || {}).map(([part, tokens]) => {
-                                // Ensure tokens is a valid number
-                                const tokenValue = Number.isFinite(tokens) ? tokens : 0;
-                                const inputTokens = Number.isFinite(tokenUsage.input) ? tokenUsage.input : 1;
-                                const percentage = calculatePercentage(tokenValue, inputTokens);
-                                return (
-                                  <TableRow key={part}>
-                                    <TableCell component="th" scope="row">
-                                      {part.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase())}
-                                    </TableCell>
-                                    <TableCell align="right">{formatNumber(tokenValue)}</TableCell>
-                                    <TableCell 
-                                      align="right"
-                                      sx={{ 
-                                        color: getColorForPercentage(percentage),
-                                        fontWeight: percentage > 30 ? 'bold' : 'normal'
-                                      }}
-                                    >
-                                      {percentage}%
-                                    </TableCell>
-                                  </TableRow>
-                                );
-                              })}
-                            </TableBody>
-                          </Table>
-                        </TableContainer>
-                        
-                        {/* Optimization Warnings */}
-                        {modelWarnings.length > 0 && (
-                          <Box sx={{ mt: 2 }}>
-                            <Typography variant="subtitle2" gutterBottom color="warning.main">
-                              <WarningIcon sx={{ mr: 1, verticalAlign: 'middle' }} />
-                              Optimization Suggestions
-                            </Typography>
-                            <Box component="ul" sx={{ pl: 2 }}>
-                              {modelWarnings.map((warning, index) => (
-                                <Box component="li" key={index}>
-                                  <Typography variant="body2" color="text.secondary">
-                                    {warning.message}
-                                  </Typography>
-                                </Box>
-                              ))}
+                          {/* Token Summary */}
+                          <Stack direction="row" spacing={2} sx={{ mb: 2, flexWrap: 'wrap', gap: 1 }}>
+                            <Chip 
+                              icon={<TokenIcon />} 
+                              label={`${formatNumber(tokenUsage.total)} Total Tokens`} 
+                              color="primary"
+                            />
+                            <Chip 
+                              icon={<AttachMoneyIcon />} 
+                              label={modelCost === 0 ? 'Free' : modelCost < 0.0000001 && modelCost > 0 ? `$${Number(modelCost).toFixed(10)}` : `$${Number(modelCost).toFixed(7)}`} 
+                              color="secondary"
+                            />
+                            {modelMetrics.calculatedCost !== undefined && modelMetrics.calculatedCost !== null && (
+                              <Tooltip title="This cost is reported directly by the API provider and represents the actual charge for this request">
+                                <Chip
+                                  variant="outlined"
+                                  label="Actual Cost from API"
+                                  color="info"
+                                  sx={{ ml: 0.5 }}
+                                />
+                              </Tooltip>
+                            )}
+                            {modelMetrics.elapsedTime && (
+                              <Chip
+                                icon={<AccessTimeIcon />}
+                                label={`${formatElapsedTime(modelMetrics.elapsedTime)}`}
+                                color="info"
+                              />
+                            )}
+                          </Stack>
+                          
+                          {/* Input/Output Breakdown */}
+                          <Typography variant="subtitle2" gutterBottom>Input/Output Split</Typography>
+                          <Box sx={{ mb: 2 }}>
+                            <LinearProgress
+                              variant="determinate"
+                              value={tokenUsage.total ? (tokenUsage.input / tokenUsage.total) * 100 : 0}
+                              sx={{
+                                height: 10,
+                                borderRadius: 1,
+                                backgroundColor: 'secondary.light',
+                                '& .MuiLinearProgress-bar': {
+                                  backgroundColor: 'primary.main',
+                                }
+                              }}
+                            />
+                            
+                            <Box sx={{ ml: 2, display: 'flex', fontSize: '0.75rem' }}>
+                              <Box sx={{ color: 'primary.main', display: 'flex', alignItems: 'center', mr: 1 }}>
+                                <Box sx={{ width: 8, height: 8, bgcolor: 'primary.main', borderRadius: 1, mr: 0.5 }} />
+                                Input: {formatNumber(tokenUsage.input)} tokens ({tokenUsage.total ? Math.round((tokenUsage.input / tokenUsage.total) * 100) : 0}%)
+                              </Box>
+                              <Box sx={{ color: 'secondary.main', display: 'flex', alignItems: 'center' }}>
+                                <Box sx={{ width: 8, height: 8, bgcolor: 'secondary.main', borderRadius: 1, mr: 0.5 }} />
+                                Output: {formatNumber(tokenUsage.output)} tokens ({tokenUsage.total ? Math.round((tokenUsage.output / tokenUsage.total) * 100) : 0}%)
+                              </Box>
                             </Box>
                           </Box>
-                        )}
-                      </CardContent>
-                    </Card>
-                  </Grid>
-                );
-              });
-            })}
+                          
+                          {/* Token Usage Details - only show if available */}
+                          {tokenUsage.details && (
+                            <>
+                              <Typography variant="subtitle2" gutterBottom>Additional Token Details</Typography>
+                              <TableContainer component={Paper} variant="outlined" sx={{ mb: 2 }}>
+                                <Table size="small">
+                                  <TableHead>
+                                    <TableRow>
+                                      <TableCell>Detail</TableCell>
+                                      <TableCell align="right">Value</TableCell>
+                                    </TableRow>
+                                  </TableHead>
+                                  <TableBody>
+                                    {/* Prompt token details */}
+                                    {tokenUsage.details?.prompt_tokens_details?.cached_tokens !== undefined && (
+                                      <TableRow>
+                                        <TableCell>Cached Input Tokens</TableCell>
+                                        <TableCell align="right">{tokenUsage.details.prompt_tokens_details.cached_tokens}</TableCell>
+                                      </TableRow>
+                                    )}
+                                    
+                                    {/* Completion token details */}
+                                    {tokenUsage.details?.completion_tokens_details?.reasoning_tokens !== undefined && (
+                                      <TableRow>
+                                        <TableCell>Reasoning Tokens</TableCell>
+                                        <TableCell align="right">{tokenUsage.details.completion_tokens_details.reasoning_tokens}</TableCell>
+                                      </TableRow>
+                                    )}
+                                    
+                                    {/* Display source if known */}
+                                    {!tokenUsage.estimated && (
+                                      <TableRow>
+                                        <TableCell>Token Count Source</TableCell>
+                                        <TableCell align="right">API Reported</TableCell>
+                                      </TableRow>
+                                    )}
+                                  </TableBody>
+                                </Table>
+                              </TableContainer>
+                            </>
+                          )}
+                          
+                          {/* Detailed Prompt Breakdown */}
+                          <Typography variant="subtitle2" gutterBottom>Prompt Breakdown</Typography>
+                          <TableContainer component={Paper} variant="outlined" sx={{ mb: 2 }}>
+                            <Table size="small">
+                              <TableHead>
+                                <TableRow>
+                                  <TableCell>Component</TableCell>
+                                  <TableCell align="right">Est. Tokens</TableCell>
+                                  <TableCell align="right">% of Total</TableCell>
+                                </TableRow>
+                              </TableHead>
+                              <TableBody>
+                                {breakdown && breakdown.breakdown && Object.entries(breakdown.breakdown || {}).map(([part, tokens]) => {
+                                  // Ensure tokens is a valid number
+                                  const tokenValue = Number.isFinite(tokens) ? tokens : 0;
+                                  // Calculate percentage of total tokens, not just input tokens
+                                  const totalTokens = tokenUsage.total || 1;
+                                  const percentage = calculatePercentage(tokenValue, totalTokens);
+                                  return (
+                                    <TableRow key={part}>
+                                      <TableCell component="th" scope="row">
+                                        {part.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase())}
+                                      </TableCell>
+                                      <TableCell align="right">{formatNumber(tokenValue)}</TableCell>
+                                      <TableCell 
+                                        align="right"
+                                        sx={{ 
+                                          color: getColorForPercentage(percentage),
+                                          fontWeight: percentage > 30 ? 'bold' : 'normal'
+                                        }}
+                                      >
+                                        {percentage}%
+                                      </TableCell>
+                                    </TableRow>
+                                  );
+                                })}
+                              </TableBody>
+                            </Table>
+                          </TableContainer>
+                          
+                          {/* Optimization Warnings */}
+                          {modelWarnings.length > 0 && (
+                            <Box sx={{ mt: 2 }}>
+                              <Typography variant="subtitle2" gutterBottom color="warning.main">
+                                <WarningIcon sx={{ mr: 1, verticalAlign: 'middle' }} />
+                                Optimization Suggestions
+                              </Typography>
+                              <Box component="ul" sx={{ pl: 2 }}>
+                                {modelWarnings.map((warning, index) => (
+                                  <Box component="li" key={index}>
+                                    <Typography variant="body2" color="text.secondary">
+                                      {warning.message}
+                                    </Typography>
+                                  </Box>
+                                ))}
+                              </Box>
+                            </Box>
+                          )}
+                        </CardContent>
+                      </Card>
+                    </Grid>
+                  );
+                });
+              })
+            )}
           </Grid>
           
           <Box sx={{ mt: 3 }}>

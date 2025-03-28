@@ -113,83 +113,210 @@ const ContextWindowVisualizer = ({ responses, systemPrompts, currentQuery, metri
   const calculateContextUsage = useCallback(() => {
     if (!responses) return {}; // Add early return if responses is undefined
     
+    console.log("ContextWindowVisualizer - Calculating usage with responses:", responses);
+    console.log("ContextWindowVisualizer - Metrics:", metrics);
+    
     const usage = {};
     
-    // Process each set in responses
-    Object.entries(responses || {}).forEach(([setKey, setResponses]) => {
-      // Skip if this is not a set of responses
-      if (['systemPrompts', 'temperatures', 'retrievalTime', 'query'].includes(setKey)) {
-        return;
-      }
+    // Handle new response structure with 'models' key
+    if (responses.models) {
+      console.log("ContextWindowVisualizer - Using new structure with models key");
       
-      // Process each model in the set
-      Object.entries(setResponses || {}).forEach(([model, modelResponse]) => {
-        if (!modelResponse || ['systemPrompts', 'temperatures', 'retrievalTime', 'query'].includes(model)) {
+      // Process each set in responses.models
+      Object.entries(responses.models).forEach(([setKey, setResponses]) => {
+        // Process each model in the set
+        Object.entries(setResponses).forEach(([model, modelResponse]) => {
+          if (!modelResponse) return;
+          
+          // Create a composite key for this model in this set
+          const modelKey = `${setKey}-${model}`;
+          console.log(`ContextWindowVisualizer - Processing model ${model} in set ${setKey}`);
+          
+          // Get the model's context window size
+          const windowSize = MODEL_CONTEXT_SIZES[model] || MODEL_CONTEXT_SIZES.default;
+          
+          // Get system prompt for this model - safely access system prompts
+          const systemPrompt = systemPrompts && systemPrompts[modelKey] ? systemPrompts[modelKey] : '';
+          const systemPromptTokens = estimateTokenCount(systemPrompt);
+          
+          // Calculate tokens in context (retrieval chunks)
+          const contextSources = modelResponse.sources || [];
+          const contextText = contextSources.map(source => source?.content || '').join('\n\n');
+          const contextTokens = estimateTokenCount(contextText);
+          
+          // Calculate tokens in query
+          const queryTokens = estimateTokenCount(currentQuery || '');
+          
+          // Calculate tokens in response
+          let responseText = '';
+          if (modelResponse.answer) {
+            responseText = typeof modelResponse.answer === 'object' ? 
+              (modelResponse.answer.text || '') : 
+              (modelResponse.answer || '');
+          } else if (modelResponse.text) {
+            responseText = modelResponse.text;
+          }
+          const responseTokens = estimateTokenCount(responseText);
+          
+          // Format instructions and overhead estimation
+          const instructionsText = "Context information is below.\n---------------------\n\n---------------------\nGiven the context information and not prior knowledge, answer the question:";
+          const instructionsTokens = estimateTokenCount(instructionsText);
+          const overheadTokens = Math.ceil((systemPromptTokens + contextTokens + queryTokens + instructionsTokens) * 0.1);
+          
+          // Use token counts from metrics if available (accurate) instead of estimates
+          let metricsTokens = null;
+          
+          // Get metrics for this model
+          const modelMetrics = findModelMetrics(metrics, modelKey) || findModelMetrics(metrics, model);
+          console.log(`ContextWindowVisualizer - Model metrics for ${modelKey}:`, modelMetrics);
+          
+          // If we have actual token usage from the model, use that as the total
+          if (modelMetrics && modelMetrics.tokenUsage) {
+            const tokenUsage = modelMetrics.tokenUsage;
+            if (tokenUsage.total && !tokenUsage.estimated) {
+              metricsTokens = {
+                total: tokenUsage.total,
+                input: tokenUsage.input || tokenUsage.prompt_tokens || 0,
+                output: tokenUsage.output || tokenUsage.completion_tokens || 0
+              };
+              console.log(`ContextWindowVisualizer - Using actual token counts for ${model}:`, metricsTokens);
+            }
+          }
+          
+          // Use actual token counts if available, otherwise use estimates
+          const totalTokensUsed = metricsTokens?.total || 
+            (systemPromptTokens + contextTokens + queryTokens + responseTokens + instructionsTokens + overheadTokens);
+          
+          // Calculate percentage of context window used
+          const percentageUsed = Math.round((totalTokensUsed / windowSize) * 100);
+          
+          // Store results
+          usage[modelKey] = {
+            windowSize,
+            totalTokensUsed,
+            percentageUsed,
+            metrics: modelMetrics,
+            breakdown: metricsTokens ? {
+              input: metricsTokens.input,
+              output: metricsTokens.output,
+              // For display purposes, split the input tokens roughly between components
+              system: Math.round(metricsTokens.input * 0.1),
+              context: Math.round(metricsTokens.input * 0.7),
+              query: Math.round(metricsTokens.input * 0.1),
+              instructions: Math.round(metricsTokens.input * 0.1),
+              overhead: 0
+            } : {
+              system: systemPromptTokens,
+              context: contextTokens,
+              query: queryTokens,
+              response: responseTokens,
+              instructions: instructionsTokens,
+              overhead: overheadTokens
+            }
+          };
+        });
+      });
+    } else {
+      // Legacy structure handling
+      // Process each set in responses
+      Object.entries(responses || {}).forEach(([setKey, setResponses]) => {
+        // Skip if this is not a set of responses
+        if (['systemPrompts', 'temperatures', 'retrievalTime', 'query'].includes(setKey)) {
           return;
         }
         
-        // Create a composite key for this model in this set
-        const modelKey = `${setKey}-${model}`;
-        
-        // Get the model's context window size
-        const windowSize = MODEL_CONTEXT_SIZES[model] || MODEL_CONTEXT_SIZES.default;
-        
-        // Get system prompt for this model - safely access system prompts
-        const systemPrompt = systemPrompts && systemPrompts[modelKey] ? systemPrompts[modelKey] : '';
-        const systemPromptTokens = estimateTokenCount(systemPrompt);
-        
-        // Calculate tokens in context (retrieval chunks)
-        const contextSources = modelResponse.sources || [];
-        const contextText = contextSources.map(source => source?.content || '').join('\n\n');
-        const contextTokens = estimateTokenCount(contextText);
-        
-        // Calculate tokens in query
-        const queryTokens = estimateTokenCount(currentQuery || '');
-        
-        // Calculate tokens in response
-        let responseText = '';
-        if (modelResponse.answer) {
-          responseText = typeof modelResponse.answer === 'object' ? 
-            (modelResponse.answer.text || '') : 
-            (modelResponse.answer || '');
-        } else if (modelResponse.text) {
-          responseText = modelResponse.text;
-        }
-        const responseTokens = estimateTokenCount(responseText);
-        
-        // Format instructions and overhead estimation (prompt formatting, JSON structures, etc.)
-        // This is an approximate overhead based on common RAG prompt structures
-        const instructionsText = "Context information is below.\n---------------------\n\n---------------------\nGiven the context information and not prior knowledge, answer the question:";
-        const instructionsTokens = estimateTokenCount(instructionsText);
-        const overheadTokens = Math.ceil((systemPromptTokens + contextTokens + queryTokens + instructionsTokens) * 0.1);
-        
-        // Total tokens used
-        const totalTokensUsed = systemPromptTokens + contextTokens + queryTokens + responseTokens + instructionsTokens + overheadTokens;
-        
-        // Calculate percentage of context window used
-        const percentageUsed = Math.round((totalTokensUsed / windowSize) * 100);
-        
-        // Get metrics for this model
-        const modelMetrics = findModelMetrics(metrics, modelKey);
-        
-        // Store results
-        usage[modelKey] = {
-          windowSize,
-          totalTokensUsed,
-          percentageUsed,
-          metrics: modelMetrics,
-          breakdown: {
-            system: systemPromptTokens,
-            context: contextTokens,
-            query: queryTokens,
-            response: responseTokens,
-            instructions: instructionsTokens,
-            overhead: overheadTokens
+        // Process each model in the set
+        Object.entries(setResponses || {}).forEach(([model, modelResponse]) => {
+          if (!modelResponse || ['systemPrompts', 'temperatures', 'retrievalTime', 'query'].includes(model)) {
+            return;
           }
-        };
+          
+          // Create a composite key for this model in this set
+          const modelKey = `${setKey}-${model}`;
+          
+          // Get the model's context window size
+          const windowSize = MODEL_CONTEXT_SIZES[model] || MODEL_CONTEXT_SIZES.default;
+          
+          // Get system prompt for this model - safely access system prompts
+          const systemPrompt = systemPrompts && systemPrompts[modelKey] ? systemPrompts[modelKey] : '';
+          const systemPromptTokens = estimateTokenCount(systemPrompt);
+          
+          // Calculate tokens in context (retrieval chunks)
+          const contextSources = modelResponse.sources || [];
+          const contextText = contextSources.map(source => source?.content || '').join('\n\n');
+          const contextTokens = estimateTokenCount(contextText);
+          
+          // Calculate tokens in query
+          const queryTokens = estimateTokenCount(currentQuery || '');
+          
+          // Calculate tokens in response
+          let responseText = '';
+          if (modelResponse.answer) {
+            responseText = typeof modelResponse.answer === 'object' ? 
+              (modelResponse.answer.text || '') : 
+              (modelResponse.answer || '');
+          } else if (modelResponse.text) {
+            responseText = modelResponse.text;
+          }
+          const responseTokens = estimateTokenCount(responseText);
+          
+          // Format instructions and overhead estimation
+          const instructionsText = "Context information is below.\n---------------------\n\n---------------------\nGiven the context information and not prior knowledge, answer the question:";
+          const instructionsTokens = estimateTokenCount(instructionsText);
+          const overheadTokens = Math.ceil((systemPromptTokens + contextTokens + queryTokens + instructionsTokens) * 0.1);
+          
+          // Get metrics for this model
+          const modelMetrics = findModelMetrics(metrics, modelKey);
+          
+          // Use token counts from metrics if available
+          let metricsTokens = null;
+          if (modelMetrics && modelMetrics.tokenUsage) {
+            const tokenUsage = modelMetrics.tokenUsage;
+            if (tokenUsage.total && !tokenUsage.estimated) {
+              metricsTokens = {
+                total: tokenUsage.total,
+                input: tokenUsage.input || tokenUsage.prompt_tokens || 0,
+                output: tokenUsage.output || tokenUsage.completion_tokens || 0
+              };
+            }
+          }
+          
+          // Total tokens used
+          const totalTokensUsed = metricsTokens?.total || 
+            (systemPromptTokens + contextTokens + queryTokens + responseTokens + instructionsTokens + overheadTokens);
+          
+          // Calculate percentage of context window used
+          const percentageUsed = Math.round((totalTokensUsed / windowSize) * 100);
+          
+          // Store results
+          usage[modelKey] = {
+            windowSize,
+            totalTokensUsed,
+            percentageUsed,
+            metrics: modelMetrics,
+            breakdown: metricsTokens ? {
+              input: metricsTokens.input,
+              output: metricsTokens.output,
+              // For display purposes, split the input tokens roughly
+              system: Math.round(metricsTokens.input * 0.1),
+              context: Math.round(metricsTokens.input * 0.7),
+              query: Math.round(metricsTokens.input * 0.1),
+              instructions: Math.round(metricsTokens.input * 0.1),
+              overhead: 0
+            } : {
+              system: systemPromptTokens,
+              context: contextTokens,
+              query: queryTokens,
+              response: responseTokens,
+              instructions: instructionsTokens,
+              overhead: overheadTokens
+            }
+          };
+        });
       });
-    });
+    }
     
+    console.log("ContextWindowVisualizer - Final usage calculations:", usage);
     return usage;
   }, [responses, systemPrompts, currentQuery, estimateTokenCount, findModelMetrics, metrics]);
   
@@ -292,8 +419,10 @@ const ContextWindowVisualizer = ({ responses, systemPrompts, currentQuery, metri
             {Object.entries(contextUsage || {}).map(([modelKey, usage]) => {
               if (!usage) return null;
               
-              // Extract set and model name from the composite key
-              const [setKey, model] = modelKey.split('-');
+              // Extract set and model name from the composite key - handle model names with dashes
+              const setNameMatch = modelKey.match(/^(Set \d+)-(.+)$/);
+              const setKey = setNameMatch ? setNameMatch[1] : '';
+              const model = setNameMatch ? setNameMatch[2] : modelKey;
               
               const breakdownEntries = [];
               let totalPercentage = 0;
@@ -328,7 +457,9 @@ const ContextWindowVisualizer = ({ responses, systemPrompts, currentQuery, metri
                     <CardHeader
                       title={
                         <Box display="flex" alignItems="center" justifyContent="space-between">
-                          <Typography variant="h6">{setKey} - {model}</Typography>
+                          <Typography variant="h6">
+                            {model}{setKey && ` (${setKey})`}
+                          </Typography>
                           <Chip 
                             size="small" 
                             label={`${usage.percentageUsed}% Used`} 

@@ -32,6 +32,8 @@ import { calculateCost } from '../config/llmConfig';
 import RetrievalEvaluation from './RetrievalEvaluation';
 import EmbeddingQualityAnalysis from './EmbeddingQualityAnalysis';
 import SourceContentAnalysis from './SourceContentAnalysis';
+import ContextWindowVisualizer from './ContextWindowVisualizer';
+import TokenUsageAnalyzer from './TokenUsageAnalyzer';
 import CompareIcon from '@mui/icons-material/Compare';
 import AssessmentIcon from '@mui/icons-material/Assessment';
 import TuneIcon from '@mui/icons-material/Tune';
@@ -2015,6 +2017,20 @@ const ResponseComparison = ({
             </TableContainer>
 
             {/* Token Usage Analysis */}
+            <TokenUsageAnalyzer
+              metrics={metrics}
+              responses={responses}
+              systemPrompts={systemPrompts}
+              currentQuery={currentQuery}
+            />
+            
+            {/* Context Window Visualization */}
+            <ContextWindowVisualizer
+              responses={responses}
+              systemPrompts={systemPrompts}
+              currentQuery={currentQuery}
+              metrics={metrics}
+            />
           </Paper>
           
           {/* Place model responses at the bottom */}
