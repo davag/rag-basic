@@ -130,7 +130,12 @@ const QueryInterface = ({ vectorStore, namespaces = [], onQuerySubmitted, isProc
     
     // Update parallel progress if available
     if (progressInfo.progress) {
-      setParallelProgress(progressInfo.progress);
+      // Make sure we preserve model status when updating progress
+      const updatedProgress = {
+        ...progressInfo.progress,
+        models: { ...parallelProgress.models, ...(progressInfo.progress.models || {}) }
+      };
+      setParallelProgress(updatedProgress);
     }
     
     // Update current processing model if available
@@ -648,9 +653,16 @@ Format your response in a clear, structured way. Focus on actionable improvement
       // Calculate completed count
       const completedCount = Object.values(newModels).filter(m => m.status === 'completed').length;
       
+      // Use the total from progress.progress if available, otherwise use the number of models or previous total
+      const total = progress.progress?.total || 
+                   (selectedModels.length * promptSets.length) || 
+                   prev.total || 
+                   Object.keys(newModels).length;
+      
       return {
         ...prev,
         completed: completedCount,
+        total: total, // Set the total from progress data
         models: newModels
       };
     });

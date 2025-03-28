@@ -371,9 +371,13 @@ const ResponseValidation = ({
       // Calculate completed count based on unique completed models
       const completedCount = Object.values(newModels).filter(m => m.status === 'completed').length;
 
+      // Use the total from progressData.progress if available, otherwise use the count of models
+      const total = progressData.progress?.total || Object.keys(newModels).length;
+
       return {
         ...prev,
         completed: completedCount,
+        total: total, // Set the total from progress data
         models: newModels
       };
     });
