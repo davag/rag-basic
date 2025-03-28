@@ -15,7 +15,7 @@ export const chunkingStrategies = {
     description: 'Splits text recursively by characters, trying to keep semantic units together',
     splitter: RecursiveCharacterTextSplitter,
     defaultConfig: {
-      chunkSize: 1000,
+      chunkSize: 1024,
       chunkOverlap: 200,
       separators: ["\n\n", "\n", " ", ""]
     }
@@ -25,7 +25,7 @@ export const chunkingStrategies = {
     description: 'Splits markdown text while preserving document structure',
     splitter: MarkdownTextSplitter,
     defaultConfig: {
-      chunkSize: 1000,
+      chunkSize: 1024,
       chunkOverlap: 200
     }
   },
@@ -34,8 +34,8 @@ export const chunkingStrategies = {
     description: 'Splits text by character count, useful for code or structured text',
     splitter: CharacterTextSplitter,
     defaultConfig: {
-      chunkSize: 1000,
-      chunkOverlap: 200,
+      chunkSize: 512,
+      chunkOverlap: 100,
       separator: "\n"
     }
   },
@@ -44,7 +44,7 @@ export const chunkingStrategies = {
     description: 'Splits LaTeX documents while preserving document structure',
     splitter: LatexTextSplitter,
     defaultConfig: {
-      chunkSize: 1000,
+      chunkSize: 1024,
       chunkOverlap: 200
     }
   },
@@ -53,8 +53,8 @@ export const chunkingStrategies = {
     description: 'Splits text based on token count rather than character count',
     splitter: TokenTextSplitter,
     defaultConfig: {
-      chunkSize: 1000,
-      chunkOverlap: 200
+      chunkSize: 512,
+      chunkOverlap: 100
     }
   }
 };
@@ -108,7 +108,7 @@ export const recommendChunkingStrategy = (documents) => {
     return {
       strategy: 'character',
       config: {
-        chunkSize: 2000,
+        chunkSize: 1024,
         chunkOverlap: 200,
         separator: '\n'
       },

@@ -30,8 +30,8 @@ import { createTextSplitter, chunkingStrategies } from '../utils/chunkingStrateg
 const ChunkVisualizer = ({ documents }) => {
   const [selectedDocument, setSelectedDocument] = useState('');
   const [documentContent, setDocumentContent] = useState('');
-  const [chunkSize, setChunkSize] = useState(1000);
-  const [chunkOverlap, setChunkOverlap] = useState(200);
+  const [chunkSize, setChunkSize] = useState(1024);
+  const [chunkOverlap, setChunkOverlap] = useState(Math.round(1024 * 0.2)); // 20% of chunk size
   const [chunkingStrategy, setChunkingStrategy] = useState('recursive');
   const [chunks, setChunks] = useState([]);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -53,6 +53,18 @@ const ChunkVisualizer = ({ documents }) => {
       }
     }
   }, [documents, selectedDocument]);
+  
+  // Update chunk overlap when chunk size changes
+  useEffect(() => {
+    // Keep the same percentage when chunk size changes
+    const idealOverlapPercentage = 0.2; // 20%
+    const newOverlap = Math.round(chunkSize * idealOverlapPercentage);
+    
+    // Only update if it's sufficiently different to avoid recursion
+    if (Math.abs(newOverlap - chunkOverlap) > 5) {
+      setChunkOverlap(newOverlap);
+    }
+  }, [chunkSize, chunkOverlap]);
   
   // Handle document selection change
   const handleDocumentChange = (event) => {
@@ -77,16 +89,34 @@ const ChunkVisualizer = ({ documents }) => {
     
     // Update chunk size and overlap based on strategy defaults
     const strategyConfig = chunkingStrategies[strategy].defaultConfig;
-    setChunkSize(strategyConfig.chunkSize);
-    setChunkOverlap(strategyConfig.chunkOverlap);
+    
+    // Find closest allowed values for chunk size
+    const allowedSizes = [128, 256, 512, 1024, 2048];
+    const closestSize = allowedSizes.reduce((prev, curr) => 
+      Math.abs(curr - strategyConfig.chunkSize) < Math.abs(prev - strategyConfig.chunkSize) ? curr : prev
+    , allowedSizes[0]);
+    
+    // Calculate overlap as a percentage of chunk size
+    const overlapPercentage = strategyConfig.chunkOverlap / strategyConfig.chunkSize;
+    const newOverlap = Math.round(closestSize * overlapPercentage);
+    
+    setChunkSize(closestSize);
+    setChunkOverlap(newOverlap);
   };
   
-  const handleChunkSizeChange = (event, newValue) => {
-    setChunkSize(newValue);
+  const handleChunkSizeChange = (e) => {
+    const newSize = Number(e.target.value);
+    setChunkSize(newSize);
+    
+    // Also update chunk overlap to maintain the same percentage
+    const currentOverlapPercent = chunkOverlap / chunkSize;
+    const newOverlap = Math.round(newSize * currentOverlapPercent);
+    setChunkOverlap(newOverlap);
   };
 
-  const handleChunkOverlapChange = (event, newValue) => {
-    setChunkOverlap(newValue);
+  const handleChunkOverlapChange = (e) => {
+    const newOverlap = Number(e.target.value);
+    setChunkOverlap(newOverlap);
   };
   
   const visualizeChunks = async () => {
@@ -387,37 +417,47 @@ const ChunkVisualizer = ({ documents }) => {
               </FormControl>
               
               <Box mb={3}>
-                <Typography gutterBottom>Chunk Size: {chunkSize}</Typography>
-                <Slider
-                  value={chunkSize}
-                  onChange={handleChunkSizeChange}
-                  min={100}
-                  max={4000}
-                  step={100}
-                  marks={[
-                    { value: 100, label: '100' },
-                    { value: 2000, label: '2000' },
-                    { value: 4000, label: '4000' }
-                  ]}
-                  disabled={isProcessing}
-                />
+                <Typography gutterBottom>Chunk Size</Typography>
+                <FormControl fullWidth>
+                  <Select
+                    value={chunkSize}
+                    onChange={handleChunkSizeChange}
+                    disabled={isProcessing}
+                  >
+                    <MenuItem value={128}>128 characters</MenuItem>
+                    <MenuItem value={256}>256 characters</MenuItem>
+                    <MenuItem value={512}>512 characters</MenuItem>
+                    <MenuItem value={1024}>1024 characters (recommended)</MenuItem>
+                    <MenuItem value={2048}>2048 characters</MenuItem>
+                  </Select>
+                </FormControl>
+                <Typography variant="caption" color="textSecondary">
+                  Select a Llama Index recommended chunk size value
+                </Typography>
               </Box>
               
               <Box mb={3}>
-                <Typography gutterBottom>Chunk Overlap: {chunkOverlap}</Typography>
-                <Slider
-                  value={chunkOverlap}
-                  onChange={handleChunkOverlapChange}
-                  min={0}
-                  max={500}
-                  step={50}
-                  marks={[
-                    { value: 0, label: '0' },
-                    { value: 250, label: '250' },
-                    { value: 500, label: '500' }
-                  ]}
-                  disabled={isProcessing}
-                />
+                <Typography gutterBottom>Chunk Overlap</Typography>
+                <FormControl fullWidth>
+                  <Select
+                    value={chunkOverlap}
+                    onChange={handleChunkOverlapChange}
+                    disabled={isProcessing}
+                    renderValue={(selected) => {
+                      const percentage = Math.round((selected / chunkSize) * 100);
+                      return `${percentage}% (${selected} characters)`;
+                    }}
+                  >
+                    <MenuItem value={0}>0% (0 characters)</MenuItem>
+                    <MenuItem value={Math.round(chunkSize * 0.05)}>5% ({Math.round(chunkSize * 0.05)} characters)</MenuItem>
+                    <MenuItem value={Math.round(chunkSize * 0.1)}>10% ({Math.round(chunkSize * 0.1)} characters)</MenuItem>
+                    <MenuItem value={Math.round(chunkSize * 0.2)}>20% ({Math.round(chunkSize * 0.2)} characters) - recommended</MenuItem>
+                    <MenuItem value={Math.round(chunkSize * 0.3)}>30% ({Math.round(chunkSize * 0.3)} characters)</MenuItem>
+                  </Select>
+                </FormControl>
+                <Typography variant="caption" color="textSecondary">
+                  Values are percentages of the chunk size
+                </Typography>
               </Box>
               
               <Button

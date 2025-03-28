@@ -1,8 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   Typography, 
   Box, 
-  Slider, 
   Button, 
   FormControl,
   InputLabel,
@@ -105,8 +104,11 @@ const VectorStoreConfig = ({
   setIsProcessing,
   onChunkParametersChange 
 }) => {
-  const [chunkSize, setChunkSize] = useState(1000);
-  const [chunkOverlap, setChunkOverlap] = useState(200);
+  // Track if the component has mounted to prevent unwanted initial updates
+  const isMounted = useRef(false);
+  
+  const [chunkSize, setChunkSize] = useState(1024);
+  const [chunkOverlap, setChunkOverlap] = useState(Math.round(1024 * 0.2));
   const [embeddingModel, setEmbeddingModel] = useState('text-embedding-3-small');
   const [chunkingStrategy, setChunkingStrategy] = useState('recursive');
   const [recommendation, setRecommendation] = useState(null);
@@ -132,7 +134,7 @@ const VectorStoreConfig = ({
     return embeddingModel.startsWith('azure-') ? embeddingModel.replace('azure-', '') : '';
   };
 
-  // Get model and chunking strategy recommendations when documents change
+  // Only run once on initial mount to set up recommended values
   useEffect(() => {
     if (documents && documents.length > 0) {
       const modelRec = recommendEmbeddingModel(documents);
@@ -152,18 +154,41 @@ const VectorStoreConfig = ({
     }
   }, [documents]);
 
-  // Update chunk settings when embedding model changes
+  // Track when component has mounted
   useEffect(() => {
+    isMounted.current = true;
+    return () => {
+      isMounted.current = false;
+    };
+  }, []);
+
+  // Update chunk settings when embedding model changes - only on initial model selection
+  useEffect(() => {
+    if (!isMounted.current) return; // Skip the first run
+    
     const modelConfigs = getModelChunkConfigs();
     const config = modelConfigs[embeddingModel];
     if (config) {
-      setChunkSize(config.chunkSize);
-      setChunkOverlap(config.chunkOverlap);
+      // Only set initial values when component first mounts or model changes
+      const allowedSizes = [128, 256, 512, 1024, 2048, 4096, 8192];
+      const closestAllowedSize = allowedSizes.reduce((prev, curr) => 
+        Math.abs(curr - config.chunkSize) < Math.abs(prev - config.chunkSize) ? curr : prev
+      );
+      
+      console.log(`[DEBUG] Setting initial chunk settings to size: ${closestAllowedSize}`);
+      setChunkSize(closestAllowedSize);
+      
+      // Use our fixed overlap values for this chunk size (20% option)
+      const allowedOverlaps = getAllowedOverlapValues(closestAllowedSize);
+      const recommendedOverlap = allowedOverlaps[3]; // 20% option
+      setChunkOverlap(recommendedOverlap);
+      
       if (onChunkParametersChange) {
-        onChunkParametersChange(config.chunkSize, config.chunkOverlap);
+        onChunkParametersChange(closestAllowedSize, recommendedOverlap);
       }
     }
-  }, [embeddingModel, onChunkParametersChange]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [embeddingModel]);
 
   // Add function to estimate tokens (rough approximation)
   const estimateTokens = (text) => {
@@ -180,25 +205,62 @@ const VectorStoreConfig = ({
     return estimatedTokens <= modelConfig.maxTokens;
   };
 
-  const handleChunkSizeChange = (event, newValue) => {
-    if (validateChunkSize(newValue)) {
-      setChunkSize(newValue);
-      if (onChunkParametersChange) {
-        onChunkParametersChange(newValue, chunkOverlap);
-      }
-    } else {
-      // If invalid, set to max allowed size
-      const modelConfig = getModelChunkConfigs()[embeddingModel];
-      const maxChars = modelConfig.maxTokens * 4; // Convert tokens to chars
-      setChunkSize(maxChars);
-      if (onChunkParametersChange) {
-        onChunkParametersChange(maxChars, chunkOverlap);
-      }
+  // Define fixed allowed overlap values for each chunk size
+  const getAllowedOverlapValues = (size) => {
+    switch (size) {
+      case 128:
+        return [0, 6, 13, 26, 38];  // 0%, 5%, 10%, 20%, 30%
+      case 256:
+        return [0, 13, 26, 51, 77]; // 0%, 5%, 10%, 20%, 30%
+      case 512:
+        return [0, 26, 51, 102, 154]; // 0%, 5%, 10%, 20%, 30%
+      case 1024:
+        return [0, 51, 102, 205, 307]; // 0%, 5%, 10%, 20%, 30%
+      case 2048:
+        return [0, 102, 205, 410, 614]; // 0%, 5%, 10%, 20%, 30%
+      case 4096:
+        return [0, 205, 410, 819, 1229]; // 0%, 5%, 10%, 20%, 30%
+      case 8192:
+        return [0, 410, 819, 1638, 2458]; // 0%, 5%, 10%, 20%, 30%
+      default:
+        return [0, Math.round(size * 0.05), Math.round(size * 0.1), 
+                Math.round(size * 0.2), Math.round(size * 0.3)];
     }
   };
 
-  const handleChunkOverlapChange = (event, newValue) => {
+  // Update the handler to use fixed values
+  const handleChunkSizeChange = (e) => {
+    const newValue = Number(e.target.value);
+    console.log(`[DEBUG] handleChunkSizeChange called with value: ${newValue}`);
+    
+    // Update the chunk size
+    setChunkSize(newValue);
+    
+    // Get allowed overlap values for this chunk size and select the 20% option (index 3)
+    const allowedOverlaps = getAllowedOverlapValues(newValue);
+    const recommendedOverlap = allowedOverlaps[3]; // 20% option
+    
+    console.log(`[DEBUG] Setting new overlap to: ${recommendedOverlap}`);
+    setChunkOverlap(recommendedOverlap);
+    
+    // Show warning for large chunk sizes
+    if (newValue >= 4096) {
+      // Warning is displayed in the UI already with the menu item text
+      console.log(`[DEBUG] Warning: Large chunk size selected (${newValue}). May affect performance and token usage.`);
+    }
+    
+    if (onChunkParametersChange) {
+      onChunkParametersChange(newValue, recommendedOverlap);
+    }
+  };
+
+  const handleChunkOverlapChange = (e) => {
+    const newValue = Number(e.target.value);
+    console.log(`[DEBUG] handleChunkOverlapChange called with value: ${newValue}`);
+    
+    // Direct state update without conditions
     setChunkOverlap(newValue);
+    
     if (onChunkParametersChange) {
       onChunkParametersChange(chunkSize, newValue);
     }
@@ -219,11 +281,22 @@ const VectorStoreConfig = ({
     
     // Update chunk size and overlap based on strategy defaults
     const strategyConfig = chunkingStrategies[strategy].defaultConfig;
-    setChunkSize(strategyConfig.chunkSize);
-    setChunkOverlap(strategyConfig.chunkOverlap);
+    
+    // Find closest allowed values for chunk size
+    const allowedSizes = [128, 256, 512, 1024, 2048, 4096, 8192];
+    const closestSize = allowedSizes.reduce((prev, curr) => 
+      Math.abs(curr - strategyConfig.chunkSize) < Math.abs(prev - strategyConfig.chunkSize) ? curr : prev
+    , allowedSizes[0]);
+    
+    // Calculate overlap as a percentage of chunk size
+    const overlapPercentage = strategyConfig.chunkOverlap / strategyConfig.chunkSize;
+    const newOverlap = Math.round(closestSize * overlapPercentage);
+    
+    setChunkSize(closestSize);
+    setChunkOverlap(newOverlap);
     
     if (onChunkParametersChange) {
-      onChunkParametersChange(strategyConfig.chunkSize, strategyConfig.chunkOverlap);
+      onChunkParametersChange(closestSize, newOverlap);
     }
   };
 
@@ -606,7 +679,7 @@ const VectorStoreConfig = ({
             <Box display="flex" gap={4}>
               <Box flex={1}>
                 <Box display="flex" alignItems="center" mb={1}>
-                  <Typography gutterBottom>Chunk Size: {chunkSize}</Typography>
+                  <Typography gutterBottom>Chunk Size</Typography>
                   <Tooltip title={
                     <Typography variant="body2">
                       {getModelChunkConfigs()[embeddingModel]?.description || 
@@ -620,30 +693,45 @@ const VectorStoreConfig = ({
                     <HelpOutlineIcon fontSize="small" sx={{ ml: 1, color: 'action.active' }} />
                   </Tooltip>
                 </Box>
-                <Slider
-                  value={chunkSize}
-                  onChange={handleChunkSizeChange}
-                  min={100}
-                  max={getModelChunkConfigs()[embeddingModel]?.maxChunkSize || 4000}
-                  step={100}
-                  marks={[
-                    { value: 100, label: '100' },
-                    { value: (getModelChunkConfigs()[embeddingModel]?.maxChunkSize || 4000) / 2, 
-                      label: `${Math.round((getModelChunkConfigs()[embeddingModel]?.maxChunkSize || 4000) / 2)}` },
-                    { value: getModelChunkConfigs()[embeddingModel]?.maxChunkSize || 4000, 
-                      label: `${getModelChunkConfigs()[embeddingModel]?.maxChunkSize || 4000}` }
-                  ]}
-                  disabled={isProcessing}
-                />
+                <FormControl fullWidth>
+                  <Select
+                    value={chunkSize}
+                    onChange={handleChunkSizeChange}
+                    disabled={isProcessing}
+                    MenuProps={{
+                      anchorOrigin: {
+                        vertical: 'bottom',
+                        horizontal: 'left',
+                      },
+                      transformOrigin: {
+                        vertical: 'top',
+                        horizontal: 'left',
+                      },
+                      PaperProps: {
+                        style: {
+                          maxHeight: 300,
+                        },
+                      },
+                    }}
+                  >
+                    <MenuItem value={128}>128 characters</MenuItem>
+                    <MenuItem value={256}>256 characters</MenuItem>
+                    <MenuItem value={512}>512 characters</MenuItem>
+                    <MenuItem value={1024}>1024 characters (recommended)</MenuItem>
+                    <MenuItem value={2048}>2048 characters</MenuItem>
+                    <MenuItem value={4096}>4096 characters (large)</MenuItem>
+                    <MenuItem value={8192}>8192 characters (very large)</MenuItem>
+                  </Select>
+                </FormControl>
                 <Typography variant="body2" color="textSecondary" sx={{ mt: 1 }}>
-                  The size of each text chunk in characters. Smaller chunks are more precise but may lose context.
-                  Max tokens: {getModelChunkConfigs()[embeddingModel]?.maxTokens || 'Unknown'}
+                  The size of each text chunk in characters. Llama Index recommended values range from 128-2048. 
+                  Larger values (4096-8192) may be useful for specific cases but can impact performance.
                 </Typography>
               </Box>
 
               <Box flex={1}>
                 <Box display="flex" alignItems="center" mb={1}>
-                  <Typography gutterBottom>Chunk Overlap: {chunkOverlap}</Typography>
+                  <Typography gutterBottom>Chunk Overlap</Typography>
                   <Tooltip title={
                     <Typography variant="body2">
                       The number of characters shared between adjacent chunks. Helps maintain context across chunk boundaries.
@@ -655,24 +743,43 @@ const VectorStoreConfig = ({
                     <HelpOutlineIcon fontSize="small" sx={{ ml: 1, color: 'action.active' }} />
                   </Tooltip>
                 </Box>
-                <Slider
-                  value={chunkOverlap}
-                  onChange={handleChunkOverlapChange}
-                  min={0}
-                  max={getModelChunkConfigs()[embeddingModel]?.maxChunkOverlap || 500}
-                  step={50}
-                  marks={[
-                    { value: 0, label: '0' },
-                    { value: (getModelChunkConfigs()[embeddingModel]?.maxChunkOverlap || 500) / 2, 
-                      label: `${Math.round((getModelChunkConfigs()[embeddingModel]?.maxChunkOverlap || 500) / 2)}` },
-                    { value: getModelChunkConfigs()[embeddingModel]?.maxChunkOverlap || 500, 
-                      label: `${getModelChunkConfigs()[embeddingModel]?.maxChunkOverlap || 500}` }
-                  ]}
-                  disabled={isProcessing}
-                />
+                <FormControl fullWidth>
+                  <Select
+                    key={`overlap-select-${chunkSize}`}
+                    value={chunkOverlap}
+                    onChange={handleChunkOverlapChange}
+                    disabled={isProcessing}
+                    renderValue={(selected) => {
+                      const percentage = Math.round((selected / chunkSize) * 100);
+                      return `${percentage}% (${selected} characters)`;
+                    }}
+                    MenuProps={{
+                      anchorOrigin: {
+                        vertical: 'bottom',
+                        horizontal: 'left',
+                      },
+                      transformOrigin: {
+                        vertical: 'top',
+                        horizontal: 'left',
+                      },
+                      PaperProps: {
+                        style: {
+                          maxHeight: 300,
+                        },
+                      },
+                    }}
+                  >
+                    {getAllowedOverlapValues(chunkSize).map((value, index) => (
+                      <MenuItem key={value} value={value}>
+                        {index === 0 ? "0%" : `${index === 1 ? "5%" : index === 2 ? "10%" : index === 3 ? "20%" : "30%"}`} 
+                        ({value} characters)
+                        {index === 3 && " - recommended"}
+                      </MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
                 <Typography variant="body2" color="textSecondary" sx={{ mt: 1 }}>
-                  The number of characters to overlap between chunks. Helps maintain context between chunks.
-                  Max overlap: {getModelChunkConfigs()[embeddingModel]?.maxChunkOverlap || 'Unknown'}
+                  Characters to overlap between chunks. Shown as percentage of chunk size.
                 </Typography>
               </Box>
             </Box>

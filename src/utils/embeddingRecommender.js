@@ -59,7 +59,7 @@ const calculateComplexity = (text) => {
 export const getModelChunkConfigs = () => ({
   // OpenAI models
   'text-embedding-3-small': {
-    chunkSize: 1000,
+    chunkSize: 1024,
     chunkOverlap: 200,
     maxTokens: 8191,
     maxChunkSize: 4000,  // ~1000 tokens
@@ -67,7 +67,7 @@ export const getModelChunkConfigs = () => ({
     description: 'Optimized for general text with good performance and cost efficiency'
   },
   'text-embedding-3-large': {
-    chunkSize: 2000,
+    chunkSize: 2048,
     chunkOverlap: 400,
     maxTokens: 8191,
     maxChunkSize: 8000,  // ~2000 tokens
@@ -77,7 +77,7 @@ export const getModelChunkConfigs = () => ({
   
   // Azure OpenAI models (inherit from OpenAI)
   'azure-text-embedding-3-small': {
-    chunkSize: 1000,
+    chunkSize: 1024,
     chunkOverlap: 200,
     maxTokens: 8191,
     maxChunkSize: 4000,  // ~1000 tokens
@@ -85,7 +85,7 @@ export const getModelChunkConfigs = () => ({
     description: 'Azure-hosted version of text-embedding-3-small'
   },
   'azure-text-embedding-3-large': {
-    chunkSize: 2000,
+    chunkSize: 2048,
     chunkOverlap: 400,
     maxTokens: 8191,
     maxChunkSize: 8000,  // ~2000 tokens
