@@ -1,10 +1,9 @@
-import React, { useState, useEffect, useCallback, useContext, useRef } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { 
   Typography, 
   Box, 
   Paper, 
   Button, 
-  CircularProgress,
   Alert,
   Grid,
   Card,
@@ -13,7 +12,6 @@ import {
   Divider,
   LinearProgress,
   Chip,
-  Stack,
   TextField,
   Accordion,
   AccordionSummary,
@@ -29,13 +27,8 @@ import {
   InputLabel
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
-import DownloadIcon from '@mui/icons-material/Download';
-import AssessmentIcon from '@mui/icons-material/Assessment';
 import EditIcon from '@mui/icons-material/Edit';
-import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
 import { validateResponsesInParallel } from '../utils/parallelValidationProcessor';
-import { calculateCost } from '../config/llmConfig';
-import jsPDF from 'jspdf';
 import 'jspdf-autotable';
 import { defaultSettings, apiConfig, defaultModels } from '../config/llmConfig';
 import { createLlmInstance } from '../utils/apiServices';
@@ -293,203 +286,6 @@ const findMetrics = (metrics, modelKey) => {
   return null;
 };
 
-// Reusable model dropdown component to avoid duplication
-const ModelDropdown = ({ value, onChange, sx = {} }) => {
-  // Add state for models
-  const [availableModels, setAvailableModels] = React.useState([]);
-  const [selectedModel, setSelectedModel] = React.useState('');
-
-  // Memoize loadModels function
-  const loadModels = React.useCallback(() => {
-    let models = [];
-    console.log('[ModelDropdown] Starting models loading process');
-
-    // Check which API configurations are available
-    const isAzureConfigured = !!(apiConfig.azure && apiConfig.azure.apiKey && apiConfig.azure.endpoint);
-    const isOpenAIConfigured = !!(apiConfig.openAI && apiConfig.openAI.apiKey);
-    const isAnthropicConfigured = !!(apiConfig.anthropic && apiConfig.anthropic.apiKey);
-    const isOllamaConfigured = !!(localStorage.getItem('ollamaEndpoint') || defaultSettings.ollamaEndpoint);
-    
-    console.log('[ModelDropdown] API configuration status:', {
-      Azure: isAzureConfigured ? 'CONFIGURED' : 'NOT CONFIGURED',
-      OpenAI: isOpenAIConfigured ? 'CONFIGURED' : 'NOT CONFIGURED',
-      Anthropic: isAnthropicConfigured ? 'CONFIGURED' : 'NOT CONFIGURED',
-      Ollama: isOllamaConfigured ? 'CONFIGURED' : 'NOT CONFIGURED'
-    });
-    
-    // Get Azure models if API key is configured
-    let azureModels = [];
-    if (isAzureConfigured) {
-      azureModels = Object.entries(defaultModels)
-        .filter(([key, model]) => {
-          const isAzure = model.vendor === 'AzureOpenAI';
-          const isChat = model.type === 'chat';
-          const isActive = model.active;
-          console.log(`[ModelDropdown] Checking Azure model ${key}: isAzure=${isAzure}, isChat=${isChat}, isActive=${isActive}`);
-          return isAzure && isChat && isActive;
-        })
-        .map(([key]) => key);
-        
-      console.log('[ModelDropdown] Azure models from central config:', azureModels);
-    }
-
-    // Get OpenAI models if API key is configured
-    let openAIModels = [];
-    if (isOpenAIConfigured) {
-      openAIModels = Object.entries(defaultModels)
-        .filter(([key, model]) => {
-          const isOpenAI = model.vendor === 'OpenAI';
-          const isChat = model.type === 'chat';
-          const isActive = model.active;
-          console.log(`[ModelDropdown] Checking OpenAI model ${key}: isOpenAI=${isOpenAI}, isChat=${isChat}, isActive=${isActive}`);
-          return isOpenAI && isChat && isActive;
-        })
-        .map(([key]) => key);
-      
-      console.log('[ModelDropdown] OpenAI models from central config:', openAIModels);
-    }
-    
-    // Get Anthropic models if API key is configured
-    let anthropicModels = [];
-    if (isAnthropicConfigured) {
-      anthropicModels = Object.entries(defaultModels)
-        .filter(([key, model]) => {
-          const isAnthropic = model.vendor === 'Anthropic';
-          const isChat = model.type === 'chat';
-          const isActive = model.active;
-          return isAnthropic && isChat && isActive;
-        })
-        .map(([key]) => key);
-      
-      console.log('[ModelDropdown] Anthropic models from central config:', anthropicModels);
-    }
-    
-    // Combine all available models based on configured APIs
-    models = [
-      ...azureModels,
-      ...openAIModels,
-      ...anthropicModels
-    ];
-    
-    console.log('[ModelDropdown] Combined available models:', models);
-    
-    // If no models found, try to use local storage as a fallback
-    if (models.length === 0) {
-      try {
-        // Check for Azure models in localStorage
-        if (isAzureConfigured) {
-          const savedAzureConfig = localStorage.getItem('azureModelsConfig');
-          if (savedAzureConfig) {
-            console.log('[ModelDropdown] Found Azure models in localStorage:', savedAzureConfig);
-            const config = JSON.parse(savedAzureConfig);
-            const azureModelsFromStorage = Object.entries(config)
-              .filter(([key, model]) => {
-                const isActive = model.active;
-                const isChat = model.type === 'chat';
-                return isActive && isChat;
-              })
-              .map(([key]) => key)
-              .sort();
-            
-            if (azureModelsFromStorage.length > 0) {
-              models = azureModelsFromStorage;
-              console.log('[ModelDropdown] Using Azure models from localStorage:', models);
-            }
-          }
-        }
-      } catch (e) {
-        console.error('[ModelDropdown] Error loading models from localStorage:', e);
-      }
-    }
-
-    // If still no models found, use fallback models based on what's configured
-    if (models.length === 0) {
-      if (isOpenAIConfigured) {
-        models = ['gpt-4o-mini', 'gpt-4o', 'gpt-3.5-turbo'];
-        console.log('[ModelDropdown] Using fallback OpenAI models:', models);
-      } else if (isAzureConfigured) {
-        models = ['azure-gpt-4o-mini', 'azure-gpt-4o'];
-        console.log('[ModelDropdown] Using fallback Azure models:', models);
-      } else if (isAnthropicConfigured) {
-        models = ['claude-3-5-sonnet'];
-        console.log('[ModelDropdown] Using fallback Anthropic models:', models);
-      } else {
-        // Last resort - use default models
-        models = ['gpt-4o-mini'];
-        console.log('[ModelDropdown] Using last resort default models:', models);
-      }
-    }
-
-    setAvailableModels(models);
-    console.log('[ModelDropdown] Final models list:', models);
-
-    // If current selection is not in the list, select the first available model
-    if (!models.includes(selectedModel)) {
-      const defaultModel = models[0];
-      console.log(`[ModelDropdown] Setting default model to ${defaultModel}`);
-      setSelectedModel(defaultModel);
-      onChange(defaultModel);
-    }
-  }, [selectedModel, onChange]);
-
-  // Effect to load models
-  React.useEffect(() => {
-    console.log('[ModelDropdown] Loading models configuration');
-    loadModels();
-    
-    // Add event listener for storage changes
-    const handleStorageChange = (e) => {
-      if (e.key === 'azureModelsConfig' || e.key === 'useAzureOpenAI') {
-        console.log(`[ModelDropdown] Configuration changed in localStorage: ${e.key}`);
-        loadModels();
-      }
-    };
-    
-    window.addEventListener('storage', handleStorageChange);
-    return () => window.removeEventListener('storage', handleStorageChange);
-  }, [loadModels]);
-
-  // Initialize selected model when component mounts or value changes
-  React.useEffect(() => {
-    console.log('[ModelDropdown] Value prop changed:', value);
-    if (value) {
-      setSelectedModel(value);
-    }
-  }, [value]);
-
-  const handleSelectionChange = (event) => {
-    const newValue = event.target.value;
-    console.log('[ModelDropdown] Selection changed to:', newValue);
-    setSelectedModel(newValue);
-    onChange(newValue);
-  };
-
-  console.log('[ModelDropdown] Rendering with selectedModel:', selectedModel);
-
-  return (
-    <Select
-      fullWidth
-      value={selectedModel}
-      onChange={handleSelectionChange}
-      variant="outlined"
-      sx={sx}
-      MenuProps={{
-        PaperProps: {
-          style: {
-            maxHeight: 300
-          }
-        }
-      }}
-    >
-      {availableModels.map(model => (
-        <MenuItem key={model} value={model}>
-          {model}
-        </MenuItem>
-      ))}
-    </Select>
-  );
-};
-
 // Reusable criteria textarea component
 const CriteriaTextArea = ({ value, onChange, rows = 8, sx = {} }) => (
   <>
@@ -537,7 +333,6 @@ function ResponseValidation({
   initialValue = '', 
   isDisabled = false
 }) {
-  const [validationText, setValidationText] = useState(initialValue);
   const [isProcessing, setIsProcessing] = useState(initialIsProcessing);
   const [validationResults, setValidationResults] = useState(initialValidationResults);
   const [metrics, setMetrics] = useState(propMetrics);
@@ -609,9 +404,8 @@ function ResponseValidation({
     'Clarity: Is the response clear, well-structured, and easy to understand?\n' +
     'Exception handling: Only if the output is code then check exceptions paths'
   );
-  const [expandedCriteria, setExpandedCriteria] = useState(false);
   const [currentValidatingModel, setCurrentValidatingModel] = useState(null);
-  const [sortConfig, setSortConfig] = useState({ key: 'overallScore', direction: 'descending' });
+  const [sortConfig] = useState({ key: 'overallScore', direction: 'descending' });
   const [editCriteriaOpen, setEditCriteriaOpen] = useState(false);
   
   // Additional state for parallel processing UI
@@ -631,14 +425,239 @@ function ResponseValidation({
     lowestCostModel: null
   });
   
-  // Recalculate effectiveness data when validation results change
+  // Wrap the effectiveness score calculation in useCallback
+  const calculateEffectivenessScore = useCallback((validationResults, metrics) => {
+    if (!validationResults || !metrics || Object.keys(validationResults).length === 0) {
+      return {
+        modelData: {},
+        bestValueModel: null,
+        fastestModel: null,
+        mostEffectiveModel: null,
+        lowestCostModel: null
+      };
+    }
+    
+    const effectiveness = {
+      modelData: {}
+    };
+    let bestEfficiencyScore = 0;
+    let bestTimeEfficiency = 0;
+    let bestComprehensiveScore = 0;
+    let lowestCost = Infinity;
+    let bestValueModel = null;
+    let fastestModel = null;
+    let mostEffectiveModel = null;
+    let lowestCostModel = null;
+    
+    // Calculate efficiency scores for each model
+    Object.entries(validationResults).forEach(([model, result]) => {
+      if (result.error) return; // Skip models with errors
+      
+      const overallScore = result.overall?.score || 0;
+      const modelMetrics = findMetrics(metrics, model);
+      
+      // Get cost
+      let cost = 0;
+      if (modelMetrics && modelMetrics.calculatedCost) {
+        cost = Number(modelMetrics.calculatedCost);
+      } else {
+        const modelResponse = responses?.[model] || 
+                            (responses?.models && Object.values(responses.models)
+                                .flatMap(set => Object.entries(set))
+                                .find(([key]) => key === model)?.[1]);
+        
+        if (modelResponse && modelResponse.cost !== undefined) {
+          cost = Number(modelResponse.cost);
+        } else if (modelResponse && modelResponse.rawResponse && modelResponse.rawResponse.cost !== undefined) {
+          cost = Number(modelResponse.rawResponse.cost);
+        }
+      }
+      
+      // Get response time
+      const responseTime = modelMetrics?.responseTime || modelMetrics?.elapsedTime || 0;
+      
+      // Calculate cost effectiveness (0-100 scale)
+      // Higher score = better value (high score per dollar)
+      let costEfficiencyScore = 0;
+      if (cost > 0) {
+        // Tier-based approach: assign base scores by cost tier first
+        let baseTierScore;
+        if (cost < 0.0001) {
+          // Ultra low cost tier (< $0.0001) - highest scores
+          baseTierScore = 98;
+        } else if (cost < 0.001) {
+          // Very low cost tier ($0.0001-$0.001)
+          baseTierScore = 90;
+        } else if (cost < 0.005) {
+          // Low cost tier ($0.001-$0.005)
+          baseTierScore = 75;
+        } else if (cost < 0.01) {
+          // Medium cost tier ($0.005-$0.01)
+          baseTierScore = 55;
+        } else if (cost < 0.05) {
+          // High cost tier ($0.01-$0.05) - dramatically lower score
+          baseTierScore = 30;
+        } else {
+          // Very high cost tier (>$0.05)
+          baseTierScore = 20;
+        }
+        
+        // Factor in quality but with minimal impact - we want cost to dominate the efficiency metric
+        // This significantly reduces quality's ability to compensate for high costs
+        const qualityFactor = Math.min(1, Math.pow(overallScore / 100, 0.2)); // Very minimal quality penalty
+        
+        // Calculate final score - quality can only affect the score by at most ±15%
+        // This ensures cost tiers are the dominant factor in the efficiency score
+        const qualityAdjustment = (qualityFactor - 0.5) * 0.3; // -15% to +15% adjustment
+        costEfficiencyScore = Math.max(5, Math.min(100, baseTierScore * (1 + qualityAdjustment)));
+      } else {
+        // If cost is 0, make it very efficient but not perfect
+        costEfficiencyScore = 95;
+      }
+      
+      // Calculate time effectiveness (0-100 scale)
+      // Higher score = faster response (low time per score point)
+      let timeEfficiencyScore = 0;
+      if (responseTime > 0) {
+        // Simple but effective formula that gives high scores for responses under 10 seconds
+        // and reasonable differentiation between fast and medium responses
+        
+        // Response time curve:
+        // 0-2s: 90-100 points
+        // 2-5s: 80-90 points
+        // 5-10s: 70-80 points
+        // 10-15s: 60-70 points
+        // 15-20s: 50-60 points
+        // >20s: <50 points
+        
+        const responseTimeInSeconds = responseTime / 1000;
+        let baseTimeScore;
+        
+        if (responseTimeInSeconds <= 2) {
+          // Very fast responses (<=2s)
+          baseTimeScore = 90 + (2 - responseTimeInSeconds) * 5; // 90-100
+        } else if (responseTimeInSeconds <= 5) {
+          // Fast responses (2-5s)
+          baseTimeScore = 80 + (5 - responseTimeInSeconds) * (10/3); // 80-90
+        } else if (responseTimeInSeconds <= 10) {
+          // Medium responses (5-10s)
+          baseTimeScore = 70 + (10 - responseTimeInSeconds) * 2; // 70-80
+        } else if (responseTimeInSeconds <= 15) {
+          // Medium-slow responses (10-15s)
+          baseTimeScore = 60 + (15 - responseTimeInSeconds) * 2; // 60-70
+        } else if (responseTimeInSeconds <= 20) {
+          // Slow responses (15-20s)
+          baseTimeScore = 50 + (20 - responseTimeInSeconds) * 2; // 50-60
+        } else {
+          // Very slow responses (>20s)
+          baseTimeScore = Math.max(30, 50 - (responseTimeInSeconds - 20)); // <50
+        }
+        
+        // Apply minor quality adjustment - time efficiency should primarily measure speed
+        // with only a small penalty for poor quality
+        const qualityFactor = Math.max(0.8, Math.min(1, overallScore / 75));
+        timeEfficiencyScore = Math.max(10, Math.min(100, baseTimeScore * qualityFactor));
+      } else if (overallScore > 0) {
+        // If response time is missing but we have a score, use a default efficiency
+        timeEfficiencyScore = Math.max(60, overallScore * 0.7); // 70% of quality score or minimum 60
+      }
+      
+      // Calculate comprehensive score (balancing quality, cost, and speed)
+      // Updated weights to provide a more balanced approach
+      const qualityWeight = 0.4;    // Increased weight for quality
+      const costWeight = 0.4;       // Slightly reduced cost weight
+      const timeWeight = 0.2;       // Increased time weight
+      
+      // Apply a quality threshold - if quality is extremely low (below 20%), handle accordingly
+      let comprehensiveEfficiencyScore;
+      
+      if (overallScore <= 1) {
+        // Model failed or crashed completely - mark as N/A with a special value
+        comprehensiveEfficiencyScore = null; // Use null to represent N/A
+      } else if (overallScore < 20) {
+        // For low but not failed scores (>1 and <20), apply a moderate penalty
+        // This ensures that poor quality models get lower scores but not drastically low
+        const qualityFactor = 0.3 + (0.7 * overallScore / 20); // Scales from 0.3 to 1.0
+        comprehensiveEfficiencyScore = qualityFactor * (
+          (qualityWeight * overallScore) +
+          (costWeight * costEfficiencyScore) +
+          (timeWeight * timeEfficiencyScore)
+        );
+      } else {
+        // Normal calculation for acceptable quality scores
+        comprehensiveEfficiencyScore = 
+          (qualityWeight * overallScore) +
+          (costWeight * costEfficiencyScore) +
+          (timeWeight * timeEfficiencyScore);
+      }
+      
+      // Update effectiveness data
+      if (!effectiveness.modelData[model]) {
+        effectiveness.modelData[model] = {
+          cost: cost,
+          responseTime: responseTime,
+          overallScore: overallScore,
+          costEfficiencyScore: costEfficiencyScore,
+          timeEfficiencyScore: timeEfficiencyScore,
+          comprehensiveEfficiencyScore: comprehensiveEfficiencyScore
+        };
+      } else {
+        effectiveness.modelData[model].cost = cost;
+        effectiveness.modelData[model].responseTime = responseTime;
+        effectiveness.modelData[model].overallScore = overallScore;
+        effectiveness.modelData[model].costEfficiencyScore = costEfficiencyScore;
+        effectiveness.modelData[model].timeEfficiencyScore = timeEfficiencyScore;
+        effectiveness.modelData[model].comprehensiveEfficiencyScore = comprehensiveEfficiencyScore;
+      }
+      
+      // Update best model data
+      if (comprehensiveEfficiencyScore !== null && 
+          comprehensiveEfficiencyScore > bestComprehensiveScore) {
+        bestComprehensiveScore = comprehensiveEfficiencyScore;
+        mostEffectiveModel = model;
+      }
+      if (costEfficiencyScore > bestEfficiencyScore && 
+          overallScore > 1) {
+        bestEfficiencyScore = costEfficiencyScore;
+        bestValueModel = model;
+      }
+      if (timeEfficiencyScore > bestTimeEfficiency && 
+          overallScore > 1) {
+        bestTimeEfficiency = timeEfficiencyScore;
+        fastestModel = model;
+      }
+      if (cost < lowestCost && 
+          overallScore > 1) {
+        lowestCost = cost;
+        lowestCostModel = model;
+      }
+    });
+    
+    // Calculate overall effectiveness data
+    const overallEffectiveness = {
+      modelData: effectiveness.modelData,
+      bestValueModel: bestValueModel,
+      fastestModel: fastestModel,
+      mostEffectiveModel: mostEffectiveModel,
+      lowestCostModel: lowestCostModel,
+      mostEffectiveScore: bestComprehensiveScore,
+      bestValueEfficiency: bestEfficiencyScore,
+      fastestResponseTime: effectiveness.modelData[fastestModel]?.responseTime || 0,
+      mostEffectiveResponseTime: effectiveness.modelData[mostEffectiveModel]?.responseTime || 0,
+      effectivenessData: effectiveness.modelData
+    };
+    
+    return overallEffectiveness;
+  }, [responses]);
+
+  // Add calculateEffectivenessScore to the dependency array
   useEffect(() => {
     if (Object.keys(validationResults).length > 0) {
       const data = calculateEffectivenessScore(validationResults, metrics);
       console.log("Calculated effectiveness data:", data);
       setEffectivenessData(data);
     }
-  }, [validationResults, metrics]);
+  }, [validationResults, metrics, calculateEffectivenessScore]);
 
   // Load validator model from localStorage on component mount
   useEffect(() => {
@@ -1076,231 +1095,6 @@ YOUR EVALUATION (in JSON format):
     }
   };
 
-  // Calculate effectiveness score for the model
-  const calculateEffectivenessScore = (validationResults, metrics) => {
-    if (!validationResults || !metrics || Object.keys(validationResults).length === 0) {
-      return {
-        modelData: {},
-        bestValueModel: null,
-        fastestModel: null,
-        mostEffectiveModel: null,
-        lowestCostModel: null
-      };
-    }
-    
-    const effectiveness = {
-      modelData: {}
-    };
-    let bestEfficiencyScore = 0;
-    let bestTimeEfficiency = 0;
-    let bestComprehensiveScore = 0;
-    let lowestCost = Infinity;
-    let bestValueModel = null;
-    let fastestModel = null;
-    let mostEffectiveModel = null;
-    let lowestCostModel = null;
-    
-    // Calculate efficiency scores for each model
-    Object.entries(validationResults).forEach(([model, result]) => {
-      if (result.error) return; // Skip models with errors
-      
-      const overallScore = result.overall?.score || 0;
-      const modelMetrics = findMetrics(metrics, model);
-      
-      // Get cost
-      let cost = 0;
-      if (modelMetrics && modelMetrics.calculatedCost) {
-        cost = Number(modelMetrics.calculatedCost);
-      } else {
-        const modelResponse = responses?.[model] || 
-                            (responses?.models && Object.values(responses.models)
-                                .flatMap(set => Object.entries(set))
-                                .find(([key]) => key === model)?.[1]);
-        
-        if (modelResponse && modelResponse.cost !== undefined) {
-          cost = Number(modelResponse.cost);
-        } else if (modelResponse && modelResponse.rawResponse && modelResponse.rawResponse.cost !== undefined) {
-          cost = Number(modelResponse.rawResponse.cost);
-        }
-      }
-      
-      // Get response time
-      const responseTime = modelMetrics?.responseTime || modelMetrics?.elapsedTime || 0;
-      
-      // Calculate cost effectiveness (0-100 scale)
-      // Higher score = better value (high score per dollar)
-      let costEfficiencyScore = 0;
-      if (cost > 0) {
-        // Tier-based approach: assign base scores by cost tier first
-        let baseTierScore;
-        if (cost < 0.0001) {
-          // Ultra low cost tier (< $0.0001) - highest scores
-          baseTierScore = 98;
-        } else if (cost < 0.001) {
-          // Very low cost tier ($0.0001-$0.001)
-          baseTierScore = 90;
-        } else if (cost < 0.005) {
-          // Low cost tier ($0.001-$0.005)
-          baseTierScore = 75;
-        } else if (cost < 0.01) {
-          // Medium cost tier ($0.005-$0.01)
-          baseTierScore = 55;
-        } else if (cost < 0.05) {
-          // High cost tier ($0.01-$0.05) - dramatically lower score
-          baseTierScore = 30;
-        } else {
-          // Very high cost tier (>$0.05)
-          baseTierScore = 20;
-        }
-        
-        // Factor in quality but with minimal impact - we want cost to dominate the efficiency metric
-        // This significantly reduces quality's ability to compensate for high costs
-        const qualityFactor = Math.min(1, Math.pow(overallScore / 100, 0.2)); // Very minimal quality penalty
-        
-        // Calculate final score - quality can only affect the score by at most ±15%
-        // This ensures cost tiers are the dominant factor in the efficiency score
-        const qualityAdjustment = (qualityFactor - 0.5) * 0.3; // -15% to +15% adjustment
-        costEfficiencyScore = Math.max(5, Math.min(100, baseTierScore * (1 + qualityAdjustment)));
-      } else {
-        // If cost is 0, make it very efficient but not perfect
-        costEfficiencyScore = 95;
-      }
-      
-      // Calculate time effectiveness (0-100 scale)
-      // Higher score = faster response (low time per score point)
-      let timeEfficiencyScore = 0;
-      if (responseTime > 0) {
-        // Simple but effective formula that gives high scores for responses under 10 seconds
-        // and reasonable differentiation between fast and medium responses
-        
-        // Response time curve:
-        // 0-2s: 90-100 points
-        // 2-5s: 80-90 points
-        // 5-10s: 70-80 points
-        // 10-15s: 60-70 points
-        // 15-20s: 50-60 points
-        // >20s: <50 points
-        
-        const responseTimeInSeconds = responseTime / 1000;
-        let baseTimeScore;
-        
-        if (responseTimeInSeconds <= 2) {
-          // Very fast responses (<=2s)
-          baseTimeScore = 90 + (2 - responseTimeInSeconds) * 5; // 90-100
-        } else if (responseTimeInSeconds <= 5) {
-          // Fast responses (2-5s)
-          baseTimeScore = 80 + (5 - responseTimeInSeconds) * (10/3); // 80-90
-        } else if (responseTimeInSeconds <= 10) {
-          // Medium responses (5-10s)
-          baseTimeScore = 70 + (10 - responseTimeInSeconds) * 2; // 70-80
-        } else if (responseTimeInSeconds <= 15) {
-          // Medium-slow responses (10-15s)
-          baseTimeScore = 60 + (15 - responseTimeInSeconds) * 2; // 60-70
-        } else if (responseTimeInSeconds <= 20) {
-          // Slow responses (15-20s)
-          baseTimeScore = 50 + (20 - responseTimeInSeconds) * 2; // 50-60
-        } else {
-          // Very slow responses (>20s)
-          baseTimeScore = Math.max(30, 50 - (responseTimeInSeconds - 20)); // <50
-        }
-        
-        // Apply minor quality adjustment - time efficiency should primarily measure speed
-        // with only a small penalty for poor quality
-        const qualityFactor = Math.max(0.8, Math.min(1, overallScore / 75));
-        timeEfficiencyScore = Math.max(10, Math.min(100, baseTimeScore * qualityFactor));
-      } else if (overallScore > 0) {
-        // If response time is missing but we have a score, use a default efficiency
-        timeEfficiencyScore = Math.max(60, overallScore * 0.7); // 70% of quality score or minimum 60
-      }
-      
-      // Calculate comprehensive score (balancing quality, cost, and speed)
-      // Updated weights to provide a more balanced approach
-      const qualityWeight = 0.4;    // Increased weight for quality
-      const costWeight = 0.4;       // Slightly reduced cost weight
-      const timeWeight = 0.2;       // Increased time weight
-      
-      // Apply a quality threshold - if quality is extremely low (below 20%), handle accordingly
-      let comprehensiveEfficiencyScore;
-      
-      if (overallScore <= 1) {
-        // Model failed or crashed completely - mark as N/A with a special value
-        comprehensiveEfficiencyScore = null; // Use null to represent N/A
-      } else if (overallScore < 20) {
-        // For low but not failed scores (>1 and <20), apply a moderate penalty
-        // This ensures that poor quality models get lower scores but not drastically low
-        const qualityFactor = 0.3 + (0.7 * overallScore / 20); // Scales from 0.3 to 1.0
-        comprehensiveEfficiencyScore = qualityFactor * (
-          (qualityWeight * overallScore) +
-          (costWeight * costEfficiencyScore) +
-          (timeWeight * timeEfficiencyScore)
-        );
-      } else {
-        // Normal calculation for acceptable quality scores
-        comprehensiveEfficiencyScore = 
-          (qualityWeight * overallScore) +
-          (costWeight * costEfficiencyScore) +
-          (timeWeight * timeEfficiencyScore);
-      }
-      
-      // Update effectiveness data
-      if (!effectiveness.modelData[model]) {
-        effectiveness.modelData[model] = {
-          cost: cost,
-          responseTime: responseTime,
-          overallScore: overallScore,
-          costEfficiencyScore: costEfficiencyScore,
-          timeEfficiencyScore: timeEfficiencyScore,
-          comprehensiveEfficiencyScore: comprehensiveEfficiencyScore
-        };
-      } else {
-        effectiveness.modelData[model].cost = cost;
-        effectiveness.modelData[model].responseTime = responseTime;
-        effectiveness.modelData[model].overallScore = overallScore;
-        effectiveness.modelData[model].costEfficiencyScore = costEfficiencyScore;
-        effectiveness.modelData[model].timeEfficiencyScore = timeEfficiencyScore;
-        effectiveness.modelData[model].comprehensiveEfficiencyScore = comprehensiveEfficiencyScore;
-      }
-      
-      // Update best model data
-      if (comprehensiveEfficiencyScore !== null && 
-          comprehensiveEfficiencyScore > bestComprehensiveScore) {
-        bestComprehensiveScore = comprehensiveEfficiencyScore;
-        mostEffectiveModel = model;
-      }
-      if (costEfficiencyScore > bestEfficiencyScore && 
-          overallScore > 1) {
-        bestEfficiencyScore = costEfficiencyScore;
-        bestValueModel = model;
-      }
-      if (timeEfficiencyScore > bestTimeEfficiency && 
-          overallScore > 1) {
-        bestTimeEfficiency = timeEfficiencyScore;
-        fastestModel = model;
-      }
-      if (cost < lowestCost && 
-          overallScore > 1) {
-        lowestCost = cost;
-        lowestCostModel = model;
-      }
-    });
-    
-    // Calculate overall effectiveness data
-    const overallEffectiveness = {
-      modelData: effectiveness.modelData,
-      bestValueModel: bestValueModel,
-      fastestModel: fastestModel,
-      mostEffectiveModel: mostEffectiveModel,
-      lowestCostModel: lowestCostModel,
-      mostEffectiveScore: bestComprehensiveScore,
-      bestValueEfficiency: bestEfficiencyScore,
-      fastestResponseTime: effectiveness.modelData[fastestModel]?.responseTime || 0,
-      mostEffectiveResponseTime: effectiveness.modelData[mostEffectiveModel]?.responseTime || 0,
-      effectivenessData: effectiveness.modelData
-    };
-    
-    return overallEffectiveness;
-  };
-
   // Helper function to format effectiveness score
   const formatEffectivenessScore = (score) => {
     if (score === undefined || score === null || isNaN(score)) return 'N/A';
@@ -1370,10 +1164,6 @@ YOUR EVALUATION (in JSON format):
     return 'error';
   };
 
-  // Helper function to find criterion value
-  const findCriterionValue = (criteria, criterion) => {
-    return criteria[criterion] || null;
-  };
 
   // Helper function to format response time
   const formatResponseTime = (ms) => {
