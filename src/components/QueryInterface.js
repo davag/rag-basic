@@ -1605,13 +1605,13 @@ Format your response in a clear, structured way. Focus on actionable improvement
                     border: '1px solid #e0e0e0',
                     borderRadius: 1,
                     bgcolor: '#fafafa',
-                    maxHeight: '100px',
+                    height: '150px',
                     overflowY: 'auto',
                     mb: 1
                   }}>
                     <TextField
                       multiline
-                      rows={3}
+                      rows={5}
                       placeholder="Enter your question about the documents..."
                       value={query}
                       onChange={(e) => setQuery(e.target.value)}
@@ -1620,8 +1620,9 @@ Format your response in a clear, structured way. Focus on actionable improvement
                       variant="outlined"
                       InputProps={{
                         sx: { 
-                          fontFamily: 'inherit', 
-                          fontSize: '1rem',
+                          fontFamily: 'Consolas, Monaco, "Courier New", monospace',
+                          fontSize: '0.95rem',
+                          lineHeight: '1.4',
                           border: 'none',
                           '& fieldset': { border: 'none' },
                           p: 0
@@ -1683,7 +1684,7 @@ Format your response in a clear, structured way. Focus on actionable improvement
                       border: '1px solid #e0e0e0',
                       borderRadius: 1,
                       bgcolor: '#fafafa',
-                      maxHeight: '100px',
+                      height: '150px',
                       overflowY: 'auto',
                       mb: 1
                     }}>
@@ -1691,12 +1692,13 @@ Format your response in a clear, structured way. Focus on actionable improvement
                         variant="body2" 
                         sx={{ 
                           whiteSpace: 'pre-wrap',
-                          fontFamily: 'monospace',
-                          fontSize: '0.8rem'
+                          fontFamily: 'Consolas, Monaco, "Courier New", monospace',
+                          fontSize: '0.95rem',
+                          lineHeight: '1.4'
                         }}
                       >
-                        {set.systemPrompt.length > 200 ? 
-                          `${set.systemPrompt.substring(0, 200)}...` : 
+                        {set.systemPrompt.length > 300 ? 
+                          `${set.systemPrompt.substring(0, 300)}...` : 
                           set.systemPrompt}
                       </Typography>
                     </Box>
