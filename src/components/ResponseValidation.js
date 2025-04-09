@@ -42,7 +42,7 @@ const getValidatorModelOptions = () => {
   const isAzureConfigured = !!(apiConfig.azure && apiConfig.azure.apiKey && apiConfig.azure.endpoint);
   const isOpenAIConfigured = !!(apiConfig.openAI && apiConfig.openAI.apiKey);
   const isAnthropicConfigured = !!(apiConfig.anthropic && apiConfig.anthropic.apiKey);
-  const isOllamaConfigured = !!(apiConfig.ollama && apiConfig.ollama.host);
+  const isOllamaConfigured = !!(apiConfig.ollama && apiConfig.ollama.endpoint);
   
   console.log('API Config check:', {isAzureConfigured, isOpenAIConfigured, isAnthropicConfigured, isOllamaConfigured});
   
@@ -511,8 +511,8 @@ function ResponseValidation({
         const qualityAdjustment = (qualityFactor - 0.5) * 0.3; // -15% to +15% adjustment
         costEfficiencyScore = Math.max(5, Math.min(100, baseTierScore * (1 + qualityAdjustment)));
       } else {
-        // If cost is 0, make it very efficient but not perfect
-        costEfficiencyScore = 95;
+        // If cost is 0, give it perfect cost efficiency (100%)
+        costEfficiencyScore = 100;
       }
       
       // Calculate time effectiveness (0-100 scale)

@@ -35,7 +35,7 @@ import VisibilityIcon from '@mui/icons-material/Visibility';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import ErrorIcon from '@mui/icons-material/Error';
 import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
-import { createLlmInstance } from '../utils/apiServices';
+import { createLlmInstance, checkOllamaStatus } from '../utils/apiServices';
 import {
   defaultModels,
   defaultSettings,
@@ -451,6 +451,20 @@ const LlmSettings = ({ showAppSettingsOnly = false }) => {
       return updatedModels;
     });
   };
+
+  // Check Ollama connection status
+  useEffect(() => {
+    const checkOllamaConnection = async () => {
+      try {
+        const status = await checkOllamaStatus(ollamaEndpoint);
+        console.log('Ollama connection status:', status);
+      } catch (err) {
+        console.error('Error checking Ollama connection:', err);
+      }
+    };
+
+    checkOllamaConnection();
+  }, [ollamaEndpoint]);
 
   return (
     <Box>

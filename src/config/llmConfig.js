@@ -163,6 +163,17 @@ const defaultModels = {
     active: true,
     description: 'Open source Mistral (7B) model for local inference via Ollama.',
     type: 'chat'
+  },
+  'nomic-embed-text': {
+    vendor: 'Ollama',
+    input: 0,
+    output: 0,
+    active: true,
+    description: 'Open source Nomic Embed Text model for embeddings via Ollama.',
+    type: 'embedding',
+    chunkSize: 1024,
+    chunkOverlap: 200,
+    maxTokens: 8191
   }
 };
 
@@ -195,8 +206,43 @@ const apiConfig = {
     apiKey: process.env.REACT_APP_AZURE_OPENAI_API_KEY,
     endpoint: process.env.REACT_APP_AZURE_OPENAI_ENDPOINT,
     apiVersion: process.env.REACT_APP_AZURE_OPENAI_API_VERSION
+  },
+  ollama: {
+    endpoint: process.env.REACT_APP_OLLAMA_API_URL || 'http://localhost:11434'
   }
 };
+
+// If in browser environment, update with localStorage values
+if (typeof window !== 'undefined' && window.localStorage) {
+  try {
+    const ollamaEndpoint = window.localStorage.getItem('ollamaEndpoint');
+    if (ollamaEndpoint) {
+      apiConfig.ollama.endpoint = ollamaEndpoint;
+    }
+    
+    const openaiApiKey = window.localStorage.getItem('openaiApiKey');
+    if (openaiApiKey) {
+      apiConfig.openAI.apiKey = openaiApiKey;
+    }
+    
+    const anthropicApiKey = window.localStorage.getItem('anthropicApiKey');
+    if (anthropicApiKey) {
+      apiConfig.anthropic.apiKey = anthropicApiKey;
+    }
+    
+    const azureApiKey = window.localStorage.getItem('azureApiKey');
+    if (azureApiKey) {
+      apiConfig.azure.apiKey = azureApiKey;
+    }
+    
+    const azureEndpoint = window.localStorage.getItem('azureEndpoint');
+    if (azureEndpoint) {
+      apiConfig.azure.endpoint = azureEndpoint;
+    }
+  } catch (e) {
+    console.error('Error updating API config from localStorage:', e);
+  }
+}
 
 // Create a module-specific logger
 const logger = createLogger('llm-config');
@@ -277,14 +323,21 @@ const getModelsByVendor = (vendor, customModels = null) => {
  * @returns {Object} - Configuration status for each provider
  */
 const checkApiConfiguration = () => {
-  // Check for Ollama endpoint in localStorage or environment variable
-  const hasOllamaEndpoint = !!(process.env.REACT_APP_OLLAMA_API_URL || localStorage.getItem('ollamaEndpoint'));
+  // Check for Ollama endpoint configuration
+  // We need to have an endpoint AND it should not be the default value if we're checking for actual configured endpoint
+  const hasOllamaEndpoint = !!(apiConfig.ollama && apiConfig.ollama.endpoint);
+  const isDefaultOllamaEndpoint = apiConfig.ollama.endpoint === 'http://localhost:11434';
   
   return {
     openAI: !!apiConfig.openAI.apiKey,
     anthropic: !!apiConfig.anthropic.apiKey,
     azure: !!(apiConfig.azure.apiKey && apiConfig.azure.endpoint),
-    ollama: hasOllamaEndpoint // Only return true if an Ollama endpoint is configured
+    ollama: hasOllamaEndpoint, 
+    // Additional details for Ollama
+    ollamaDetails: {
+      hasEndpoint: hasOllamaEndpoint,
+      isDefaultEndpoint: isDefaultOllamaEndpoint
+    }
   };
 };
 
@@ -301,7 +354,7 @@ function getAvailableModelsBasedOnKeys() {
   const hasAnthropic = !!(process.env.REACT_APP_ANTHROPIC_API_KEY || localStorage.getItem('anthropicApiKey'));
   const hasAzure = !!(process.env.REACT_APP_AZURE_OPENAI_API_KEY || localStorage.getItem('azureApiKey')) &&
                    !!(process.env.REACT_APP_AZURE_OPENAI_ENDPOINT || localStorage.getItem('azureEndpoint'));
-  const hasOllama = !!(process.env.REACT_APP_OLLAMA_API_URL || localStorage.getItem('ollamaEndpoint'));
+  const hasOllama = !!apiConfig.ollama.endpoint;
   
   // Log which keys/endpoints are found
   logger.debug('Checking model availability based on keys:',

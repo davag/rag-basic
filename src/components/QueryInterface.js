@@ -1501,7 +1501,7 @@ Format your response in a clear, structured way. Focus on actionable improvement
                 <Typography variant="subtitle2" sx={{ mb: 1, color: vendorColors['Ollama'] }}>
                   Ollama Models
                   {!apiConfig.ollama?.endpoint && (
-                    <Tooltip title="Ollama endpoint not configured. Visit LLM Settings to set up.">
+                    <Tooltip title="Ollama endpoint not set. Visit LLM Settings to configure it. Make sure you have Ollama installed and running.">
                       <span style={{ marginLeft: '8px', cursor: 'help' }}>⚠️</span>
                     </Tooltip>
                   )}
@@ -1513,7 +1513,7 @@ Format your response in a clear, structured way. Focus on actionable improvement
                       const model = defaultModels[modelId];
                       if (!model) return null;
                       // Check if Ollama endpoint is actually configured
-                      const isOllamaConfigured = apiConfig.ollama?.endpoint && apiConfig.ollama.endpoint !== 'http://localhost:11434';
+                      const isOllamaConfigured = !!(apiConfig.ollama?.endpoint);
                       return (
                         <Chip
                           key={modelId}

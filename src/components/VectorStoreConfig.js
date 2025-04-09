@@ -36,7 +36,7 @@ import axios from 'axios';
 import { v4 as uuidv4 } from 'uuid';
 // Add ES Module import for the named export from the CommonJS module
 import { createLogger } from '../utils/logHandler';
-import { defaultModels } from '../config/llmConfig';
+import { defaultModels, apiConfig } from '../config/llmConfig';
 
 // Instantiate logger AFTER imports
 const logger = createLogger('VectorStoreConfig'); 
@@ -411,8 +411,45 @@ const VectorStoreConfig = ({
       
       let embeddingsInstance; // Use a single variable for the instance
       
-      if (embeddingModel.startsWith('ollama-')) {
-        // ... (OllamaEmbeddings instantiation remains the same)
+      if (embeddingModel === 'nomic-embed-text') {
+        // For Ollama embeddings
+        logger.info('[VECTOR STORE] Using Ollama embeddings with model:', embeddingModel);
+        try {
+          // Get Ollama endpoint from apiConfig or localStorage
+          const ollamaEndpoint = apiConfig.ollama?.endpoint || 
+                               localStorage.getItem('ollamaEndpoint') || 
+                               process.env.REACT_APP_OLLAMA_API_URL || 
+                               'http://localhost:11434';
+          
+          logger.info(`[VECTOR STORE] Using Ollama endpoint: ${ollamaEndpoint}`);
+          
+          embeddingsInstance = new OllamaEmbeddings({
+            modelName: embeddingModel,
+            ollamaEndpoint: ollamaEndpoint,
+            operationId: operationId
+          });
+          
+          // Verify connection to Ollama
+          logger.info('[VECTOR STORE] Verifying Ollama connection...');
+          try {
+            const testResponse = await axios.get(`${ollamaEndpoint}/api/tags`, { timeout: 2000 });
+            const availableModels = testResponse.data.models.map(m => m.name);
+            logger.info(`[VECTOR STORE] Ollama available models: ${availableModels.join(', ')}`);
+            
+            if (!availableModels.includes(embeddingModel)) {
+              logger.warn(`[VECTOR STORE] Selected model "${embeddingModel}" may not be available in Ollama. Available models: ${availableModels.join(', ')}`);
+              logger.warn(`[VECTOR STORE] You may need to run: ollama pull ${embeddingModel}`);
+            }
+          } catch (connectionError) {
+            logger.error('[VECTOR STORE] Failed to connect to Ollama:', connectionError);
+            throw new Error(`Cannot connect to Ollama at ${ollamaEndpoint}. Is Ollama running?`);
+          }
+        } catch (error) {
+          logger.error('[VECTOR STORE] Failed to initialize Ollama embeddings:', error);
+          setError(`Initialization error for Ollama embeddings: ${error.message}`);
+          setIsProcessing(false);
+          return;
+        }
       } else if (embeddingModel.startsWith('azure-')) {
         // Azure Embeddings Logic
         logger.info('[VECTOR STORE] Using Azure OpenAI embeddings');

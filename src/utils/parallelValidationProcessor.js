@@ -98,9 +98,9 @@ export const validateResponsesInParallel = async (
     
     // For Ollama models
     if (modelName.includes('llama') || modelName.includes('mistral') || modelName.includes('gemma')) {
-      const ollamaEndpoint = localStorage.getItem('ollamaEndpoint') || defaultSettings.ollamaEndpoint;
-      // Only show if endpoint is configured AND it's not the default value
-      const isValid = !!(ollamaEndpoint && ollamaEndpoint !== 'http://localhost:11434');
+      const ollamaEndpoint = apiConfig.ollama?.endpoint || localStorage.getItem('ollamaEndpoint') || defaultSettings.ollamaEndpoint;
+      // Check if endpoint is configured without requiring it to be different from default
+      const isValid = !!ollamaEndpoint;
       console.log(`Ollama model ${modelName} config:`, { 
         ollamaEndpoint, 
         isValid 
@@ -260,8 +260,8 @@ Your evaluation should be structured as a JSON object with these properties:
 YOUR EVALUATION (in JSON format):
 `;
       
-      // Get Ollama endpoint from localStorage or default settings
-      const ollamaEndpoint = localStorage.getItem('ollamaEndpoint') || defaultSettings.ollamaEndpoint;
+      // Get Ollama endpoint from apiConfig, localStorage or default settings
+      const ollamaEndpoint = apiConfig.ollama?.endpoint || localStorage.getItem('ollamaEndpoint') || defaultSettings.ollamaEndpoint;
       
       // Create LLM instance for validation
       const llm = createLlmInstance(validatorModelName, '', {

@@ -654,7 +654,7 @@ export const createLlmInstance = (model, systemPrompt, options = {}) => {
       modelName: model,
       systemPrompt,
       temperature: options.temperature,
-      ollamaEndpoint: options.ollamaEndpoint || localStorage.getItem('ollamaEndpoint')
+      ollamaEndpoint: options.ollamaEndpoint || localStorage.getItem('ollamaEndpoint') || apiConfig.ollama?.endpoint
     });
   } else if (vendor === 'Anthropic') {
     return new CustomChatAnthropic({
@@ -884,4 +884,22 @@ export const calculateCost = (model, tokenUsage) => {
   // Use the centralized calculation function
   const result = configCalculateCost(model, { input: inputTokens, output: outputTokens });
   return result;
+};
+
+/**
+ * Check if Ollama is running and responding
+ * @param {string} endpoint - The Ollama endpoint URL
+ * @returns {Promise<boolean>} - True if Ollama is running, false otherwise
+ */
+export const checkOllamaStatus = async (endpoint) => {
+  try {
+    const url = endpoint || apiConfig.ollama?.endpoint || 'http://localhost:11434';
+    safeLogger.log(`Checking Ollama status at ${url}`);
+    const response = await axios.get(`${url}/api/tags`, { timeout: 2000 });
+    safeLogger.log('Ollama status check successful:', response.data);
+    return true;
+  } catch (error) {
+    safeLogger.error('Error checking Ollama status:', error);
+    return false;
+  }
 }; 
