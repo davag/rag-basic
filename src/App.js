@@ -30,6 +30,7 @@ import OptimizationRecommendations from './components/QualityAnalysisHub/Optimiz
 import QualityTestSuite from './components/QualityAnalysisHub/Testing/QualityTestSuite';
 import CostTrackingDashboard from './components/CostTrackingDashboard';
 import { checkApiConfiguration, getAvailableModelsBasedOnKeys } from './config/llmConfig';
+import appConfig from './config/appConfig';
 
 const theme = createTheme({
   palette: {
@@ -358,7 +359,7 @@ function App() {
         <AppBar position="static" color="default" elevation={1} sx={{ borderRadius: 1, mb: 2 }}>
           <Toolbar>
             <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
-              RAG Application
+              {appConfig.name} v{appConfig.version}
             </Typography>
             
             {/* Help button */}

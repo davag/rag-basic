@@ -4,6 +4,10 @@ import './index.css';
 import App from './App';
 import reportWebVitals from './reportWebVitals';
 import { costTracker } from './utils/costTracker';
+import appConfig from './config/appConfig';
+
+// Set document title dynamically from appConfig
+document.title = `${appConfig.name} v${appConfig.version}`;
 
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(

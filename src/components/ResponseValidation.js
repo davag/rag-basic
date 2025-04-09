@@ -1551,7 +1551,19 @@ YOUR EVALUATION (in JSON format):
                           
                           <Typography variant="subtitle2" gutterBottom>Criteria Scores</Typography>
                           <Grid container spacing={1}>
-                            {Object.entries(result.criteria || {}).map(([criterion, score]) => (
+                            {Object.entries(result.criteria || {})
+                              // First normalize all criterion keys to prevent duplicates
+                              .reduce((uniqueCriteria, [criterion, score]) => {
+                                // Convert the criterion name to lowercase for comparison
+                                const normalizedKey = criterion.toLowerCase().trim();
+                                
+                                // If we haven't seen this criterion before, add it
+                                if (!uniqueCriteria.some(([key]) => key.toLowerCase().trim() === normalizedKey)) {
+                                  uniqueCriteria.push([criterion, score]);
+                                }
+                                return uniqueCriteria;
+                              }, [])
+                              .map(([criterion, score]) => (
                               <Grid item xs={6} key={criterion}>
                                 <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                                   <Typography variant="body2" noWrap title={criterion}>
