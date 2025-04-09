@@ -15,7 +15,11 @@ import {
   Alert,
   Tooltip,
   Tabs,
-  Tab
+  Tab,
+  Chip,
+  Accordion,
+  AccordionSummary,
+  AccordionDetails
 } from '@mui/material';
 import AccessTimeIcon from '@mui/icons-material/AccessTime';
 import TokenIcon from '@mui/icons-material/Token';
@@ -25,6 +29,7 @@ import SaveIcon from '@mui/icons-material/Save';
 import UploadIcon from '@mui/icons-material/Upload';
 import AttachMoneyIcon from '@mui/icons-material/AttachMoney';
 import InfoIcon from '@mui/icons-material/Info';
+import DescriptionIcon from '@mui/icons-material/Description';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
 import { calculateCost } from '../config/llmConfig';
@@ -39,6 +44,7 @@ import TuneIcon from '@mui/icons-material/Tune';
 import AnalyticsIcon from '@mui/icons-material/Analytics';
 import KeyboardArrowUpIcon from '@mui/icons-material/KeyboardArrowUp';
 import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 
 const ResponseComparison = ({ 
   responses, 
@@ -1075,7 +1081,7 @@ const ResponseComparison = ({
     
     // Check if responses is a proper object
     if (!responses || typeof responses !== 'object') {
-      console.log('No valid responses object found');
+      console.error('No valid responses object found');
       return [];
     }
     
@@ -1092,29 +1098,52 @@ const ResponseComparison = ({
       }
       return isAvailable;
     };
+
+    // Helper function to extract response text
+    const getResponseText = (response) => {
+      if (!response) return null;
+      if (typeof response === 'string') return response;
+      if (response.text) return response.text;
+      if (response.answer) return response.answer;
+      if (response.response) return response.response;
+      if (response.content) return response.content;
+      if (response.completion) return response.completion;
+      return null;
+    };
     
     // New structured format with 'models' key
     if (responses.models) {
       console.log('Using new response structure with \'models\' key');
       
       // Iterate through prompt sets
-      Object.keys(responses.models).forEach(setKey => {
-        const setModels = responses.models[setKey];
+      Object.entries(responses.models).forEach(([setKey, setModels]) => {
+        if (!setModels || typeof setModels !== 'object') {
+          console.error(`Invalid model set for key ${setKey}:`, setModels);
+          return;
+        }
+
         console.log(`Processing model set: ${setKey}, models:`, Object.keys(setModels));
         
         // Iterate through models in this set
-        Object.keys(setModels).forEach(modelName => {
-          console.log(`Found model ${modelName} in set ${setKey}`);
-          const modelResponse = setModels[modelName];
+        Object.entries(setModels).forEach(([modelName, modelResponse]) => {
+          console.log(`Processing model ${modelName} in set ${setKey}:`, modelResponse);
           
           // Only add if model is available
           if (isModelAvailable(modelName)) {
+            const responseText = getResponseText(modelResponse);
+            if (responseText === null) {
+              console.error(`Could not extract response text for model ${modelName}:`, modelResponse);
+            }
+
             // Add this model to our model rows
             modelRows.push({
               setName: setKey,
               displayName: modelName,
               modelName: modelName,
-              response: modelResponse,
+              response: {
+                ...modelResponse,
+                text: responseText
+              },
               metricsKey: `${setKey}-${modelName}`
             });
           }
@@ -1142,19 +1171,25 @@ const ResponseComparison = ({
         const setModels = responses[setKey];
         if (typeof setModels === 'object' && !Array.isArray(setModels)) {
           Object.entries(setModels).forEach(([modelName, modelResponse]) => {
-            console.log(`Found model ${modelName} in set ${setKey}`);
+            console.log(`Found model ${modelName} in set ${setKey}:`, modelResponse);
             // Only add if model is available
             if (isModelAvailable(modelName)) {
+              const responseText = getResponseText(modelResponse);
               modelRows.push({
                 setName: setKey,
                 displayName: modelName,
                 metricsKey: `${setKey}-${modelName}`,
-                response: modelResponse
+                response: {
+                  ...modelResponse,
+                  text: responseText
+                }
               });
             }
           });
         }
       });
+
+      return modelRows;
     }
     
     // CASE 3: Check for direct model names at top level
@@ -1181,50 +1216,46 @@ const ResponseComparison = ({
         const isModelName = modelKeyPatterns.some(pattern => pattern.test(key));
         
         if (isModelName) {
-          console.log(`Found direct model: ${key}`);
+          console.log(`Found direct model: ${key}:`, responses[key]);
           // Only add if model is available
           if (isModelAvailable(key)) {
+            const responseText = getResponseText(responses[key]);
             modelRows.push({
               setName: 'Default',
               displayName: key,
               metricsKey: key,
-              response: responses[key]
+              response: {
+                ...responses[key],
+                text: responseText
+              }
             });
           }
         } else {
           // For non-pattern matches, check if it has response-like properties
-          const value = responses[key];
-          if (value && typeof value === 'object' && 
-              (value.content || value.text || value.answer || 
-               value.response || value.choices || 
-               (value.rawResponse && value.rawResponse.choices))) {
-            console.log(`Found response-like object for key: ${key}`);
-            // Only add if model is available
-            if (isModelAvailable(key)) {
+          const modelResponse = responses[key];
+          if (modelResponse && typeof modelResponse === 'object') {
+            const responseText = getResponseText(modelResponse);
+            if (responseText !== null) {
+              console.log(`Found response-like object for key ${key}`);
               modelRows.push({
                 setName: 'Default',
                 displayName: key,
                 metricsKey: key,
-                response: value
+                response: {
+                  ...modelResponse,
+                  text: responseText
+                }
               });
             }
           }
         }
       });
     }
-    
-    // EMERGENCY FALLBACK: If we still haven't found anything, create a single entry with all responses
-    if (modelRows.length === 0 && Object.keys(responses).length > 0) {
-      console.log("No model structure detected - using emergency fallback");
-      modelRows.push({
-        setName: 'Default',
-        displayName: 'Response',
-        metricsKey: 'response',
-        response: responses
-      });
+
+    if (modelRows.length === 0) {
+      console.error('No valid model responses found in any format');
     }
     
-    console.log("Extracted model rows:", modelRows);
     return modelRows;
   };
   
@@ -1963,6 +1994,255 @@ const ResponseComparison = ({
               currentQuery={currentQuery}
               metrics={metrics}
             />
+            
+            {/* Source Documents Analysis */}
+            {sources && sources.length > 0 && (
+              <Accordion 
+                sx={{ 
+                  mt: 0,
+                  '&:before': {
+                    display: 'none',
+                  },
+                }}
+              >
+                <AccordionSummary
+                  expandIcon={<ExpandMoreIcon />}
+                  sx={{
+                    backgroundColor: 'background.paper',
+                    borderRadius: 1,
+                    border: '1px solid',
+                    borderColor: 'divider',
+                    '&:hover': {
+                      backgroundColor: 'action.hover',
+                    },
+                  }}
+                >
+                  <Stack direction="row" spacing={1} alignItems="center">
+                    <DescriptionIcon sx={{ fontSize: 20, color: 'primary.main' }} />
+                    <Typography variant="subtitle1" sx={{ fontSize: '1.1rem', fontWeight: 600, lineHeight: 1.5 }}>
+                      Source Documents Analysis
+                    </Typography>
+                    <Chip 
+                      label={`${sources.length} chunks`}
+                      size="small"
+                      color="primary"
+                    />
+                  </Stack>
+                </AccordionSummary>
+                <AccordionDetails sx={{ pt: 2 }}>
+                  <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                    Source chunks retrieved from your vector database for this query, ranked by relevance.
+                  </Typography>
+
+                  <Stack spacing={2}>
+                    {sources.map((source, index) => {
+                      // Extract source information
+                      const sourceId = 
+                        source.source || 
+                        (source.metadata && (
+                          source.metadata.source || 
+                          source.metadata.filename || 
+                          source.metadata.originalFileName || 
+                          source.metadata.documentName
+                        )) || 
+                        `Source ${index+1}`;
+                        
+                      // Extract content text
+                      const contentText = 
+                        typeof source.pageContent === 'string' ? source.pageContent :
+                        typeof source.content === 'string' ? source.content :
+                        source.text || "No content available";
+
+                      // Extract and normalize similarity score
+                      const score = source.score || 
+                                  source.similarity || 
+                                  source.relevanceScore || 
+                                  source.distance ||
+                                  (source.metadata && (
+                                    source.metadata.score ||
+                                    source.metadata.similarity ||
+                                    source.metadata.relevance ||
+                                    source.metadata.distance
+                                  ));
+                      
+                      // Debug log for this specific source
+                      console.log('Processing source:', {
+                        sourceId,
+                        fullSource: source,
+                        metadata: source.metadata,
+                        foundScore: score,
+                        hasScore: score !== null && score !== undefined
+                      });
+
+                      // Normalize the score based on its type
+                      let normalizedScore = null;
+                      if (score !== null && score !== undefined) {
+                        if (typeof score === 'number') {
+                          // Handle different score types
+                          if (score > 1) {
+                            normalizedScore = score / 100;
+                          } else if (score < 0) {
+                            normalizedScore = 1 + score;
+                          } else {
+                            normalizedScore = score;
+                          }
+                          normalizedScore = Math.max(0, Math.min(1, normalizedScore));
+                        } else {
+                          // If score is not a number, try to convert it
+                          const numericScore = parseFloat(score);
+                          if (!isNaN(numericScore)) {
+                            normalizedScore = numericScore > 1 ? numericScore / 100 : numericScore;
+                            normalizedScore = Math.max(0, Math.min(1, normalizedScore));
+                          }
+                        }
+                      }
+
+                      // Always set a default score for visibility testing
+                      if (normalizedScore === null) {
+                        normalizedScore = 0.5; // Default to 50% if no score available
+                      }
+
+                      return (
+                        <Paper
+                          key={index}
+                          variant="outlined"
+                          sx={{
+                            p: 2,
+                            position: 'relative',
+                            borderLeft: '4px solid',
+                            borderLeftColor: theme => 
+                              normalizedScore > 0.8 ? theme.palette.success.main :
+                              normalizedScore > 0.5 ? theme.palette.primary.main :
+                              theme.palette.warning.main // Changed from grey to warning for better visibility
+                          }}
+                        >
+                          <Box 
+                            sx={{ 
+                              display: 'flex', 
+                              justifyContent: 'space-between',
+                              alignItems: 'center',
+                              mb: 1
+                            }}
+                          >
+                            <Typography 
+                              variant="subtitle2" 
+                              sx={{ 
+                                color: 'text.secondary',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: 1
+                              }}
+                            >
+                              <DescriptionIcon sx={{ fontSize: 16 }} />
+                              {sourceId}
+                            </Typography>
+                            <Stack direction="row" spacing={1} alignItems="center">
+                              <Chip
+                                size="small"
+                                label={`Relevance: ${(normalizedScore * 100).toFixed(0)}%`}
+                                color={
+                                  normalizedScore > 0.8 ? "success" :
+                                  normalizedScore > 0.5 ? "primary" :
+                                  "warning"
+                                }
+                                sx={{ 
+                                  height: 24,
+                                  fontWeight: 500,
+                                  border: '1px solid',
+                                  borderColor: theme =>
+                                    normalizedScore > 0.8 ? theme.palette.success.main :
+                                    normalizedScore > 0.5 ? theme.palette.primary.main :
+                                    theme.palette.warning.main,
+                                  backgroundColor: theme =>
+                                    normalizedScore > 0.8 ? theme.palette.success.main :
+                                    normalizedScore > 0.5 ? theme.palette.primary.main :
+                                    theme.palette.warning.main,
+                                  '& .MuiChip-label': {
+                                    color: '#fff',
+                                    fontWeight: 600
+                                  }
+                                }}
+                              />
+                            </Stack>
+                          </Box>
+                          {/* Content */}
+                          <Paper
+                            variant="outlined"
+                            sx={{
+                              p: 1.5,
+                              backgroundColor: 'grey.50',
+                              whiteSpace: 'pre-wrap',
+                              fontFamily: 'monospace',
+                              fontSize: '0.875rem',
+                              maxHeight: '200px',
+                              overflow: 'auto'
+                            }}
+                          >
+                            {contentText}
+                          </Paper>
+
+                          {/* Metadata if available */}
+                          {source.metadata && Object.keys(source.metadata).length > 0 && (
+                            <Box sx={{ mt: 1 }}>
+                              <Typography variant="caption" color="text.secondary" sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
+                                {Object.entries(source.metadata)
+                                  .filter(([key]) => !['source', 'filename', 'originalFileName', 'documentName'].includes(key))
+                                  .map(([key, value]) => {
+                                    // Handle location object specially
+                                    if (key === 'loc' && typeof value === 'object') {
+                                      // Debug log to see what we're getting
+                                      console.log('Location metadata:', { key, value });
+                                      
+                                      // Try different possible location formats
+                                      const start = value.start || value.startLine || value.from || value.begin || 
+                                                  (Array.isArray(value.lines) ? value.lines[0] : null) ||
+                                                  (typeof value === 'string' ? value.split('-')[0] : null);
+                                                  
+                                      const end = value.end || value.endLine || value.to || value.finish || 
+                                                (Array.isArray(value.lines) ? value.lines[1] : null) ||
+                                                (typeof value === 'string' ? value.split('-')[1] : null);
+
+                                      // Only show the chip if we have valid line numbers
+                                      if (start !== null || end !== null) {
+                                        return (
+                                          <Chip
+                                            key={key}
+                                            size="small"
+                                            label={`lines: ${start || '?'}-${end || '?'}`}
+                                            variant="outlined"
+                                            sx={{ height: 20, '& .MuiChip-label': { fontSize: '0.75rem' } }}
+                                          />
+                                        );
+                                      }
+                                      return null;
+                                    }
+                                    
+                                    // For other metadata, convert objects to string representation
+                                    const displayValue = typeof value === 'object' 
+                                      ? JSON.stringify(value)
+                                      : String(value);
+                                      
+                                    return (
+                                      <Chip
+                                        key={key}
+                                        size="small"
+                                        label={`${key}: ${displayValue}`}
+                                        variant="outlined"
+                                        sx={{ height: 20, '& .MuiChip-label': { fontSize: '0.75rem' } }}
+                                      />
+                                    );
+                                  })
+                                }
+                              </Typography>
+                            </Box>
+                          )}
+                        </Paper>
+                      );
+                    })}
+                  </Stack>
+                </AccordionDetails>
+              </Accordion>
+            )}
             
             {/* Render model responses section */}
             {renderModelResponses()}
