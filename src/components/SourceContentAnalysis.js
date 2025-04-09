@@ -43,6 +43,7 @@ import SpellcheckIcon from '@mui/icons-material/Spellcheck';
 import ErrorIcon from '@mui/icons-material/Error';
 import { createLlmInstance } from '../utils/apiServices';
 import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
+import { defaultModels } from '../config/llmConfig';
 
 /**
  * SourceContentAnalysis Component
@@ -66,26 +67,28 @@ const SourceContentAnalysis = ({
 }) => {
   // Default to gpt-4o-mini, but first check if it's available in availableModels
   const getDefaultModel = () => {
-    // Check if gpt-4o-mini is available
-    if (availableModels && availableModels['gpt-4o-mini'] && availableModels['gpt-4o-mini'].active) {
-      return 'gpt-4o-mini';
+    // If availableModels is an array
+    if (Array.isArray(availableModels) && availableModels.length > 0) {
+      // Find the first chat model in the array
+      const chatModelId = availableModels.find(modelId => 
+        defaultModels[modelId] && defaultModels[modelId].type === 'chat'
+      );
+      if (chatModelId) {
+        return chatModelId;
+      }
     }
-    
-    // Otherwise find the first available chat model
-    if (availableModels) {
-      const firstAvailable = Object.entries(availableModels)
-        .find(([model, config]) => 
-          config.active && 
-          config.type === 'chat' && 
-          (model.includes('gpt-') || model.includes('claude') || model.includes('azure-'))
-        );
+    // If availableModels is an object
+    else if (availableModels && typeof availableModels === 'object' && !Array.isArray(availableModels)) {
+      // Find the first active chat model
+      const firstActiveChatModel = Object.entries(availableModels)
+        .find(([_, config]) => config.active && config.type === 'chat');
       
-      if (firstAvailable) {
-        return firstAvailable[0];
+      if (firstActiveChatModel) {
+        return firstActiveChatModel[0];
       }
     }
     
-    // Fallback to gpt-4o-mini even if not in the list
+    // Fallback to gpt-4o-mini if nothing else is available
     return 'gpt-4o-mini';
   };
 
@@ -200,10 +203,8 @@ const SourceContentAnalysis = ({
     setAnalysisResults(null);
     
     try {
-      // Verify the selected model is actually available
-      if (!availableModels || !availableModels[selectedModel]) {
-        throw new Error(`Model ${selectedModel} is not configured properly. Please select a different model.`);
-      }
+      // Don't validate the model - just use whatever is selected
+      // This matches the ResponseValidation approach
       
       const results = [];
       // Analyze up to 10 documents max to avoid overloading
@@ -369,28 +370,38 @@ const SourceContentAnalysis = ({
                     label="Analysis Model"
                     onChange={(e) => setSelectedModel(e.target.value)}
                   >
-                    {availableModels && Object.keys(availableModels).length > 0 ? 
+                    {/* Handle both array and object formats for availableModels */}
+                    {availableModels && typeof availableModels === 'object' && !Array.isArray(availableModels) ?
+                      // If availableModels is an object with model configurations
                       Object.entries(availableModels)
-                        .filter(([model, config]) => 
-                          config.active && 
-                          config.type === 'chat' && 
-                          (
-                            model.includes('gpt-') || 
-                            model.includes('claude') || 
-                            model.includes('azure-')
-                          )
+                        .filter(([_, config]) => 
+                          // Only include active chat models
+                          config.active && config.type === 'chat'
                         )
                         .map(([model, config]) => (
                           <MenuItem key={model} value={model}>
-                            {model} ({config.vendor})
+                            {model}
                           </MenuItem>
                         ))
                       : 
-                      // Fallback options if no models are available
-                      [
-                        <MenuItem key="gpt-4o-mini" value="gpt-4o-mini">gpt-4o-mini (OpenAI)</MenuItem>,
-                        <MenuItem key="gpt-4o" value="gpt-4o">gpt-4o (OpenAI)</MenuItem>
-                      ]
+                      // If availableModels is an array of model IDs
+                      Array.isArray(availableModels) ?
+                        availableModels
+                          .filter(modelId => 
+                            // Only include models that exist in defaultModels and are chat models
+                            defaultModels[modelId] && defaultModels[modelId].type === 'chat'
+                          )
+                          .map(modelId => (
+                            <MenuItem key={modelId} value={modelId}>
+                              {modelId}
+                            </MenuItem>
+                          ))
+                        :
+                        // Fallback options if no models are available
+                        [
+                          <MenuItem key="gpt-4o-mini" value="gpt-4o-mini">gpt-4o-mini</MenuItem>,
+                          <MenuItem key="gpt-4o" value="gpt-4o">gpt-4o</MenuItem>
+                        ]
                     }
                   </Select>
                 </FormControl>

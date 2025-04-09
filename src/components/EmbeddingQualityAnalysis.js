@@ -44,6 +44,7 @@ import { createLlmInstance } from '../utils/apiServices';
 import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip as ChartTooltip, Legend } from 'chart.js';
 import { Scatter } from 'react-chartjs-2';
 import * as d3 from 'd3';
+import { defaultModels } from '../config/llmConfig';
 
 ChartJS.register(
   CategoryScale,
@@ -70,10 +71,37 @@ const EmbeddingQualityAnalysis = ({
   availableModels,
   onAnalysisComplete 
 }) => {
+  // Helper function to get default model
+  const getDefaultModel = () => {
+    // If availableModels is an array
+    if (Array.isArray(availableModels) && availableModels.length > 0) {
+      // Find the first chat model in the array
+      const chatModelId = availableModels.find(modelId => 
+        defaultModels[modelId] && defaultModels[modelId].type === 'chat'
+      );
+      if (chatModelId) {
+        return chatModelId;
+      }
+    }
+    // If availableModels is an object
+    else if (availableModels && typeof availableModels === 'object' && !Array.isArray(availableModels)) {
+      // Find the first active chat model
+      const firstActiveChatModel = Object.entries(availableModels)
+        .find(([_, config]) => config.active && config.type === 'chat');
+      
+      if (firstActiveChatModel) {
+        return firstActiveChatModel[0];
+      }
+    }
+    
+    // Fallback to gpt-4o-mini if nothing else is available
+    return 'gpt-4o-mini';
+  };
+  
   const [loading, setLoading] = useState(false);
   const [analysisResults, setAnalysisResults] = useState(null);
   const [selectedMetric, setSelectedMetric] = useState('semantic');
-  const [analysisModel, setAnalysisModel] = useState('gpt-4o-mini');
+  const [analysisModel, setAnalysisModel] = useState(getDefaultModel());
   const [reportExpanded, setReportExpanded] = useState({});
   const [sampleSize, setSampleSize] = useState(100);
   const [page, setPage] = useState(0);
@@ -810,18 +838,39 @@ const EmbeddingQualityAnalysis = ({
                 label="Analysis Model"
                 onChange={(e) => setAnalysisModel(e.target.value)}
               >
-                {availableModels && typeof availableModels === 'object' ? 
-                  Object.keys(availableModels).filter(model => 
-                    availableModels[model]?.active && 
-                    (model.includes('gpt-4') || model.includes('claude'))
-                  ).map(model => (
-                    <MenuItem key={model} value={model}>
-                      {model}
-                    </MenuItem>
-                  ))
-                : null}
-                <MenuItem value="gpt-4o-mini">gpt-4o-mini</MenuItem>
-                <MenuItem value="gpt-4o">gpt-4o</MenuItem>
+                {/* Handle both array and object formats for availableModels */}
+                {availableModels && typeof availableModels === 'object' && !Array.isArray(availableModels) ?
+                  // If availableModels is an object with model configurations
+                  Object.entries(availableModels)
+                    .filter(([_, config]) => 
+                      // Only include active chat models
+                      config.active && config.type === 'chat'
+                    )
+                    .map(([model, config]) => (
+                      <MenuItem key={model} value={model}>
+                        {model}
+                      </MenuItem>
+                    ))
+                  : 
+                  // If availableModels is an array of model IDs
+                  Array.isArray(availableModels) ?
+                    availableModels
+                      .filter(modelId => 
+                        // Only include models that exist in defaultModels and are chat models
+                        defaultModels[modelId] && defaultModels[modelId].type === 'chat'
+                      )
+                      .map(modelId => (
+                        <MenuItem key={modelId} value={modelId}>
+                          {modelId}
+                        </MenuItem>
+                      ))
+                    :
+                    // Fallback options if no models are available
+                    [
+                      <MenuItem key="gpt-4o-mini" value="gpt-4o-mini">gpt-4o-mini</MenuItem>,
+                      <MenuItem key="gpt-4o" value="gpt-4o">gpt-4o</MenuItem>
+                    ]
+                }
               </Select>
             </FormControl>
           </Grid>

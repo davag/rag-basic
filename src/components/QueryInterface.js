@@ -122,14 +122,20 @@ const QueryInterface = ({ vectorStore, namespaces = [], onQuerySubmitted, isProc
   
   // Get available models based on keys and filter for CHAT models
   const availableChatModels = useMemo(() => {
-    const allAvailable = getAvailableModelsBasedOnKeys();
-    const chatModels = allAvailable.filter(modelId => {
-      const modelConfig = defaultModels[modelId];
-      return modelConfig && modelConfig.type === 'chat';
-    });
-    console.log('[QueryInterface] Available chat models based on keys:', chatModels);
+    // Instead of filtering based on keys, get all active chat models
+    const chatModels = Object.entries(defaultModels)
+      .filter(([_, model]) => model.active && model.type === 'chat')
+      .map(([modelId]) => modelId);
+    
+    console.log('[QueryInterface] Available active chat models:', chatModels);
     return chatModels;
   }, []);
+
+  // Determine which model APIs are configured
+  const isOpenAIConfigured = !!(apiConfig.openAI && apiConfig.openAI.apiKey);
+  const isAnthropicConfigured = !!(apiConfig.anthropic && apiConfig.anthropic.apiKey);
+  const isAzureConfigured = !!(apiConfig.azure && apiConfig.azure.apiKey && apiConfig.azure.endpoint);
+  const isOllamaConfigured = !!(apiConfig.ollama && apiConfig.ollama.endpoint);
 
   // Handler for processor progress updates
   const handleProcessorProgress = (progressInfo) => {
@@ -1311,7 +1317,7 @@ Format your response in a clear, structured way. Focus on actionable improvement
               <Box mb={2}>
                 <Typography variant="subtitle2" sx={{ mb: 1, color: vendorColors['OpenAI'] }}>
                   OpenAI Models
-                  {!apiConfig.openAI.apiKey && (
+                  {!isOpenAIConfigured && (
                     <Tooltip title="OpenAI API key not configured. Visit LLM Settings to set up.">
                       <span style={{ marginLeft: '8px', cursor: 'help' }}>⚠️</span>
                     </Tooltip>
@@ -1342,14 +1348,14 @@ Format your response in a clear, structured way. Focus on actionable improvement
                           }
                           clickable
                           onClick={() => {
-                            if (!apiConfig.openAI.apiKey) return;
+                            if (!isOpenAIConfigured) return;
                             const newSelected = selectedModels.includes(modelId)
                               ? selectedModels.filter(m => m !== modelId)
                               : [...selectedModels, modelId];
                             setSelectedModels(newSelected);
                           }}
                           color={selectedModels.includes(modelId) ? "default" : "default"}
-                          disabled={isProcessing || !apiConfig.openAI.apiKey}
+                          disabled={isProcessing || !isOpenAIConfigured}
                           sx={{
                             bgcolor: selectedModels.includes(modelId) ? `${vendorColors['OpenAI']}12` : 'default',
                             borderColor: selectedModels.includes(modelId) ? vendorColors['OpenAI'] : '#e0e0e0',
@@ -1359,12 +1365,12 @@ Format your response in a clear, structured way. Focus on actionable improvement
                             boxShadow: selectedModels.includes(modelId) ? 1 : 0,
                             '& .MuiChip-label': { color: 'text.primary' },
                             '&:hover': { bgcolor: selectedModels.includes(modelId) ? `${vendorColors['OpenAI']}18` : '' },
-                            opacity: !apiConfig.openAI.apiKey ? 0.6 : 1,
+                            opacity: !isOpenAIConfigured ? 0.6 : 1,
                           }}
                         />
                       );
                   })}
-                  {availableChatModels.filter(modelId => defaultModels[modelId]?.vendor === 'OpenAI').length === 0 && apiConfig.openAI.apiKey && (
+                  {availableChatModels.filter(modelId => defaultModels[modelId]?.vendor === 'OpenAI').length === 0 && isOpenAIConfigured && (
                     <Typography variant="caption" color="textSecondary">No active OpenAI chat models found in config.</Typography>
                   )}
                 </Box>
@@ -1374,7 +1380,7 @@ Format your response in a clear, structured way. Focus on actionable improvement
               <Box mb={2}>
                 <Typography variant="subtitle2" sx={{ mb: 1, color: vendorColors['Anthropic'] }}>
                    Anthropic Models
-                   {!apiConfig.anthropic.apiKey && (
+                   {!isAnthropicConfigured && (
                      <Tooltip title="Anthropic API key not configured. Visit LLM Settings to set up.">
                        <span style={{ marginLeft: '8px', cursor: 'help' }}>⚠️</span>
                      </Tooltip>
@@ -1405,14 +1411,14 @@ Format your response in a clear, structured way. Focus on actionable improvement
                            }
                            clickable
                            onClick={() => {
-                              if (!apiConfig.anthropic.apiKey) return;
+                              if (!isAnthropicConfigured) return;
                               const newSelected = selectedModels.includes(modelId)
                                 ? selectedModels.filter(m => m !== modelId)
                                 : [...selectedModels, modelId];
                               setSelectedModels(newSelected);
                             }}
                            color={selectedModels.includes(modelId) ? "default" : "default"}
-                           disabled={isProcessing || !apiConfig.anthropic.apiKey}
+                           disabled={isProcessing || !isAnthropicConfigured}
                            sx={{
                              bgcolor: selectedModels.includes(modelId) ? `${vendorColors['Anthropic']}12` : 'default',
                              borderColor: selectedModels.includes(modelId) ? vendorColors['Anthropic'] : '#e0e0e0',
@@ -1422,12 +1428,12 @@ Format your response in a clear, structured way. Focus on actionable improvement
                              boxShadow: selectedModels.includes(modelId) ? 1 : 0,
                              '& .MuiChip-label': { color: 'text.primary' },
                              '&:hover': { bgcolor: selectedModels.includes(modelId) ? `${vendorColors['Anthropic']}18` : '' },
-                             opacity: !apiConfig.anthropic.apiKey ? 0.6 : 1,
+                             opacity: !isAnthropicConfigured ? 0.6 : 1,
                            }}
                          />
                        );
                   })}
-                  {availableChatModels.filter(modelId => defaultModels[modelId]?.vendor === 'Anthropic').length === 0 && apiConfig.anthropic.apiKey && (
+                  {availableChatModels.filter(modelId => defaultModels[modelId]?.vendor === 'Anthropic').length === 0 && isAnthropicConfigured && (
                      <Typography variant="caption" color="textSecondary">No active Anthropic chat models found in config.</Typography>
                   )}
                 </Box>
@@ -1437,7 +1443,7 @@ Format your response in a clear, structured way. Focus on actionable improvement
               <Box mb={2}>
                  <Typography variant="subtitle2" sx={{ mb: 1, color: vendorColors['AzureOpenAI'] }}>
                    Azure OpenAI Models
-                   {(!apiConfig.azure.apiKey || !apiConfig.azure.endpoint) && (
+                   {(!isAzureConfigured) && (
                      <Tooltip title="Azure API key or endpoint not configured. Visit LLM Settings to set up.">
                        <span style={{ marginLeft: '8px', cursor: 'help' }}>⚠️</span>
                      </Tooltip>
@@ -1468,14 +1474,14 @@ Format your response in a clear, structured way. Focus on actionable improvement
                             }
                            clickable
                            onClick={() => {
-                              if (!apiConfig.azure.apiKey || !apiConfig.azure.endpoint) return;
+                              if (!isAzureConfigured) return;
                               const newSelected = selectedModels.includes(modelId)
                                 ? selectedModels.filter(m => m !== modelId)
                                 : [...selectedModels, modelId];
                               setSelectedModels(newSelected);
                             }}
                            color={selectedModels.includes(modelId) ? "default" : "default"}
-                           disabled={isProcessing || !apiConfig.azure.apiKey || !apiConfig.azure.endpoint}
+                           disabled={isProcessing || !isAzureConfigured}
                            sx={{
                              bgcolor: selectedModels.includes(modelId) ? `${vendorColors['AzureOpenAI']}12` : 'default',
                              borderColor: selectedModels.includes(modelId) ? vendorColors['AzureOpenAI'] : '#e0e0e0',
@@ -1485,12 +1491,12 @@ Format your response in a clear, structured way. Focus on actionable improvement
                              boxShadow: selectedModels.includes(modelId) ? 1 : 0,
                              '& .MuiChip-label': { color: 'text.primary' },
                              '&:hover': { bgcolor: selectedModels.includes(modelId) ? `${vendorColors['AzureOpenAI']}18` : '' },
-                             opacity: (!apiConfig.azure.apiKey || !apiConfig.azure.endpoint) ? 0.6 : 1,
+                             opacity: (!isAzureConfigured) ? 0.6 : 1,
                            }}
                          />
                        );
                    })}
-                   {availableChatModels.filter(modelId => defaultModels[modelId]?.vendor === 'AzureOpenAI').length === 0 && apiConfig.azure.apiKey && apiConfig.azure.endpoint && (
+                   {availableChatModels.filter(modelId => defaultModels[modelId]?.vendor === 'AzureOpenAI').length === 0 && isAzureConfigured && (
                      <Typography variant="caption" color="textSecondary">No active Azure chat models found in config.</Typography>
                    )}
                  </Box>
@@ -1500,7 +1506,7 @@ Format your response in a clear, structured way. Focus on actionable improvement
               <Box mb={2}>
                 <Typography variant="subtitle2" sx={{ mb: 1, color: vendorColors['Ollama'] }}>
                   Ollama Models
-                  {!apiConfig.ollama?.endpoint && (
+                  {!isOllamaConfigured && (
                     <Tooltip title="Ollama endpoint not set. Visit LLM Settings to configure it. Make sure you have Ollama installed and running.">
                       <span style={{ marginLeft: '8px', cursor: 'help' }}>⚠️</span>
                     </Tooltip>
@@ -1512,8 +1518,7 @@ Format your response in a clear, structured way. Focus on actionable improvement
                     .map(modelId => {
                       const model = defaultModels[modelId];
                       if (!model) return null;
-                      // Check if Ollama endpoint is actually configured
-                      const isOllamaConfigured = !!(apiConfig.ollama?.endpoint);
+                      
                       return (
                         <Chip
                           key={modelId}
@@ -1542,7 +1547,7 @@ Format your response in a clear, structured way. Focus on actionable improvement
                         />
                       );
                   })}
-                  {availableChatModels.filter(modelId => defaultModels[modelId]?.vendor === 'Ollama').length === 0 && apiConfig.ollama?.endpoint && (
+                  {availableChatModels.filter(modelId => defaultModels[modelId]?.vendor === 'Ollama').length === 0 && isOllamaConfigured && (
                     <Typography variant="caption" color="textSecondary">No active Ollama chat models found in config.</Typography>
                   )}
                 </Box>

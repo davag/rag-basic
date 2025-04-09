@@ -33,6 +33,7 @@ import AssessmentIcon from '@mui/icons-material/Assessment';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import ErrorIcon from '@mui/icons-material/Error';
 import { createLlmInstance } from '../utils/apiServices';
+import { defaultModels } from '../config/llmConfig';
 
 /**
  * RetrievalEvaluation Component
@@ -49,12 +50,39 @@ const RetrievalEvaluation = ({
   availableModels,
   onEvaluationComplete 
 }) => {
+  // Helper function to get default model
+  const getDefaultModel = () => {
+    // If availableModels is an array
+    if (Array.isArray(availableModels) && availableModels.length > 0) {
+      // Find the first chat model in the array
+      const chatModelId = availableModels.find(modelId => 
+        defaultModels[modelId] && defaultModels[modelId].type === 'chat'
+      );
+      if (chatModelId) {
+        return chatModelId;
+      }
+    }
+    // If availableModels is an object
+    else if (availableModels && typeof availableModels === 'object' && !Array.isArray(availableModels)) {
+      // Find the first active chat model
+      const firstActiveChatModel = Object.entries(availableModels)
+        .find(([_, config]) => config.active && config.type === 'chat');
+      
+      if (firstActiveChatModel) {
+        return firstActiveChatModel[0];
+      }
+    }
+    
+    // Fallback to gpt-4o-mini if nothing else is available
+    return 'gpt-4o-mini';
+  };
+
   const [queryText, setQueryText] = useState('');
   const [evaluationResults, setEvaluationResults] = useState(null);
   const [isEvaluating, setIsEvaluating] = useState(false);
   const [selectedMetrics, setSelectedMetrics] = useState(['relevance', 'diversity', 'precision']);
   const [numQueries, setNumQueries] = useState(5);
-  const [evaluationModel, setEvaluationModel] = useState('gpt-4o-mini');
+  const [evaluationModel, setEvaluationModel] = useState(getDefaultModel());
   const [reportExpanded, setReportExpanded] = useState({});
 
   // Generate a set of test queries based on the document content
@@ -392,16 +420,39 @@ const RetrievalEvaluation = ({
                 label="Evaluation Model"
                 onChange={(e) => setEvaluationModel(e.target.value)}
               >
-                {Object.keys(availableModels || {}).filter(model => 
-                  availableModels[model].active && 
-                  (model.includes('gpt-4') || model.includes('claude'))
-                ).map(model => (
-                  <MenuItem key={model} value={model}>
-                    {model}
-                  </MenuItem>
-                ))}
-                <MenuItem value="gpt-4o-mini">gpt-4o-mini</MenuItem>
-                <MenuItem value="gpt-4o">gpt-4o</MenuItem>
+                {/* Handle both array and object formats for availableModels */}
+                {availableModels && typeof availableModels === 'object' && !Array.isArray(availableModels) ?
+                  // If availableModels is an object with model configurations
+                  Object.entries(availableModels)
+                    .filter(([_, config]) => 
+                      // Only include active chat models
+                      config.active && config.type === 'chat'
+                    )
+                    .map(([model, config]) => (
+                      <MenuItem key={model} value={model}>
+                        {model}
+                      </MenuItem>
+                    ))
+                  : 
+                  // If availableModels is an array of model IDs
+                  Array.isArray(availableModels) ?
+                    availableModels
+                      .filter(modelId => 
+                        // Only include models that exist in defaultModels and are chat models
+                        defaultModels[modelId] && defaultModels[modelId].type === 'chat'
+                      )
+                      .map(modelId => (
+                        <MenuItem key={modelId} value={modelId}>
+                          {modelId}
+                        </MenuItem>
+                      ))
+                    :
+                    // Fallback options if no models are available
+                    [
+                      <MenuItem key="gpt-4o-mini" value="gpt-4o-mini">gpt-4o-mini</MenuItem>,
+                      <MenuItem key="gpt-4o" value="gpt-4o">gpt-4o</MenuItem>
+                    ]
+                }
               </Select>
             </FormControl>
           </Grid>
