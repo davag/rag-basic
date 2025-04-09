@@ -19,3 +19,11 @@ alwaysApply: true
 - Server is already started. Never run 'mpn start dev' on your own. The developement server is already started!
 - Be careful with Azure Open Models. Don't change names or versions without me asking
 - If server is up always check eslint errors/Warning in compile from terminal
+
+## LLM model metadata
+All your LLM model metadata is defined in a single file as per your app principles - specifically in src/config/llmConfig.js. This file contains:
+- All model definitions with their properties (vendor, pricing, descriptions)
+- Azure-specific model deployments with their configurations
+- Embedding models like text-embedding-3-small and text-embedding-3-large
+- Default application settings
+- API configuration for different providers

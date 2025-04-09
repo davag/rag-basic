@@ -22,6 +22,9 @@ alwaysApply: true
   - Create separate directories for components, utilities, services, etc.
   - Follow consistent naming conventions across the project
 
+## Compilation warnings
+ - ESLint -> don't add a comment to ignore them but fix them
+
 ## Security practices
 
 - **Input validation and sanitization**

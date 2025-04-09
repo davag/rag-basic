@@ -1,0 +1,1860 @@
+import React, { useState, useEffect, useCallback } from 'react';
+import { 
+  Typography, 
+  Box, 
+  Paper, 
+  Button, 
+  CircularProgress,
+  Alert,
+  Grid,
+  Card,
+  CardContent,
+  CardHeader,
+  Divider,
+  LinearProgress,
+  Chip,
+  Stack,
+  TextField,
+  Accordion,
+  AccordionSummary,
+  AccordionDetails,
+  Select,
+  MenuItem,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Tooltip
+} from '@mui/material';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import DownloadIcon from '@mui/icons-material/Download';
+import AssessmentIcon from '@mui/icons-material/Assessment';
+import EditIcon from '@mui/icons-material/Edit';
+import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
+import { validateResponsesInParallel } from '../utils/parallelValidationProcessor';
+import { calculateCost } from '../config/llmConfig';
+import jsPDF from 'jspdf';
+import 'jspdf-autotable';
+import { defaultSettings, apiConfig, defaultModels } from '../config/llmConfig';
+import { createLlmInstance } from '../utils/apiServices';
+
+// Log the imported config for debugging
+console.log('Imported API config:', apiConfig);
+console.log('Imported default settings:', defaultSettings);
+
+// Helper function to find metrics for any model regardless of storage pattern
+const findMetrics = (metrics, modelKey) => {
+  if (!metrics || !modelKey) return null;
+  
+  // Direct hit - metrics stored directly under the model key
+  if (metrics[modelKey]) {
+    console.log(`Found direct metrics for ${modelKey}`);
+    return metrics[modelKey];
+  }
+  
+  // Normalize the model name for consistent lookup
+  let normalizedModelKey = modelKey;
+  if (typeof window !== 'undefined' && window.costTracker) {
+    normalizedModelKey = window.costTracker.normalizeModelName(modelKey);
+  }
+  
+  // Try with normalized name
+  if (normalizedModelKey !== modelKey && metrics[normalizedModelKey]) {
+    console.log(`Found metrics for normalized name ${normalizedModelKey}`);
+    return metrics[normalizedModelKey];
+  }
+  
+  // Check if this is a composite key like "Set 1-gpt-4o-mini"
+  if (modelKey.includes('-')) {
+    // Try to extract set name and model name
+    const setMatch = modelKey.match(/^(Set \d+)-(.+)$/);
+    
+    if (setMatch) {
+      const setName = setMatch[1]; // e.g., "Set 2"
+      const modelName = setMatch[2]; // e.g., "gpt-4o-mini"
+      
+      // Try normalized base model name
+      let normalizedModelName = modelName;
+      if (typeof window !== 'undefined' && window.costTracker) {
+        normalizedModelName = window.costTracker.normalizeModelName(modelName);
+      }
+      
+      // Case 1: Nested structure - metrics[setName][modelName]
+      if (metrics[setName] && metrics[setName][modelName]) {
+        console.log(`Found nested metrics for ${modelName} in ${setName}`);
+        return metrics[setName][modelName];
+      }
+      
+      // Try with normalized model name
+      if (normalizedModelName !== modelName && 
+          metrics[setName] && metrics[setName][normalizedModelName]) {
+        console.log(`Found nested metrics for normalized ${normalizedModelName} in ${setName}`);
+        return metrics[setName][normalizedModelName];
+      }
+      
+      // Case 2: Just the model name
+      if (metrics[modelName]) {
+        console.log(`Found metrics by model name ${modelName}`);
+        return metrics[modelName];
+      }
+      
+      // Try with normalized model name
+      if (normalizedModelName !== modelName && metrics[normalizedModelName]) {
+        console.log(`Found metrics by normalized model name ${normalizedModelName}`);
+        return metrics[normalizedModelName];
+      }
+      
+      // Case 3: Just the set name
+      if (metrics[setName]) {
+        console.log(`Found metrics by set name ${setName}`);
+        return metrics[setName];
+      }
+      
+      // Case 4: Dot notation - metrics["Set 1.gpt-4o-mini"]
+      const dotKey = `${setName}.${modelName}`;
+      if (metrics[dotKey]) {
+        console.log(`Found metrics with dot notation ${dotKey}`);
+        return metrics[dotKey];
+      }
+      
+      // Try with normalized model name
+      const normalizedDotKey = `${setName}.${normalizedModelName}`;
+      if (normalizedModelName !== modelName && metrics[normalizedDotKey]) {
+        console.log(`Found metrics with dot notation using normalized name ${normalizedDotKey}`);
+        return metrics[normalizedDotKey];
+      }
+    }
+  }
+  
+  // Try checking all metrics keys for partial matches
+  for (const key in metrics) {
+    if (key.includes(modelKey)) {
+      console.log(`Found metrics with partial key match: ${key}`);
+      return metrics[key];
+    }
+    
+    // Try with normalized model name
+    if (normalizedModelKey !== modelKey && key.includes(normalizedModelKey)) {
+      console.log(`Found metrics with partial normalized key match: ${key}`);
+      return metrics[key];
+    }
+  }
+  
+  console.log(`No metrics found for ${modelKey}`);
+  return null;
+};
+
+// Reusable model dropdown component to avoid duplication
+const ModelDropdown = ({ value, onChange, sx = {} }) => {
+  // Add state for Azure models
+  const [azureModels, setAzureModels] = React.useState([]);
+  const [selectedModel, setSelectedModel] = React.useState('');
+
+  // Memoize loadAzureModels function
+  const loadAzureModels = React.useCallback(() => {
+    let models = [];
+    console.log('[ModelDropdown] Starting Azure models loading process');
+
+    // First try to get Azure models from the central config (llmConfig.js)
+    const azureModels = Object.entries(defaultModels)
+      .filter(([key, model]) => {
+        const isAzure = model.vendor === 'AzureOpenAI';
+        const isChat = model.type === 'chat';
+        const isActive = model.active;
+        console.log(`[ModelDropdown] Checking model ${key}: isAzure=${isAzure}, isChat=${isChat}, isActive=${isActive}`);
+        return isAzure && isChat && isActive;
+      })
+      .map(([key]) => key);
+
+    console.log('[ModelDropdown] Azure models from central config:', azureModels);
+    
+    if (azureModels.length > 0) {
+      models = azureModels;
+    } else {
+      // Fallback to localStorage if no models in central config
+      try {
+        const savedConfig = localStorage.getItem('azureModelsConfig');
+        if (savedConfig) {
+          console.log('[ModelDropdown] Found Azure models in localStorage:', savedConfig);
+          const config = JSON.parse(savedConfig);
+          models = Object.entries(config)
+            .filter(([key, model]) => {
+              const isActive = model.active;
+              const isChat = model.type === 'chat';
+              console.log(`[ModelDropdown] Model ${key}: active=${isActive}, type=${model.type}`);
+              return isActive && isChat;
+            })
+            .map(([key]) => key)
+            .sort();
+          console.log('[ModelDropdown] Filtered Azure models from localStorage:', models);
+        }
+      } catch (e) {
+        console.error('[ModelDropdown] Error loading Azure models from localStorage:', e);
+      }
+    }
+
+    // If still no models found, use fallback
+    if (models.length === 0) {
+      models = ['azure-gpt-4o-mini'];
+      console.log('[ModelDropdown] Using fallback Azure model:', models);
+    }
+
+    setAzureModels(models);
+    console.log('[ModelDropdown] Final Azure models list:', models);
+
+    // If current selection is not in the list, select the first available model
+    if (!models.includes(selectedModel)) {
+      const defaultModel = models[0];
+      console.log(`[ModelDropdown] Setting default model to ${defaultModel}`);
+      setSelectedModel(defaultModel);
+      onChange(defaultModel);
+    }
+  }, [selectedModel, onChange]);
+
+  // Effect to load Azure models
+  React.useEffect(() => {
+    console.log('[ModelDropdown] Loading Azure models configuration');
+    loadAzureModels();
+    
+    // Add event listener for storage changes
+    const handleStorageChange = (e) => {
+      if (e.key === 'azureModelsConfig') {
+        console.log('[ModelDropdown] Azure models config changed in localStorage');
+        loadAzureModels();
+      }
+    };
+    
+    window.addEventListener('storage', handleStorageChange);
+    return () => window.removeEventListener('storage', handleStorageChange);
+  }, [loadAzureModels]); // Add loadAzureModels to dependencies
+
+  // Initialize selected model when component mounts or value changes
+  React.useEffect(() => {
+    console.log('[ModelDropdown] Value prop changed:', value);
+    // If value is not a valid Azure model, default to azure-gpt-4o-mini
+    if (value && !value.startsWith('azure-')) {
+      console.log('[ModelDropdown] Converting non-Azure model to Azure equivalent');
+      const azureEquivalent = `azure-${value}`;
+      setSelectedModel(azureEquivalent);
+      onChange(azureEquivalent);
+    } else {
+      setSelectedModel(value || '');
+    }
+  }, [value, onChange]);
+
+  const handleSelectionChange = (event) => {
+    const newValue = event.target.value;
+    console.log('[ModelDropdown] Selection changed to:', newValue);
+    setSelectedModel(newValue);
+    onChange(newValue);
+  };
+
+  console.log('[ModelDropdown] Rendering with selectedModel:', selectedModel);
+
+  return (
+    <Select
+      fullWidth
+      value={selectedModel}
+      onChange={handleSelectionChange}
+      variant="outlined"
+      sx={sx}
+      MenuProps={{
+        PaperProps: {
+          style: {
+            maxHeight: 300
+          }
+        }
+      }}
+    >
+      {azureModels.map(model => (
+        <MenuItem key={model} value={model}>
+          {model}
+        </MenuItem>
+      ))}
+    </Select>
+  );
+};
+
+// Function to get a suitable validation model that will work reliably 
+const getReliableValidatorModel = (preferredModel) => {
+  // Define a list of models known to work well for validation
+  const reliableModels = [
+    'azure-gpt-4o-mini',  // Most reliable for Azure
+    'azure-gpt-4o',       // Alternative Azure option
+    'gpt-4o-mini',        // Fallback to non-Azure if needed
+    'gpt-4o'              // Last resort
+  ];
+  
+  // Avoid using problematic models for validation
+  const problematicModels = ['o3-mini', 'azure-o3-mini'];
+  
+  // Check if preferred model is problematic
+  if (preferredModel && problematicModels.includes(preferredModel)) {
+    console.warn(`Model ${preferredModel} is known to have issues with validation. Using a more reliable alternative.`);
+    return reliableModels[0];
+  }
+  
+  // If preferred model is in reliable list, use it
+  if (preferredModel && reliableModels.includes(preferredModel)) {
+    return preferredModel;
+  }
+  
+  // If preferred model starts with 'azure-', keep using it
+  if (preferredModel && preferredModel.startsWith('azure-')) {
+    return preferredModel;
+  }
+  
+  // If preferred model doesn't start with 'azure-', try to use its Azure equivalent
+  if (preferredModel && !preferredModel.startsWith('azure-')) {
+    const azureEquivalent = `azure-${preferredModel}`;
+    if (reliableModels.includes(azureEquivalent)) {
+      return azureEquivalent;
+    }
+  }
+  
+  // Otherwise, return the first reliable Azure model
+  return reliableModels[0];
+};
+
+// Reusable criteria textarea component
+const CriteriaTextArea = ({ value, onChange, rows = 8, sx = {} }) => (
+  <>
+    <Typography variant="body2" color="textSecondary" sx={{ mb: 2 }}>
+      Specify the criteria for evaluating responses. Define one criterion per line, optionally with descriptions after a colon.
+    </Typography>
+    <TextField
+      label="Evaluation Criteria"
+      fullWidth
+      multiline
+      rows={rows}
+      value={value}
+      onChange={onChange}
+      placeholder="Enter evaluation criteria, one per line..."
+      variant="outlined"
+      sx={sx}
+    />
+  </>
+);
+
+// Function to normalize criterion name to title case
+const normalizeCriterionName = (criterion) => {
+  // Split by colon to handle format like "Accuracy: Description"
+  const parts = criterion.split(':');
+  const name = parts[0].trim();
+  // Convert to title case (first letter uppercase, rest lowercase)
+  const normalized = name.charAt(0).toUpperCase() + name.slice(1).toLowerCase();
+  
+  // If there was a description after the colon, add it back
+  if (parts.length > 1) {
+    return `${normalized}: ${parts.slice(1).join(':').trim()}`;
+  }
+  return normalized;
+};
+
+const ResponseValidation = ({ 
+  responses, 
+  metrics, 
+  currentQuery, 
+  systemPrompts, 
+  sources,
+  onValidationComplete,
+  validationResults,
+  isProcessing,
+  setIsProcessing
+}) => {
+  const [validatorModel, setValidatorModel] = useState('');
+  const [customCriteria, setCustomCriteria] = useState(
+    'Accuracy: Does the response correctly answer the query based on the provided context?\n' +
+    'Completeness: Does the response address all aspects of the query?\n' +
+    'Relevance: Is the information in the response relevant to the query?\n' +
+    'Conciseness: Is the response appropriately concise without omitting important information?\n' +
+    'Clarity: Is the response clear, well-structured, and easy to understand?\n' +
+    'Exception handling: Only if the output is code then check exceptions paths'
+  );
+  const [expandedCriteria, setExpandedCriteria] = useState(false);
+  const [currentValidatingModel, setCurrentValidatingModel] = useState(null);
+  const [sortConfig, setSortConfig] = useState({ key: 'overallScore', direction: 'descending' });
+  const [editCriteriaOpen, setEditCriteriaOpen] = useState(false);
+  
+  // Additional state for parallel processing UI
+  const [parallelProgress, setParallelProgress] = useState({
+    completed: 0,
+    pending: 0,
+    total: 0,
+    models: {}
+  });
+
+  // Load validator model from localStorage on component mount
+  useEffect(() => {
+    const savedValidatorModel = localStorage.getItem('responseValidatorModel');
+    if (savedValidatorModel) {
+      // Make sure we're using a reliable model, even for saved preferences
+      const reliableModel = getReliableValidatorModel(savedValidatorModel);
+      setValidatorModel(reliableModel);
+      
+      // If the reliable model differs from the saved one, update localStorage
+      if (reliableModel !== savedValidatorModel) {
+        localStorage.setItem('responseValidatorModel', reliableModel);
+      }
+    } else {
+      // If no saved model, set a default reliable model
+      const defaultModel = getReliableValidatorModel('gpt-4o-mini');
+      setValidatorModel(defaultModel);
+      localStorage.setItem('responseValidatorModel', defaultModel);
+    }
+    
+    // Load default evaluation criteria from localStorage
+    const savedCriteria = localStorage.getItem('defaultEvaluationCriteria');
+    if (savedCriteria) {
+      setCustomCriteria(savedCriteria);
+    }
+  }, []);
+
+  // Get the vendor name of a model, or use Set 1, Set 2, etc. for unknown models
+  const getModelVendor = (model) => {
+    if (model.includes('azure-')) return 'AzureOpenAI';
+    if (model.startsWith('gpt') || model.startsWith('o1') || model.startsWith('o3')) return 'OpenAI';
+    if (model.startsWith('claude')) return 'Anthropic';
+    if (model.includes('llama') || model.includes('mistral') || model.includes('gemma')) return 'Ollama';
+    
+    // Check if the model name already contains "Set X" pattern
+    if (/Set \d+/i.test(model)) {
+      return model;
+    }
+    
+    // For unknown models, extract number if it ends with a number like "model1" or "set1"
+    const numMatch = model.match(/(\d+)$/);
+    if (numMatch) {
+      return `Set ${numMatch[1]}`;
+    }
+    
+    return 'Set 1'; // Default to Set 1 for completely unknown models
+  };
+
+  // Reset validation state only when component is first mounted, not on re-renders
+  useEffect(() => {
+    // Only reset if there are no validation results yet
+    if (!validationResults || Object.keys(validationResults || {}).length === 0) {
+      setCurrentValidatingModel(null);
+      
+      // If we're not processing, make sure isProcessing is false
+      if (!isProcessing) {
+        setIsProcessing(false);
+      }
+    }
+    
+    // This will run when the component is unmounted
+    return () => {
+      // Clean up any ongoing processes if needed
+    };
+  }, [isProcessing, setIsProcessing, validationResults]);
+
+  const handleParallelProgress = useCallback((progressData) => {
+    if (!progressData) return;
+    
+    // Update the current model for basic tracking
+    setCurrentValidatingModel(progressData.model);
+    
+    setParallelProgress(prev => {
+      const newModels = { ...prev.models };
+      
+      // Ensure consistent model name format: "modelName / Set X"
+      let modelName = progressData.model;
+      
+      // If the model name starts with "Set", convert it to the correct format
+      if (modelName.startsWith('Set ')) {
+        const parts = modelName.split('-');
+        if (parts.length > 1) {
+          const setName = parts[0];
+          const baseModel = parts.slice(1).join('-');
+          modelName = `${baseModel} / ${setName}`;
+        }
+      } else if (!modelName.includes('Set')) {
+        // If no Set is mentioned, add Set 1
+        modelName = `${modelName} / Set 1`;
+      }
+
+      // Only update the model status if it's not completed yet
+      if (!newModels[modelName] || newModels[modelName].status !== 'completed') {
+        newModels[modelName] = {
+          status: progressData.status,
+          timestamp: Date.now()
+        };
+      }
+
+      // Calculate completed count based on unique completed models
+      const completedCount = Object.values(newModels).filter(m => m.status === 'completed').length;
+
+      // Use the total from progressData.progress if available, otherwise use the count of models
+      const total = progressData.progress?.total || Object.keys(newModels).length;
+
+      return {
+        ...prev,
+        completed: completedCount,
+        total: total, // Set the total from progress data
+        models: newModels
+      };
+    });
+  }, []);
+
+  const validateResponses = async () => {
+    try {
+      setIsProcessing(true);
+      
+      // Get the selected validator model or use a default reliable one
+      const validatorModelToUse = getReliableValidatorModel(validatorModel);
+      console.log(`Using validator model: ${validatorModelToUse}`);
+      
+      // Get the validation preference from localStorage
+      const useParallelValidation = localStorage.getItem('useParallelProcessing') === 'true';
+      console.log(`Parallel validation preference: ${useParallelValidation ? 'ENABLED' : 'DISABLED'}`);
+
+      // Debug log the full responses object
+      console.log("Full responses object:", JSON.stringify(responses, null, 2));
+
+      // Filter out metadata entries from responses before validation
+      const filteredResponses = {};
+      
+      if (responses) {
+        console.log("Original responses structure:", Object.keys(responses));
+        
+        // Check if the new nested structure (responses.models) exists
+        if (responses.models && typeof responses.models === 'object') {
+          console.log("Using new nested models structure for validation");
+          console.log("Models structure:", Object.keys(responses.models));
+          
+          // Process each set in the models object
+          Object.entries(responses.models).forEach(([setKey, setModels]) => {
+            console.log(`Processing set ${setKey}:`, Object.keys(setModels));
+            
+            if (typeof setModels === 'object' && !Array.isArray(setModels)) {
+              // Process each model in the set
+              Object.entries(setModels).forEach(([modelKey, modelResponse]) => {
+                // Check if this is a real model key (not metadata)
+                const isModelKey = 
+                  modelKey.includes('gpt-') || 
+                  modelKey.includes('claude-') ||
+                  modelKey.includes('llama') ||
+                  modelKey.includes('mistral') ||
+                  modelKey.includes('gemma') ||
+                  modelKey.includes('o3-mini');
+                  
+                if (isModelKey) {
+                  const combinedKey = `${setKey}-${modelKey}`;
+                  console.log(`Including model response for validation: ${combinedKey}`);
+                  filteredResponses[combinedKey] = modelResponse;
+                }
+              });
+            }
+          });
+        } else {
+          console.log("Using legacy format for responses");
+          // Handle legacy format
+          const modelKeyRegex = /^(gpt-|claude-|llama|mistral|gemma|o3-mini)/;
+          
+          // Filter entries to include only actual models
+          Object.entries(responses).forEach(([key, value]) => {
+            if (modelKeyRegex.test(key)) {
+              // Direct model response
+              console.log(`Including direct model response for validation: ${key}`);
+              filteredResponses[key] = value;
+            } else if (key.startsWith('Set ')) {
+              // Set-based responses
+              const setKey = key;
+              const setContent = value;
+              
+              if (typeof setContent === 'object' && !Array.isArray(setContent)) {
+                Object.entries(setContent).forEach(([modelKey, modelResponse]) => {
+                  // Only include real model keys, not metadata
+                  if (modelKeyRegex.test(modelKey)) {
+                    const combinedKey = `${setKey}-${modelKey}`;
+                    console.log(`Including set-based model for validation: ${combinedKey}`);
+                    filteredResponses[combinedKey] = modelResponse;
+                  }
+                });
+              }
+            }
+          });
+        }
+      }
+      
+      console.log("Filtered responses for validation:", Object.keys(filteredResponses));
+      
+      if (Object.keys(filteredResponses).length === 0) {
+        console.warn("No valid model responses found to validate");
+        onValidationComplete({});
+        setIsProcessing(false);
+        return;
+      }
+      
+      if (useParallelValidation) {
+        console.log("Starting parallel validation processing");
+        
+        // Process all validations in parallel with filtered responses
+        const parallelResults = await validateResponsesInParallel(
+          filteredResponses,
+          currentQuery,
+          customCriteria,
+          validatorModelToUse,
+          handleParallelProgress
+        );
+        
+        console.log("Parallel validation finished, results:", Object.keys(parallelResults).length);
+        
+        // Normalize the parallel validation results
+        const normalizedParallelResults = {};
+        Object.keys(parallelResults).forEach(key => {
+          normalizedParallelResults[key] = normalizeValidationResult(parallelResults[key]);
+        });
+        
+        // Update the validation results through the parent component
+        onValidationComplete(normalizedParallelResults);
+        console.log("Parallel validation completed successfully with results:", Object.keys(normalizedParallelResults));
+      } else {
+        console.log("Starting sequential validation processing");
+        
+        // Process validations one at a time
+        const sequentialResults = {};
+        const totalModels = Object.keys(filteredResponses).length;
+        let completedModels = 0;
+        
+        // Get Ollama endpoint from localStorage or default settings
+        const ollamaEndpoint = localStorage.getItem('ollamaEndpoint') || defaultSettings.ollamaEndpoint;
+        
+        // Process each model sequentially
+        for (const [modelKey, response] of Object.entries(filteredResponses)) {
+          try {
+            setCurrentValidatingModel(modelKey);
+            console.log(`Validating model ${modelKey} (${completedModels + 1}/${totalModels})`);
+            
+            // Extract the answer content
+            let answer = '';
+            if (typeof response === 'object') {
+              if (response.answer && typeof response.answer === 'object' && response.answer.text) {
+                answer = response.answer.text;
+              } else if (response.answer) {
+                answer = typeof response.answer === 'string' ? response.answer : JSON.stringify(response.answer);
+              } else if (response.response) {
+                answer = typeof response.response === 'string' ? response.response : JSON.stringify(response.response);
+              } else if (response.text) {
+                answer = response.text;
+              } else {
+                answer = JSON.stringify(response);
+              }
+            } else if (typeof response === 'string') {
+              answer = response;
+            }
+            
+            // Create the evaluation prompt
+            const prompt = `
+You are an impartial judge evaluating the quality of an AI assistant's response to a user query.
+
+USER QUERY:
+${currentQuery}
+
+AI ASSISTANT'S RESPONSE:
+${answer}
+
+EVALUATION CRITERIA:
+${customCriteria}
+
+Please evaluate the response based on the criteria above. Provide a score from 1-10 for each criterion, where 1 is poor and 10 is excellent. 
+
+Your evaluation should be structured as a JSON object with these properties:
+- criteria: an object with each criterion as a key and a score as its value
+- explanation: a brief explanation for each score
+- strengths: an array of strengths in the response
+- weaknesses: an array of weaknesses or areas for improvement
+- overall_score: the average of all criteria scores (1-10)
+- overall_assessment: a brief summary of your evaluation
+
+YOUR EVALUATION (in JSON format):
+`;
+            
+            // Create LLM instance for validation
+            const llm = createLlmInstance(validatorModelToUse, '', {
+              ollamaEndpoint: ollamaEndpoint,
+              temperature: 0,
+              isForValidation: true
+            });
+            
+            // Call the LLM with the evaluation prompt
+            const evaluationResult = await llm.invoke(prompt);
+            
+            // Parse the JSON response
+            let parsedResult;
+            try {
+              // First attempt: direct JSON parse
+              parsedResult = JSON.parse(evaluationResult);
+            } catch (directParseError) {
+              try {
+                // Second attempt: Extract JSON from the response using regex
+                const jsonMatch = evaluationResult.match(/\{[\s\S]*\}/);
+                parsedResult = jsonMatch ? JSON.parse(jsonMatch[0]) : null;
+                
+                if (!parsedResult) {
+                  throw new Error('No JSON found in response');
+                }
+              } catch (jsonError) {
+                console.error(`Failed to parse validation result for ${modelKey}:`, jsonError);
+                parsedResult = {
+                  error: 'Failed to parse evaluation result JSON',
+                  rawResponse: evaluationResult.substring(0, 500)
+                };
+              }
+            }
+            
+            // Normalize the result
+            sequentialResults[modelKey] = normalizeValidationResult(parsedResult);
+            
+            // Update progress
+            completedModels++;
+            if (handleParallelProgress) {
+              handleParallelProgress({
+                model: modelKey,
+                status: 'completed',
+                current: completedModels,
+                total: totalModels,
+                progress: {
+                  completed: completedModels,
+                  pending: totalModels - completedModels,
+                  total: totalModels
+                }
+              });
+            }
+            
+            // Update validation results as we go
+            onValidationComplete({ ...sequentialResults });
+            
+          } catch (error) {
+            console.error(`Error validating ${modelKey}:`, error);
+            sequentialResults[modelKey] = {
+              error: `Validation error: ${error.message}`,
+              criteria: {},
+              strengths: [],
+              weaknesses: [],
+              overall: { score: 0, explanation: 'Validation failed' }
+            };
+          }
+        }
+        
+        console.log("Sequential validation completed with results:", Object.keys(sequentialResults));
+      }
+    } catch (error) {
+      console.error('Error during validation:', error);
+      onValidationComplete({});
+    } finally {
+      setIsProcessing(false);
+      setCurrentValidatingModel(null);
+    }
+  };
+
+  // Function to format cost values
+  const formatCost = (costValue) => {
+    if (costValue === undefined || costValue === null || isNaN(costValue)) return 'N/A';
+    
+    // Handle zero or near-zero costs specially
+    if (costValue === 0) return '$0.00';
+    if (costValue < 0.0000001) return '<$0.0000001';
+    
+    // For very small values, use fixed decimal notation with more decimal places
+    if (costValue < 0.0000001) {
+      return `$${costValue.toFixed(10)}`;
+    } else if (costValue < 0.00001) {
+      return `$${costValue.toFixed(8)}`;
+    } else if (costValue < 0.001) {
+      return `$${costValue.toFixed(6)}`;
+    } else if (costValue < 0.01) {
+      return `$${costValue.toFixed(5)}`;
+    }
+    
+    // For regular costs
+    return `$${costValue.toFixed(4)}`;
+  };
+
+  const formatResponseTime = (ms) => {
+    if (ms === undefined || ms === null || isNaN(ms)) {
+      return 'Unknown';
+    }
+    if (ms < 1000) {
+      return `${ms}ms`;
+    }
+    return `${(ms / 1000).toFixed(2)}s`;
+  };
+
+  const generatePDF = () => {
+    try {
+      // Create a new jsPDF instance
+      const doc = new jsPDF();
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const margin = 15;
+      const contentWidth = pageWidth - (margin * 2);
+      
+      // Title
+      doc.setFontSize(18);
+      doc.text('RAG Response Validation Report', margin, 20);
+      
+      // Query
+      doc.setFontSize(14);
+      doc.text('Query', margin, 30);
+      doc.setFontSize(12);
+      const queryLines = doc.splitTextToSize(currentQuery || 'No query provided', contentWidth);
+      doc.text(queryLines, margin, 40);
+      
+      let yPos = 40 + (queryLines.length * 7);
+      
+      // Validation Criteria
+      yPos += 10;
+      doc.setFontSize(14);
+      doc.text('Validation Criteria', margin, yPos);
+      yPos += 10;
+      doc.setFontSize(10);
+      const criteriaLines = doc.splitTextToSize(customCriteria, contentWidth);
+      doc.text(criteriaLines, margin, yPos);
+      yPos += (criteriaLines.length * 5) + 10;
+      
+      // Performance Metrics
+      yPos += 10;
+      doc.setFontSize(14);
+      doc.text('Performance Metrics', margin, yPos);
+      yPos += 10;
+      
+      // Create a simple table for metrics
+      doc.setFontSize(11);
+      doc.text('Model', margin, yPos);
+      doc.text('Response Time', margin + 60, yPos);
+      doc.text('Token Usage', margin + 120, yPos);
+      doc.text('Est. Cost', margin + 180, yPos);
+      yPos += 7;
+      
+      // Draw a line under headers
+      doc.setDrawColor(200, 200, 200);
+      doc.line(margin, yPos, pageWidth - margin, yPos);
+      yPos += 5;
+      
+      // Table rows
+      doc.setFontSize(10);
+      Object.keys(metrics || {}).forEach((model, index) => {
+        if (metrics[model]) {
+          // Try to get the cost from the response first
+          const modelResponse = responses?.[model] || 
+                               (responses?.models && Object.values(responses.models)
+                                  .flatMap(set => Object.entries(set))
+                                  .find(([key]) => key === model)?.[1]);
+          
+          // Normalize model name using consistent algorithm
+          const normalizedModelName = window.costTracker?.normalizeModelName?.(model) || model;
+          
+          const cost = modelResponse?.cost || 
+                     modelResponse?.rawResponse?.cost || 
+                     calculateCost(normalizedModelName, metrics[model]?.tokenUsage?.total || 0);
+          
+          const costText = formatCost(cost);
+          
+          doc.text(model, margin, yPos);
+          doc.text(formatResponseTime(metrics[model]?.responseTime || 0), margin + 60, yPos);
+          doc.text(`${metrics[model]?.tokenUsage?.estimated ? '~' : ''}${metrics[model]?.tokenUsage?.total || 0} tokens`, margin + 120, yPos);
+          doc.text(costText, margin + 180, yPos);
+          yPos += 7;
+          
+          // Draw a light line between rows
+          if (index < Object.keys(metrics).length - 1) {
+            doc.setDrawColor(230, 230, 230);
+            doc.line(margin, yPos, pageWidth - margin, yPos);
+            yPos += 3;
+          }
+        }
+      });
+      
+      // Add a new page for validation results
+      doc.addPage();
+      yPos = 20;
+      
+      // Performance Efficiency Analysis
+      if (effectivenessData && !effectivenessData.error && effectivenessData.mostEffectiveModel) {
+        doc.setFontSize(14);
+        doc.text('Performance Efficiency Analysis', margin, yPos);
+        yPos += 10;
+        
+        // Best Overall Performance
+        doc.setFontSize(12);
+        doc.text('Best Overall Performance:', margin, yPos);
+        yPos += 7;
+        doc.setFontSize(10);
+        doc.text(`Model: ${effectivenessData.mostEffectiveModel}`, margin + 5, yPos);
+        yPos += 5;
+        const modelQualityScore = effectivenessData.modelData?.[effectivenessData.mostEffectiveModel]?.qualityScore || 0;
+        doc.text(`Quality Score: ${modelQualityScore}/100`, margin + 5, yPos);
+        yPos += 5;
+        const modelCost = effectivenessData.modelData?.[effectivenessData.mostEffectiveModel]?.cost || 0;
+        doc.text(`Cost: ${formatCost(modelCost)}`, margin + 5, yPos);
+        yPos += 5;
+        doc.text(`Response Time: ${formatResponseTime(effectivenessData.mostEffectiveResponseTime)}`, margin + 5, yPos);
+        yPos += 5;
+        doc.text(`Efficiency Score: ${formatEffectivenessScore(effectivenessData.mostEffectiveScore)}`, margin + 5, yPos);
+        yPos += 10;
+        
+        // Fastest Model
+        if (effectivenessData.fastestModel) {
+          doc.setFontSize(12);
+          doc.text('Fastest Model:', margin, yPos);
+          yPos += 7;
+          doc.setFontSize(10);
+          doc.text(`Model: ${effectivenessData.fastestModel}`, margin + 5, yPos);
+          yPos += 5;
+          doc.text(`Response time: ${formatResponseTime(effectivenessData.fastestResponseTime)}`, margin + 5, yPos);
+          yPos += 5;
+          doc.text(`Quality Score: ${effectivenessData.fastestScore}/100`, margin + 5, yPos);
+          yPos += 10;
+        }
+        
+        // Best Value Model
+        if (effectivenessData.bestValueModel) {
+          doc.setFontSize(12);
+          doc.text('Best Value Model:', margin, yPos);
+          yPos += 7;
+          doc.setFontSize(10);
+          doc.text(`Model: ${effectivenessData.bestValueModel}`, margin + 5, yPos);
+          yPos += 5;
+          doc.text(`Efficiency: ${formatComprehensiveEfficiencyScore(effectivenessData.bestValueEfficiency)}`, margin + 5, yPos);
+          yPos += 10;
+        }
+        
+        // Add some space
+        yPos += 5;
+      } else if (effectivenessData && effectivenessData.error) {
+        doc.setFontSize(14);
+        doc.text('Performance Efficiency Analysis', margin, yPos);
+        yPos += 10;
+        
+        doc.setFontSize(12);
+        doc.setTextColor(255, 0, 0);
+        doc.text(`Error: ${effectivenessData.error}`, margin, yPos);
+        doc.setTextColor(0, 0, 0);
+        yPos += 10;
+      }
+      
+      // Validation Results
+      doc.setFontSize(14);
+      doc.text('Validation Results', margin, yPos);
+      yPos += 10;
+      
+      // Process each model's validation results
+      Object.keys(validationResults || {}).forEach((model, index) => {
+        if (index > 0) {
+          // Add a new page for each model after the first
+          doc.addPage();
+          yPos = 20;
+        }
+        
+        doc.setFontSize(12);
+        doc.text(`Model: ${model}`, margin, yPos);
+        yPos += 10;
+        
+        const result = validationResults[model];
+        
+        if (!result || result.error) {
+          doc.setTextColor(255, 0, 0);
+          doc.text(`Error: ${result?.error || 'Unknown error'}`, margin, yPos);
+          doc.setTextColor(0, 0, 0);
+          yPos += 10;
+          return;
+        }
+        
+        // Overall score
+        if (result.overall) {
+          doc.setFontSize(12);
+          doc.text(`Overall Score: ${result.overall.score}/100`, margin, yPos);
+          yPos += 7;
+          
+          doc.setFontSize(10);
+          const overallExplanationLines = doc.splitTextToSize(result.overall.explanation, contentWidth);
+          doc.text(overallExplanationLines, margin, yPos);
+          yPos += (overallExplanationLines.length * 5) + 10;
+        }
+        
+        // Individual criteria
+        if (result.criteria) {
+          doc.setFontSize(12);
+          doc.text('Criteria Scores:', margin, yPos);
+          yPos += 10;
+          
+          Object.entries(result.criteria).forEach(([criterion, details]) => {
+            doc.setFontSize(11);
+            doc.text(`${criterion}: ${details.score}/100`, margin, yPos);
+            yPos += 7;
+            
+            doc.setFontSize(9);
+            const explanationLines = doc.splitTextToSize(details.explanation, contentWidth - 10);
+            doc.text(explanationLines, margin + 5, yPos);
+            yPos += (explanationLines.length * 5) + 7;
+          });
+        }
+        
+        // Add model response
+        yPos += 5;
+        doc.setFontSize(12);
+        doc.text('Model Response:', margin, yPos);
+        yPos += 7;
+        
+        if (responses && responses[model]) {
+          const answer = typeof responses[model].answer === 'object' ? 
+            responses[model].answer.text : 
+            responses[model].answer;
+          
+          doc.setFontSize(9);
+          const responseLines = doc.splitTextToSize(answer, contentWidth - 10);
+          doc.text(responseLines, margin + 5, yPos);
+          yPos += (responseLines.length * 5) + 10;
+          
+          // Add cost information
+          if (metrics && metrics[model]) {
+            // Try to get the cost from the response first
+            const modelResponse = responses?.[model] || 
+                                 (responses?.models && Object.values(responses.models)
+                                    .flatMap(set => Object.entries(set))
+                                    .find(([key]) => key === model)?.[1]);
+            
+            // Normalize model name using consistent algorithm
+            const normalizedModelName = window.costTracker?.normalizeModelName?.(model) || model;
+            
+            const modelCost = modelResponse?.cost || 
+                       modelResponse?.rawResponse?.cost || 
+                       calculateCost(normalizedModelName, metrics[model]?.tokenUsage?.total || 0);
+            
+            doc.setFontSize(11);
+            doc.text(`Estimated Cost: ${formatCost(modelCost)}`, margin, yPos);
+            yPos += 7;
+            
+            doc.setFontSize(9);
+            doc.text(`(Based on ${metrics[model]?.tokenUsage?.total || 0} tokens)`, margin + 5, yPos);
+            yPos += 7;
+          }
+        } else {
+          doc.setFontSize(9);
+          doc.text("Response data not available", margin + 5, yPos);
+          yPos += 10;
+        }
+      });
+      
+      // Add source documents on a new page
+      doc.addPage();
+      yPos = 20;
+      doc.setFontSize(14);
+      doc.text('Source Documents', margin, yPos);
+      yPos += 10;
+      
+      if (sources && sources.length > 0) {
+        sources.forEach((source, index) => {
+          // Add a new page if we're getting close to the bottom
+          if (yPos > 250) {
+            doc.addPage();
+            yPos = 20;
+          }
+          
+          doc.setFontSize(11);
+          doc.text(`Source ${index + 1}: ${source.source}`, margin, yPos);
+          yPos += 7;
+          
+          doc.setFontSize(9);
+          // Truncate very long source content for the PDF
+          const contentToShow = source.content.length > 2000 ? 
+            source.content.substring(0, 2000) + '... (truncated)' : 
+            source.content;
+          
+          const contentLines = doc.splitTextToSize(contentToShow, contentWidth - 5);
+          doc.text(contentLines, margin + 5, yPos);
+          yPos += (contentLines.length * 5) + 10;
+        });
+      } else {
+        doc.setFontSize(10);
+        doc.text("No source documents available", margin, yPos);
+      }
+      
+      // Save the PDF
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      doc.save(`rag-validation-report-${timestamp}.pdf`);
+    } catch (error) {
+      console.error("Error generating PDF:", error);
+      alert("Failed to generate PDF report. Check console for details.");
+    }
+  };
+
+  // Helper function to render a score with a colored bar
+  const renderScore = (score) => {
+    let color = '#f44336'; // red
+    if (score >= 80) color = '#4caf50'; // green
+    else if (score >= 60) color = '#ff9800'; // orange
+    
+    return (
+      <Box sx={{ display: 'flex', alignItems: 'center', width: '100%' }}>
+        <Box sx={{ width: '100%', mr: 1 }}>
+          <LinearProgress 
+            variant="determinate" 
+            value={score} 
+            sx={{ 
+              height: 10, 
+              borderRadius: 5,
+              backgroundColor: '#e0e0e0',
+              '& .MuiLinearProgress-bar': {
+                backgroundColor: color
+              }
+            }} 
+          />
+        </Box>
+        <Box sx={{ minWidth: 35 }}>
+          <Typography variant="body2" color="text.secondary">{score}/100</Typography>
+        </Box>
+      </Box>
+    );
+  };
+
+  // Calculate effectiveness score for the model
+  const calculateEffectivenessScore = (validationResults, metrics) => {
+    if (!validationResults || !metrics) {
+      return { error: "Missing validation results or metrics" };
+    }
+    
+    console.log("DEBUG: calculateEffectivenessScore called with:", {
+      validationResultsKeys: Object.keys(validationResults || {}),
+      metricsKeys: Object.keys(metrics || {}),
+      metricsType: typeof metrics,
+      validationResultsType: typeof validationResults
+    });
+    
+    try {
+      // Make sure we have validation results
+      if (Object.keys(validationResults || {}).length === 0) {
+        return { error: "No validation results available" };
+      }
+      
+      const results = {};
+      
+      Object.entries(validationResults || {}).forEach(([model, validation]) => {
+        // Skip if there's an error with this validation
+        if (!validation || validation.error || !validation.overall) {
+          console.warn(`Skipping model ${model} due to missing or errored validation`);
+          return;
+        }
+        
+        const score = validation.overall.score;
+        
+        // Get response time and token usage from metrics
+        let responseTime = 0;
+        let tokenUsage = 0;
+        
+        // Find metrics using our robust lookup helper
+        const modelMetrics = findMetrics(metrics, model);
+        
+        if (modelMetrics) {
+          responseTime = modelMetrics.responseTime || 0;
+          
+          // Enhanced token usage extraction with fallbacks
+          if (modelMetrics.tokenUsage) {
+            if (modelMetrics.tokenUsage.total) {
+              tokenUsage = modelMetrics.tokenUsage.total;
+            } else if (modelMetrics.tokenUsage.input && modelMetrics.tokenUsage.output) {
+              tokenUsage = modelMetrics.tokenUsage.input + modelMetrics.tokenUsage.output;
+            } else if (modelMetrics.tokenUsage.prompt_tokens && modelMetrics.tokenUsage.completion_tokens) {
+              tokenUsage = modelMetrics.tokenUsage.prompt_tokens + modelMetrics.tokenUsage.completion_tokens;
+            }
+          }
+
+          console.log(`Found metrics for ${model}: responseTime=${responseTime}, tokenUsage=${tokenUsage}`);
+        } else {
+          console.warn(`No metrics found for ${model}, using default token estimate`);
+          // Provide a reasonable default token estimate
+          tokenUsage = 1000; // Use a reasonable default for validation
+        }
+        
+        // Extract the base model name for cost calculation
+        let modelForCost = model;
+        if (model.includes('-')) {
+          const match = model.match(/^(?:Set \d+-)?(.+)$/);
+          if (match) {
+            modelForCost = match[1]; // Extract the base model name without Set prefix
+          }
+        }
+        
+        // Calculate cost using the unified cost calculation method
+        let cost = 0;
+        
+        // Try to get the actual model response to extract cost data
+        const modelResponse = responses?.[model] || 
+                           (responses?.models && Object.values(responses.models)
+                              .flatMap(set => Object.entries(set))
+                              .find(([key]) => key === model)?.[1]);
+        
+        // First try to get cost directly from the response
+        if (modelResponse && modelResponse.cost) {
+          console.log(`Using direct cost from response for ${model}: ${modelResponse.cost}`);
+          cost = modelResponse.cost;
+        } else if (modelResponse && modelResponse.rawResponse && modelResponse.rawResponse.cost) {
+          console.log(`Using cost from rawResponse for ${model}: ${modelResponse.rawResponse.cost}`);
+          cost = modelResponse.rawResponse.cost;
+        } else if (modelMetrics && modelMetrics.calculatedCost) {
+          console.log(`Using calculatedCost from metrics for ${model}: ${modelMetrics.calculatedCost}`);
+          cost = modelMetrics.calculatedCost;
+        } else if (window.costTracker) {
+          // Create a properly structured token usage object for costTracker
+          const tokenUsageObj = {
+            promptTokens: Math.floor(tokenUsage / 2),
+            completionTokens: Math.ceil(tokenUsage / 2),
+            totalTokens: tokenUsage
+          };
+          
+          // Use the global costTracker for consistent calculation
+          const costInfo = window.costTracker.computeCost(modelForCost, tokenUsageObj);
+          cost = costInfo.cost;
+          console.log(`Using costTracker calculation for ${model}: ${cost}`);
+        } else {
+          // Fallback to the legacy calculation
+          const costResult = calculateCost(modelForCost, { 
+            input: tokenUsage / 2, 
+            output: tokenUsage / 2 
+          });
+          cost = costResult.totalCost;
+          console.log(`Using legacy cost calculation for ${model}: ${cost}`);
+        }
+        
+        console.log(`Final cost for ${model} (${modelForCost}): ${cost} based on ${tokenUsage} tokens`);
+        
+        // Calculate a single, simple efficiency score (0-10 scale)
+        // Formula: (quality / 10) * (1 / sqrt(cost * responseTimeInSeconds + 0.1))
+        // This gives higher scores to models with:
+        // - Higher quality
+        // - Lower cost
+        // - Faster response time
+        let efficiencyScore = 0;
+        
+        if (responseTime > 0 && cost > 0) {
+          // Convert response time to seconds
+          const responseTimeInSeconds = responseTime / 1000;
+          
+          // Calculate normalized efficiency (0-10 scale)
+          // Adding 0.1 to avoid division by zero and normalize for free/fast models
+          const qualityFactor = score / 10; // Quality on 0-10 scale
+          const costTimeFactor = 1 / Math.sqrt(cost * responseTimeInSeconds + 0.1);
+          
+          // Combine factors and cap at 10
+          efficiencyScore = Math.min(qualityFactor * costTimeFactor, 10);
+          
+          console.log(`Calculated efficiency score for ${model}: ${efficiencyScore.toFixed(1)} (quality=${score}, cost=${cost}, time=${responseTimeInSeconds}s)`);
+        } else if (cost > 0) {
+          // No response time data, calculate based on quality and cost only
+          const qualityFactor = score / 10;
+          const costFactor = 1 / Math.sqrt(cost + 0.01);
+          
+          efficiencyScore = Math.min(qualityFactor * costFactor, 10);
+          console.log(`Calculated cost-only efficiency for ${model}: ${efficiencyScore.toFixed(1)} (quality=${score}, cost=${cost})`);
+        } else if (responseTime > 0) {
+          // Free model with response time
+          const responseTimeInSeconds = responseTime / 1000;
+          const qualityFactor = score / 10;
+          const timeFactor = 1 / Math.sqrt(responseTimeInSeconds + 0.1);
+          
+          efficiencyScore = Math.min(qualityFactor * timeFactor, 10);
+          console.log(`Calculated time-only efficiency for ${model}: ${efficiencyScore.toFixed(1)} (quality=${score}, time=${responseTimeInSeconds}s)`);
+        } else {
+          // No cost or time data, use quality/10 as fallback
+          efficiencyScore = Math.min(score / 10, 10);
+          console.log(`Using quality-based efficiency for ${model}: ${efficiencyScore.toFixed(1)}`);
+        }
+        
+        // Store results for this model
+        results[model] = {
+          qualityScore: score,
+          responseTime,
+          tokenUsage,
+          cost,
+          efficiencyScore
+        };
+      });
+      
+      // Find the most effective model (highest quality score)
+      let mostEffectiveModel = null;
+      let mostEffectiveScore = -1;
+      let mostEffectiveResponseTime = 0;
+
+      // Find the fastest model
+      let fastestModel = null;
+      let fastestResponseTime = Number.MAX_SAFE_INTEGER;
+      let fastestScore = 0;
+
+      // Find the best value model (highest comprehensive efficiency score)
+      let bestValueModel = null;
+      let bestValueEfficiency = -1;
+
+      // Find models with specific characteristics and set scores
+      Object.entries(results).forEach(([model, data]) => {
+        // Most effective model (highest quality score)
+        if (data.qualityScore > mostEffectiveScore) {
+          mostEffectiveModel = model;
+          mostEffectiveScore = data.qualityScore;
+          mostEffectiveResponseTime = data.responseTime;
+        }
+
+        // Fastest model
+        if (data.responseTime > 0 && data.responseTime < fastestResponseTime) {
+          fastestModel = model;
+          fastestResponseTime = data.responseTime;
+          fastestScore = data.qualityScore;
+        }
+
+        // Best value model (highest comprehensive efficiency score)
+        if (data.efficiencyScore > bestValueEfficiency) {
+          bestValueModel = model;
+          bestValueEfficiency = data.efficiencyScore;
+        }
+      });
+
+      return {
+        modelData: results,
+        mostEffectiveModel,
+        mostEffectiveScore,
+        mostEffectiveResponseTime,
+        fastestModel,
+        fastestResponseTime,
+        fastestScore,
+        bestValueModel,
+        bestValueEfficiency
+      };
+    } catch (error) {
+      console.error("Error calculating effectiveness scores:", error);
+      return { error: "Failed to calculate effectiveness scores" };
+    }
+  };
+
+  // Function to format cost efficiency values
+  const formatEffectivenessScore = (score) => {
+    if (!score || isNaN(score)) return '0.0';
+    if (score === Infinity) return "100";
+    
+    // All scores should now be 0-100
+    if (score > 100) return "100";
+    
+    // Format with one decimal place for all values
+    return score.toFixed(1);
+  };
+
+  // Function to format time efficiency values
+  const formatTimeEfficiencyScore = (score) => {
+    if (!score || isNaN(score)) return '0.0';
+    if (score === Infinity) return "100";
+    
+    // All scores should now be 0-100
+    if (score > 100) return "100";
+    
+    // Format with one decimal place for all values
+    return score.toFixed(1);
+  };
+  
+  // Function to format comprehensive efficiency values
+  const formatComprehensiveEfficiencyScore = (score) => {
+    if (!score || isNaN(score)) return '0.0';
+    if (score === Infinity) return "100";
+    
+    // All scores should now be 0-100
+    if (score > 100) return "100";
+    
+    // Format with one decimal place for all values
+    return score.toFixed(1);
+  };
+
+  const renderEffectivenessSummary = (effectivenessData) => {
+    // Display a message if there was an error in effectiveness calculation
+    if (effectivenessData.error) {
+      return (
+        <Alert severity="error" sx={{ mb: 3 }}>
+          {effectivenessData.error}
+        </Alert>
+      );
+    }
+    
+    if (!effectivenessData.mostEffectiveModel) {
+      return (
+        <Alert severity="warning" sx={{ mb: 3 }}>
+          No valid model effectiveness data available.
+        </Alert>
+      );
+    }
+    
+    return (
+      <Grid container spacing={2} alignItems="stretch" sx={{ mb: 3 }}>
+        {/* Most Effective Model Card */}
+        <Grid item xs={12} md={4}>
+          <Card 
+            variant="outlined" 
+            sx={{
+              height: '100%',
+              borderColor: '#4caf50',
+              borderWidth: 2,
+              display: 'flex',
+              flexDirection: 'column'
+            }}
+          >
+            <CardContent sx={{ flex: '1 0 auto' }}>
+              <Typography variant="h6" component="div" gutterBottom align="center">
+                Most Effective Model
+              </Typography>
+              <Typography variant="h5" component="div" gutterBottom align="center" color="primary">
+                {effectivenessData.mostEffectiveModel} 
+                <Typography variant="body2" color="text.secondary" component="div">
+                  {getModelVendor(effectivenessData.mostEffectiveModel)}
+                </Typography>
+              </Typography>
+              <Typography variant="body1" align="center">
+                Score: <strong>{formatEffectivenessScore(effectivenessData.mostEffectiveScore)}</strong>
+              </Typography>
+              <Typography variant="body2" align="center" color="text.secondary">
+                Response time: {formatResponseTime(effectivenessData.mostEffectiveResponseTime)}
+              </Typography>
+            </CardContent>
+          </Card>
+        </Grid>
+        
+        {/* Best Value Model Card */}
+        <Grid item xs={12} md={4}>
+          <Card 
+            variant="outlined" 
+            sx={{
+              height: '100%',
+              borderColor: '#2196f3',
+              borderWidth: 2,
+              display: 'flex',
+              flexDirection: 'column'
+            }}
+          >
+            <CardContent sx={{ flex: '1 0 auto' }}>
+              <Typography variant="h6" component="div" gutterBottom align="center">
+                Best Value Model
+              </Typography>
+              <Typography variant="h5" component="div" gutterBottom align="center" color="primary">
+                {effectivenessData.bestValueModel}
+                <Typography variant="body2" color="text.secondary" component="div">
+                  {getModelVendor(effectivenessData.bestValueModel)}
+                </Typography>
+              </Typography>
+              <Typography variant="body1" align="center">
+                Efficiency: <strong>{formatComprehensiveEfficiencyScore(effectivenessData.bestValueEfficiency)}</strong>
+              </Typography>
+              <Typography variant="body2" align="center" color="text.secondary">
+                Balances quality, speed, and cost
+              </Typography>
+            </CardContent>
+          </Card>
+        </Grid>
+        
+        {/* Fastest Model Card */}
+        <Grid item xs={12} md={4}>
+          <Card 
+            variant="outlined" 
+            sx={{
+              height: '100%',
+              borderColor: '#ff9800',
+              borderWidth: 2,
+              display: 'flex',
+              flexDirection: 'column'
+            }}
+          >
+            <CardContent sx={{ flex: '1 0 auto' }}>
+              <Typography variant="h6" component="div" gutterBottom align="center">
+                Fastest Model
+              </Typography>
+              <Typography variant="h5" component="div" gutterBottom align="center" color="primary">
+                {effectivenessData.fastestModel}
+                <Typography variant="body2" color="text.secondary" component="div">
+                  {getModelVendor(effectivenessData.fastestModel)}
+                </Typography>
+              </Typography>
+              <Typography variant="body1" align="center">
+                Response time: <strong>{formatResponseTime(effectivenessData.fastestResponseTime)}</strong>
+              </Typography>
+              <Typography variant="body2" align="center" color="text.secondary">
+                Speed score: {formatEffectivenessScore(effectivenessData.fastestScore)}
+              </Typography>
+            </CardContent>
+          </Card>
+        </Grid>
+      </Grid>
+    );
+  };
+
+  // Calculate effectiveness when validation results or metrics change
+  const effectivenessData = (validationResults && Object.keys(validationResults || {}).length > 0 && metrics) ? 
+    calculateEffectivenessScore(validationResults, metrics) : 
+    { error: "No validation results available yet" };
+
+  // Sort function for table data
+  const requestSort = (key) => {
+    let direction = 'ascending';
+    if (sortConfig.key === key && sortConfig.direction === 'ascending') {
+      direction = 'descending';
+    }
+    setSortConfig({ key, direction });
+  };
+
+  // Function to normalize validation results
+  const normalizeValidationResult = (result) => {
+    if (!result || typeof result !== 'object' || result.error) {
+      return result;
+    }
+    
+    // Ensure criteria object exists
+    if (!result.criteria || typeof result.criteria !== 'object') {
+      result.criteria = {};
+    }
+    
+    // Normalize criteria scores to ensure they're in the proper format
+    if (result.criteria) {
+      Object.keys(result.criteria).forEach(key => {
+        const value = result.criteria[key];
+        
+        // If it's already an object with a score property, just normalize the score
+        if (value && typeof value === 'object' && 'score' in value) {
+          if (value.score === undefined || value.score === null || isNaN(value.score)) {
+            value.score = 5;
+          } else {
+            // Convert score to number in 0-10 range
+            value.score = Math.max(0, Math.min(10, Number(value.score)));
+            // Scale to 0-100 for display
+            value.score = Math.round(value.score * 10);
+          }
+          
+          // Ensure explanation is meaningful
+          if (!value.explanation || value.explanation === `Normalized score for ${key}`) {
+            const score = value.score;
+            let explanation = '';
+            
+            if (score >= 90) {
+              explanation = `Excellent performance in ${key.toLowerCase()}. The response demonstrates mastery of this criterion.`;
+            } else if (score >= 80) {
+              explanation = `Strong performance in ${key.toLowerCase()}. The response shows good understanding and execution.`;
+            } else if (score >= 70) {
+              explanation = `Good performance in ${key.toLowerCase()}. The response meets most requirements with some room for improvement.`;
+            } else if (score >= 60) {
+              explanation = `Adequate performance in ${key.toLowerCase()}. The response meets basic requirements but could be enhanced.`;
+            } else if (score >= 50) {
+              explanation = `Moderate performance in ${key.toLowerCase()}. The response shows some understanding but needs significant improvement.`;
+            } else {
+              explanation = `Needs improvement in ${key.toLowerCase()}. The response falls short of expected standards.`;
+            }
+            
+            value.explanation = explanation;
+          }
+        } else {
+          // If it's a direct score value or not in the right format
+          let score = 5; // Default score
+          
+          if (value !== undefined && value !== null && !isNaN(Number(value))) {
+            // It's a direct numeric score, normalize it to 0-10
+            score = Math.max(0, Math.min(10, Number(value)));
+            // Scale to 0-100 for display
+            score = Math.round(score * 10);
+          }
+          
+          // Create meaningful explanation based on score
+          let explanation = '';
+          if (score >= 90) {
+            explanation = `Excellent performance in ${key.toLowerCase()}. The response demonstrates mastery of this criterion.`;
+          } else if (score >= 80) {
+            explanation = `Strong performance in ${key.toLowerCase()}. The response shows good understanding and execution.`;
+          } else if (score >= 70) {
+            explanation = `Good performance in ${key.toLowerCase()}. The response meets most requirements with some room for improvement.`;
+          } else if (score >= 60) {
+            explanation = `Adequate performance in ${key.toLowerCase()}. The response meets basic requirements but could be enhanced.`;
+          } else if (score >= 50) {
+            explanation = `Moderate performance in ${key.toLowerCase()}. The response shows some understanding but needs significant improvement.`;
+          } else {
+            explanation = `Needs improvement in ${key.toLowerCase()}. The response falls short of expected standards.`;
+          }
+          
+          // Replace with a proper object
+          result.criteria[key] = {
+            score: score,
+            explanation: explanation
+          };
+        }
+      });
+      
+      // Ensure common criteria fields exist
+      const commonCriteria = ['accuracy', 'completeness', 'relevance', 'conciseness', 'clarity'];
+      commonCriteria.forEach(criterion => {
+        // Look for the criterion with various casing and formatting
+        const criterionKey = Object.keys(result.criteria).find(key => 
+          key.toLowerCase() === criterion.toLowerCase() || 
+          key.toLowerCase().includes(criterion.toLowerCase())
+        );
+        
+        if (!criterionKey) {
+          // If criterion doesn't exist, add it with a default score of 50
+          result.criteria[criterion] = {
+            score: 50,
+            explanation: `Moderate performance in ${criterion}. The response shows some understanding but needs significant improvement.`
+          };
+        } else if (criterionKey !== criterion) {
+          // If criterion exists but with different casing, normalize the key
+          result.criteria[criterion] = result.criteria[criterionKey];
+          delete result.criteria[criterionKey];
+        }
+      });
+    }
+    
+    // Create overall object if it doesn't exist
+    if (!result.overall || typeof result.overall !== 'object') {
+      result.overall = {};
+    }
+    
+    // Ensure overall.score is a valid number
+    if (result.overall.score === undefined || result.overall.score === null || isNaN(result.overall.score)) {
+      // Use overall_score if available
+      if (result.overall_score !== undefined && result.overall_score !== null && !isNaN(result.overall_score)) {
+        result.overall.score = Math.round(Math.max(0, Math.min(10, Number(result.overall_score))) * 10);
+      }
+      // Otherwise calculate from criteria
+      else if (result.criteria && Object.keys(result.criteria).length > 0) {
+        const scores = Object.values(result.criteria).map(c => c.score).filter(score => !isNaN(Number(score)));
+        result.overall.score = scores.length > 0 
+          ? Math.round(scores.reduce((sum, score) => sum + Number(score), 0) / scores.length)
+          : 50;
+      } else {
+        result.overall.score = 50;
+      }
+    } else {
+      // Convert to number and ensure it's in 0-100 range
+      result.overall.score = Math.round(Math.max(0, Math.min(100, Number(result.overall.score))));
+    }
+    
+    // Add meaningful overall explanation if missing
+    if (!result.overall.explanation) {
+      const score = result.overall.score;
+      if (score >= 90) {
+        result.overall.explanation = "The response demonstrates exceptional quality across all evaluation criteria.";
+      } else if (score >= 80) {
+        result.overall.explanation = "The response shows strong overall performance with minor areas for improvement.";
+      } else if (score >= 70) {
+        result.overall.explanation = "The response is generally good but has some areas that could be enhanced.";
+      } else if (score >= 60) {
+        result.overall.explanation = "The response meets basic requirements but needs significant improvement in several areas.";
+      } else if (score >= 50) {
+        result.overall.explanation = "The response shows moderate performance but requires substantial improvement.";
+      } else {
+        result.overall.explanation = "The response needs significant improvement to meet quality standards.";
+      }
+    }
+    
+    // Ensure arrays exist
+    if (!Array.isArray(result.strengths)) result.strengths = [];
+    if (!Array.isArray(result.weaknesses)) result.weaknesses = [];
+    
+    return result;
+  };
+
+  // Helper to format criterion labels for display
+  const formatCriterionLabel = (criterion) => {
+    // Capitalize first letter
+    return criterion.charAt(0).toUpperCase() + criterion.slice(1);
+  };
+
+  return (
+    <Box>
+      <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
+        <Typography variant="h5">
+          Response Validation
+        </Typography>
+        <Button 
+          variant="contained" 
+          color="primary" 
+          startIcon={<DownloadIcon />}
+          onClick={generatePDF}
+          disabled={!Object.keys(validationResults).length || isProcessing}
+        >
+          Download Report
+        </Button>
+      </Box>
+
+      {isProcessing && (
+        <Box p={3} display="flex" flexDirection="column" alignItems="center">
+          <CircularProgress />
+          <Typography variant="h6" mt={2}>
+            {currentValidatingModel ? `Validating ${currentValidatingModel}` : 'Preparing validation...'}
+          </Typography>
+          <Typography variant="body2" color="textSecondary" mt={1}>
+            {currentValidatingModel 
+              ? `Using ${validatorModel} as validator` 
+              : (localStorage.getItem('useParallelProcessing') === 'true' 
+                  ? 'Validating all responses in parallel...' 
+                  : 'Processing sequentially...')}
+          </Typography>
+          
+          {localStorage.getItem('useParallelProcessing') === 'true' && (
+            <Paper 
+              elevation={1} 
+              sx={{ 
+                mt: 2, 
+                p: 2, 
+                width: '100%', 
+                maxWidth: 600,
+                border: '1px dashed #2196f3',
+                bgcolor: 'rgba(33, 150, 243, 0.05)'
+              }}
+            >
+              <Typography variant="subtitle2" sx={{ mb: 1, color: '#2196f3' }}>
+                <span role="img" aria-label="Parallel">⚡</span> Parallel Validation Active
+              </Typography>
+              <Typography variant="body2" color="textSecondary" sx={{ mb: 1 }}>
+                {parallelProgress.completed > 0 
+                  ? `${parallelProgress.completed} of ${parallelProgress.total} models validated simultaneously`
+                  : 'All model responses are being validated simultaneously for faster results.'}
+              </Typography>
+              
+              {/* Progress bar */}
+              {parallelProgress.total > 0 && (
+                <Box sx={{ mb: 2 }}>
+                  <LinearProgress 
+                    variant="determinate" 
+                    value={(parallelProgress.completed / parallelProgress.total) * 100}
+                    sx={{ 
+                      height: 10,
+                      borderRadius: 5,
+                      '& .MuiLinearProgress-bar': {
+                        backgroundColor: '#2196f3'
+                      }
+                    }} 
+                  />
+                  <Typography variant="caption" sx={{ display: 'block', mt: 0.5, textAlign: 'right' }}>
+                    {Math.round((parallelProgress.completed / parallelProgress.total) * 100)}% complete
+                  </Typography>
+                </Box>
+              )}
+              
+              {/* Model validation status chips */}
+              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, maxHeight: 120, overflowY: 'auto' }}>
+                {/* Remove duplicates by using a Set for model names */}
+                {[...new Set(Object.keys(parallelProgress.models))].map(model => {
+                  const data = parallelProgress.models[model];
+                  return (
+                    <Chip 
+                      key={model}
+                      label={model} 
+                      size="small"
+                      color={data.status === 'completed' ? 'success' : 'primary'}
+                      variant={data.status === 'completed' ? 'filled' : 'outlined'}
+                      sx={{ 
+                        animation: data.status === 'completed' ? 'none' : 'pulse 1.5s infinite',
+                        '@keyframes pulse': {
+                          '0%': { opacity: 0.6 },
+                          '50%': { opacity: 1 },
+                          '100%': { opacity: 0.6 }
+                        }
+                      }}
+                    />
+                  );
+                })}
+              </Box>
+            </Paper>
+          )}
+        </Box>
+      )}
+
+      {!Object.keys(validationResults).length ? (
+        <Box>
+          <Paper elevation={1} sx={{ p: 3, mb: 3 }}>
+            <Typography variant="h6" gutterBottom>
+              Validation Options
+            </Typography>
+            <Typography variant="body2" color="textSecondary" paragraph>
+              Validate the responses from different models to assess their quality and accuracy. This helps identify which models perform best with your specific data and queries.
+            </Typography>
+            
+            <Typography variant="subtitle2" gutterBottom>
+              Validation Model
+            </Typography>
+            <Box sx={{ mb: 2 }}>
+              <ModelDropdown 
+                value={validatorModel}
+                onChange={(value) => {
+                  setValidatorModel(value);
+                  localStorage.setItem('responseValidatorModel', value);
+                }}
+                sx={{ mb: 2 }}
+              />
+              <Typography variant="body2" color="textSecondary">
+                This model will evaluate the responses from all the models in your comparison. For best results, choose a strong model that can provide insightful analysis.
+              </Typography>
+            </Box>
+            
+            <Accordion 
+              expanded={expandedCriteria}
+              onChange={() => setExpandedCriteria(!expandedCriteria)}
+              sx={{ mb: 2 }}
+            >
+              <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+                <Typography>Evaluation Criteria</Typography>
+              </AccordionSummary>
+              <AccordionDetails>
+                <CriteriaTextArea
+                  value={customCriteria}
+                  onChange={(e) => setCustomCriteria(e.target.value)}
+                />
+              </AccordionDetails>
+            </Accordion>
+            
+            <Button
+              variant="contained"
+              color="primary"
+              startIcon={<AssessmentIcon />}
+              onClick={validateResponses}
+              disabled={!Object.keys(responses).length || isProcessing}
+              fullWidth
+            >
+              Validate Responses
+            </Button>
+          </Paper>
+        </Box>
+      ) : (
+        <>
+          {/* Show Performance Efficiency Analysis first */}
+          {renderEffectivenessSummary(effectivenessData)}
+
+          {/* Add Edit Criteria button above validation results */}
+          <Box sx={{ mb: 2, display: 'flex', justifyContent: 'space-between', gap: 2 }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+              <Typography variant="subtitle2">Validator Model:</Typography>
+              <Box sx={{ width: 220 }}>
+                <ModelDropdown 
+                  value={validatorModel}
+                  onChange={(value) => {
+                    setValidatorModel(value);
+              localStorage.setItem('responseValidatorModel', value);
+            }}
+            sx={{ mb: 2 }}
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setEditCriteriaOpen(false)}>
+            Cancel
+          </Button>
+          <Button 
+            variant="contained" 
+            color="primary"
+            onClick={async () => {
+              setEditCriteriaOpen(false);
+              // Save to localStorage
+              localStorage.setItem('defaultEvaluationCriteria', customCriteria);
+              localStorage.setItem('responseValidatorModel', validatorModel);
+              
+              // Check if we have responses to validate
+              if (!responses || Object.keys(responses).length === 0) {
+                console.error("No responses available to validate");
+                alert("No responses available to validate. Please run a query first.");
+                return;
+              }
+              
+              // Clear validation results and run validation again
+              setIsProcessing(true);
+              onValidationComplete({});
+              try {
+                console.log("Re-validating with new criteria:", customCriteria);
+                await validateResponses();
+              } catch (error) {

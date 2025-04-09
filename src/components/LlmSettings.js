@@ -19,9 +19,6 @@ import {
   DialogTitle,
   DialogContent,
   DialogActions,
-  List,
-  ListItem,
-  ListItemText,
   Chip,
   Snackbar,
   Alert,
@@ -44,7 +41,6 @@ import {
   defaultSettings,
   vendorColors,
 } from '../config/llmConfig';
-import axios from 'axios';
 
 const LlmSettings = ({ showAppSettingsOnly = false }) => {
   // Load models from the configuration
@@ -57,36 +53,6 @@ const LlmSettings = ({ showAppSettingsOnly = false }) => {
   const [defaultEvaluationCriteria, setDefaultEvaluationCriteria] = useState(defaultSettings.defaultEvaluationCriteria);
   const [defaultQueryTemplate, setDefaultQueryTemplate] = useState('');
   const [useParallelProcessing, setUseParallelProcessing] = useState(defaultSettings.useParallelProcessing);
-  // eslint-disable-next-line no-unused-vars
-  const [isEmbeddingEnabled, setIsEmbeddingEnabled] = useState(defaultSettings.embeddingEnabled);
-  
-  // State for API keys
-  // eslint-disable-next-line no-unused-vars
-  const [openaiKey, setOpenaiKey] = useState('');
-  // eslint-disable-next-line no-unused-vars
-  const [anthropicKey, setAnthropicKey] = useState('');
-  // eslint-disable-next-line no-unused-vars
-  const [azureOpenAIKey, setAzureOpenAIKey] = useState('');
-  // eslint-disable-next-line no-unused-vars
-  const [azureOpenAIEndpoint, setAzureOpenAIEndpoint] = useState('');
-  // eslint-disable-next-line no-unused-vars
-  const [googleAIKey, setGoogleAIKey] = useState('');
-  
-  // State for API key visibility
-  // eslint-disable-next-line no-unused-vars
-  const [showOpenAIKey, setShowOpenAIKey] = useState(false);
-  // eslint-disable-next-line no-unused-vars
-  const [showAnthropicKey, setShowAnthropicKey] = useState(false);
-  // eslint-disable-next-line no-unused-vars
-  const [showAzureKey, setShowAzureKey] = useState(false);
-  // eslint-disable-next-line no-unused-vars
-  const [showGoogleAIKey, setShowGoogleAIKey] = useState(false);
-  
-  // State for testing connection
-  // eslint-disable-next-line no-unused-vars
-  const [isTestingConnection, setIsTestingConnection] = useState(false);
-  // eslint-disable-next-line no-unused-vars
-  const [currentModelBeingTested, setCurrentModelBeingTested] = useState('');
   
   // State for model dialog
   const [showModelDialog, setShowModelDialog] = useState(false);
@@ -109,12 +75,6 @@ const LlmSettings = ({ showAppSettingsOnly = false }) => {
     deploymentName: ''
   });
   
-  // State for Azure deployments dialog
-  const [azureDeployments, setAzureDeployments] = useState([]);
-  const [showDeploymentDialog, setShowDeploymentDialog] = useState(false);
-  const [errorMessage, setErrorMessage] = useState('');
-  const [showError, setShowError] = useState(false);
-
   // Add snackbar state management
   const [snackbar, setSnackbar] = useState({
     open: false,
@@ -187,37 +147,6 @@ const LlmSettings = ({ showAppSettingsOnly = false }) => {
           error: err.message 
         }
       }));
-    }
-  };
-
-  // Check available Azure deployments
-  // eslint-disable-next-line no-unused-vars
-  const checkAzureDeployments = async () => {
-    try {
-      // Get the Azure API key and endpoint from environment variables
-      const azureApiKey = process.env.REACT_APP_AZURE_OPENAI_API_KEY;
-      const azureEndpoint = process.env.REACT_APP_AZURE_OPENAI_ENDPOINT;
-      
-      console.log('[AZURE] Checking deployments:', {
-        hasApiKey: !!azureApiKey,
-        hasEndpoint: !!azureEndpoint, 
-        endpoint: azureEndpoint
-      });
-      
-      const response = await axios.post('/api/list-azure-deployments', {
-        azureApiKey,
-        azureEndpoint
-      });
-      
-      console.log('[AZURE] Available deployments:', response.data);
-      
-      // Display deployments in a dialog
-      setAzureDeployments(response.data.data || []);
-      setShowDeploymentDialog(true);
-    } catch (err) {
-      console.error('[AZURE] Error checking deployments:', err);
-      setErrorMessage(`Error checking Azure deployments: ${err.message}`);
-      setShowError(true);
     }
   };
 
@@ -529,18 +458,6 @@ const LlmSettings = ({ showAppSettingsOnly = false }) => {
         {showAppSettingsOnly ? "App Settings" : "LLM Settings"}
       </Typography>
       
-      {/* Error Snackbar */}
-      <Snackbar 
-        open={showError} 
-        autoHideDuration={6000} 
-        onClose={() => setShowError(false)}
-        anchorOrigin={{ vertical: 'top', horizontal: 'center' }}
-      >
-        <Alert onClose={() => setShowError(false)} severity="error">
-          {errorMessage}
-        </Alert>
-      </Snackbar>
-      
       {/* Model Edit Dialog */}
       <Dialog
         open={showModelDialog}
@@ -612,10 +529,15 @@ const LlmSettings = ({ showAppSettingsOnly = false }) => {
               <Grid item xs={12}>
                 <TextField
                   fullWidth
-                  label="Azure Deployment Name"
-                  value={editModelData.deploymentName}
-                  onChange={(e) => setEditModelData({...editModelData, deploymentName: e.target.value})}
-                  helperText="Exact deployment name from your Azure OpenAI resource"
+                  label="Deployment Name (from llmConfig.js)"
+                  value={editModelData.deploymentName || ''}
+                  onChange={(e) => 
+                    setEditModelData({
+                      ...editModelData,
+                      deploymentName: e.target.value
+                    })
+                  }
+                  helperText="Crucial: Must match deployment in Azure AND llmConfig.js"
                 />
               </Grid>
             )}
@@ -665,7 +587,7 @@ const LlmSettings = ({ showAppSettingsOnly = false }) => {
                 <Grid item xs={12} md={6}>
                   <TextField
                     fullWidth
-                    label="Deployment Name"
+                    label="Deployment Name (from llmConfig.js)"
                     value={editModelData.deploymentName || ''}
                     onChange={(e) => 
                       setEditModelData({
@@ -673,7 +595,7 @@ const LlmSettings = ({ showAppSettingsOnly = false }) => {
                         deploymentName: e.target.value
                       })
                     }
-                    helperText="The deployment name in your Azure account"
+                    helperText="Crucial: Must match deployment in Azure AND llmConfig.js"
                     margin="normal"
                     variant="outlined"
                   />
@@ -700,50 +622,6 @@ const LlmSettings = ({ showAppSettingsOnly = false }) => {
           >
             Save
           </Button>
-        </DialogActions>
-      </Dialog>
-      
-      {/* Azure Deployments Dialog */}
-      <Dialog 
-        open={showDeploymentDialog} 
-        onClose={() => setShowDeploymentDialog(false)}
-        maxWidth="md"
-        fullWidth
-      >
-        <DialogTitle>Available Azure OpenAI Deployments</DialogTitle>
-        <DialogContent>
-          {azureDeployments.length > 0 ? (
-            <List>
-              {azureDeployments.map((deployment, index) => (
-                <ListItem key={index} divider>
-                  <ListItemText
-                    primary={deployment.id || 'Unknown'}
-                    secondary={
-                      <>
-                        <Typography variant="body2" component="span">
-                          Model: {deployment.model || 'Unknown'} | 
-                          Status: {deployment.status || 'Unknown'}
-                        </Typography>
-                        <br />
-                        <Typography variant="caption" component="span">
-                          {deployment.id && `Use deployment name: "${deployment.id}"`}
-                        </Typography>
-                      </>
-                    }
-                  />
-                  <Chip 
-                    label={deployment.status === 'succeeded' ? 'Active' : deployment.status} 
-                    color={deployment.status === 'succeeded' ? 'success' : 'default'}
-                  />
-                </ListItem>
-              ))}
-            </List>
-          ) : (
-            <Typography>No deployments found or unable to retrieve deployments.</Typography>
-          )}
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setShowDeploymentDialog(false)}>Close</Button>
         </DialogActions>
       </Dialog>
       
@@ -1142,7 +1020,7 @@ const LlmSettings = ({ showAppSettingsOnly = false }) => {
         </>
       )}
 
-      {/* Success/error snackbar */}
+      {/* Unified Success/error snackbar */}
       <Snackbar
         open={snackbar.open}
         autoHideDuration={6000}

@@ -505,6 +505,7 @@ export class CustomAzureOpenAI2 {
   }
 
   async call(messages, options = {}) {
+    const startTime = Date.now();
     try {
       // Format messages ensuring system message is first if present
       let formattedMessages = [];
@@ -563,13 +564,20 @@ export class CustomAzureOpenAI2 {
       // Send request to proxy 
       const apiResponse = await axios.post(this.proxyUrl, requestData);
       
+      // Calculate elapsed time properly - ensure we use the current time, not the response time
+      const endTime = Date.now();
+      const elapsedTime = endTime - startTime;
+      
+      console.log(`[AZURE2 TIMING] Start time: ${startTime}, End time: ${endTime}, Elapsed: ${elapsedTime}ms`);
+      
       // Return formatted response
       return {
         text: apiResponse.data.choices[0].message.content,
         content: apiResponse.data.choices[0].message.content, 
         tokenUsage: apiResponse.data.usage,
         rawResponse: apiResponse.data,
-        elapsedTime: Date.now() - options.startTime || 0,
+        elapsedTime: elapsedTime, // Use our calculated elapsed time, not the response time
+        elapsedTimeType: 'duration', // Add a clear indicator that this is a duration, not a timestamp
         calculatedCost: apiResponse.data.cost || null
       };
     } catch (error) {
@@ -713,6 +721,19 @@ export const createLlmInstance = (model, systemPrompt, options = {}) => {
       queryId: options.queryId
     });
   } else {
+    // Special handling for o3-mini which doesn't support temperature
+    if (model === 'o3-mini' || model.includes('o3-mini')) {
+      console.log(`Creating OpenAI instance for ${model} with temperature=undefined (not supported)`);
+      return new CustomChatOpenAI({
+        modelName: model,
+        systemPrompt,
+        temperature: undefined, // Explicitly undefined since o3-mini doesn't support temperature
+        openAIApiKey: options.openAIApiKey,
+        proxyUrl: openAIProxyUrl,
+        queryId: options.queryId
+      });
+    }
+    
     return new CustomChatOpenAI({
       modelName: model,
       systemPrompt,

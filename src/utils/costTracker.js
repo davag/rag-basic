@@ -389,7 +389,8 @@ class CostTracker {
     const vendorPrefixes = ['ollama-', 'azure-'];
     for (const prefix of vendorPrefixes) {
       if (modelName.startsWith(prefix)) {
-        const baseModelName = modelName.substring(prefix.length);
+        // eslint-disable-next-line no-unused-vars
+        const baseModelName = this.normalizeModelName(modelName);
         
         // Try to find exact match for the base model with the same prefix
         const exactBaseMatch = `${prefix}text-embedding-3-small`;

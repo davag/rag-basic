@@ -29,7 +29,7 @@ import QualityDashboard from './components/QualityAnalysisHub/Monitoring/Quality
 import OptimizationRecommendations from './components/QualityAnalysisHub/Optimization/OptimizationRecommendations';
 import QualityTestSuite from './components/QualityAnalysisHub/Testing/QualityTestSuite';
 import CostTrackingDashboard from './components/CostTrackingDashboard';
-import { checkApiConfiguration } from './config/llmConfig';
+import { checkApiConfiguration, getAvailableModelsBasedOnKeys } from './config/llmConfig';
 
 const theme = createTheme({
   palette: {
@@ -757,7 +757,7 @@ function App() {
               onImportResults={handleImportResults}
               documents={documents || []}
               vectorStore={vectorStore}
-              availableModels={llmResponses ? Object.keys(llmResponses) : []}
+              availableModels={getAvailableModelsBasedOnKeys()}
             />
             <Box sx={{ display: 'flex', justifyContent: 'space-between', mt: 2 }}>
               <Button

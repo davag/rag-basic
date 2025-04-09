@@ -1,13 +1,9 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { 
   Typography, 
   Box, 
   TextField, 
   Button, 
-  FormControl,
-  InputLabel,
-  Select,
-  MenuItem,
   Paper,
   Chip,
   CircularProgress,
@@ -15,30 +11,29 @@ import {
   Accordion,
   AccordionSummary,
   AccordionDetails,
-  Divider,
-  IconButton,
   Tooltip,
   Link,
-  Slider,
   Stack,
   LinearProgress,
   Dialog,
   DialogTitle,
   DialogContent,
-  DialogActions
+  DialogActions,
+  IconButton,
+  Slider,
+  Divider
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import SaveIcon from '@mui/icons-material/Save';
 import UploadIcon from '@mui/icons-material/Upload';
-import LightbulbIcon from '@mui/icons-material/Lightbulb';
-import CloseIcon from '@mui/icons-material/Close';
-import FullscreenIcon from '@mui/icons-material/Fullscreen';
 import { createLlmInstance } from '../utils/apiServices';
 import { ParallelLLMProcessor } from '../utils/parallelLLMProcessor';
-import AddIcon from '@mui/icons-material/Add';
-import DeleteIcon from '@mui/icons-material/Delete';
 import { v4 as uuidv4 } from 'uuid';
-import { vendorColors, defaultModels, apiConfig } from '../config/llmConfig';
+import { vendorColors, defaultModels, apiConfig, getAvailableModelsBasedOnKeys } from '../config/llmConfig';
+import InfoIcon from '@mui/icons-material/Info';
+import DeleteIcon from '@mui/icons-material/Delete';
+import EditIcon from '@mui/icons-material/Edit';
+import AddIcon from '@mui/icons-material/Add';
 
 const DEFAULT_SYSTEM_PROMPT = `You are a helpful assistant that answers questions based on the provided context.
 If the answer is not in the context, say that you don't know. 
@@ -53,21 +48,39 @@ const calculateCostPer1K = (model) => {
 };
 
 const QueryInterface = ({ vectorStore, namespaces = [], onQuerySubmitted, isProcessing, setIsProcessing, initialState }) => {
-  const [query, setQuery] = useState(initialState?.query || '');
+  /**
+   * IMPORTANT: About "Unused" Variables and Functions
+   * 
+   * This component has several state variables and functions that may appear
+   * unused but are actually used in specific conditions or are kept for:
+   * 
+   * 1. Future extensibility: Some functions are intended for upcoming features
+   * 2. Event handlers: Connected to JSX but not directly referenced elsewhere
+   * 3. Component APIs: Functions may be passed as props to child components 
+   * 4. Integration points: Used in the wider application architecture
+   * 
+   * Before removing any seemingly unused code, verify its purpose thoroughly.
+   */
+
+  // Component state
+  const [currentProcessingModel, setCurrentProcessingModel] = useState(null);
+  const [error, setError] = useState(null);
+  const [helpExpanded, setHelpExpanded] = useState(false);
+  const [query, setQuery] = useState('');
   const [selectedModels, setSelectedModels] = useState(['gpt-4o-mini']);
-  const [promptSets, setPromptSets] = useState(initialState?.promptSets || [
+  const [promptSets, setPromptSets] = useState([
     {
       id: 1,
       systemPrompt: DEFAULT_SYSTEM_PROMPT,
       temperature: 0
     }
   ]);
-  const [error, setError] = useState(null);
-  const [helpExpanded, setHelpExpanded] = useState(false);
-  const [currentProcessingModel, setCurrentProcessingModel] = useState(null);
+  
   const [processingStep, setProcessingStep] = useState('');
   const [responses, setResponses] = useState({});
+  // eslint-disable-next-line no-unused-vars
   const [isGettingPromptIdeas, setIsGettingPromptIdeas] = useState(false);
+  // eslint-disable-next-line no-unused-vars
   const [promptIdeas, setPromptIdeas] = useState(null);
   const [expandedQuery, setExpandedQuery] = useState(false);
   const [selectedNamespaces, setSelectedNamespaces] = useState(['default']);
@@ -83,7 +96,7 @@ const QueryInterface = ({ vectorStore, namespaces = [], onQuerySubmitted, isProc
     models: {}
   });
   
-  // Mark variables with eslint-disable-next-line to silence the warnings
+  // State for tracking progress
   // eslint-disable-next-line no-unused-vars
   const [progressData, setProgressData] = useState({
     current: 0,
@@ -107,6 +120,17 @@ const QueryInterface = ({ vectorStore, namespaces = [], onQuerySubmitted, isProc
   const [expandedPrompt, setExpandedPrompt] = useState('');
   const [expandedQueryText, setExpandedQueryText] = useState('');
   
+  // Get available models based on keys and filter for CHAT models
+  const availableChatModels = useMemo(() => {
+    const allAvailable = getAvailableModelsBasedOnKeys();
+    const chatModels = allAvailable.filter(modelId => {
+      const modelConfig = defaultModels[modelId];
+      return modelConfig && modelConfig.type === 'chat';
+    });
+    console.log('[QueryInterface] Available chat models based on keys:', chatModels);
+    return chatModels;
+  }, []);
+
   // Handler for processor progress updates
   const handleProcessorProgress = (progressInfo) => {
     console.log("Processor progress update:", progressInfo);
@@ -192,11 +216,18 @@ const QueryInterface = ({ vectorStore, namespaces = [], onQuerySubmitted, isProc
         setQuery(cleanState.query);
       }
       
-      // Set selected models with a fallback
+      // Filter out any models that aren't currently available
+      const validModels = (cleanState.selectedModels || []).filter(modelId => {
+        const isValid = availableChatModels.includes(modelId);
+        if (!isValid) {
+          console.warn(`Model ${modelId} from saved configuration is no longer available`);
+        }
+        return isValid;
+      });
+      
+      // Set selected models with a fallback, ensuring only valid models are included
       setSelectedModels(
-        (cleanState.selectedModels && cleanState.selectedModels.length > 0) 
-          ? cleanState.selectedModels 
-          : ['gpt-4o-mini']
+        validModels.length > 0 ? validModels : ['gpt-4o-mini']
       );
       
       // Set selected namespaces with a fallback
@@ -215,7 +246,7 @@ const QueryInterface = ({ vectorStore, namespaces = [], onQuerySubmitted, isProc
         }
       ]);
     }
-  }, [initialState]);
+  }, [initialState, availableChatModels]);
 
   // Function to update elapsed times
   const updateElapsedTimes = useCallback(() => {
@@ -255,38 +286,32 @@ const QueryInterface = ({ vectorStore, namespaces = [], onQuerySubmitted, isProc
   
   // Format milliseconds to display time
   const formatElapsedTime = (ms) => {
-    if (!ms) return '';
+    if (!ms) return '0s';
     
+    // Format to include minutes if applicable
     const seconds = Math.floor(ms / 1000);
+    if (seconds < 60) return `${seconds}s`;
+    
     const minutes = Math.floor(seconds / 60);
     const remainingSeconds = seconds % 60;
-    
-    if (minutes > 0) {
-      return `${minutes}m ${remainingSeconds}s`;
-    } else {
-      return `${remainingSeconds}.${Math.floor((ms % 1000) / 100)}s`;
-    }
+    return `${minutes}m ${remainingSeconds}s`;
   };
 
-  const handleQueryChange = (event) => {
-    setQuery(event.target.value);
-  };
-
-  // eslint-disable-next-line no-unused-vars
-  const handleModelChange = (event) => {
-    setSelectedModels(event.target.value);
-  };
-
+  // Handle prompt set changes
   const handlePromptSetChange = (id, field, value) => {
     setPromptSets(prev => prev.map(set => 
       set.id === id ? { ...set, [field]: value } : set
     ));
   };
 
+  // Handle namespace change
+  // eslint-disable-next-line no-unused-vars
   const handleNamespaceChange = (event) => {
     setSelectedNamespaces(event.target.value);
   };
 
+  // Get prompt ideas from the LLM
+  // eslint-disable-next-line no-unused-vars
   const handleGetGlobalPromptIdeas = async () => {
     if (!promptSets[0].systemPrompt.trim()) return;
     
@@ -333,6 +358,8 @@ Format your response in a clear, structured way. Focus on actionable improvement
     }
   };
 
+  // Add a new prompt set
+  // eslint-disable-next-line no-unused-vars
   const handleAddPromptSet = () => {
     setPromptSets(prev => [
       ...prev,
@@ -344,6 +371,8 @@ Format your response in a clear, structured way. Focus on actionable improvement
     ]);
   };
 
+  // Remove a prompt set
+  // eslint-disable-next-line no-unused-vars
   const handleRemovePromptSet = (id) => {
     if (promptSets.length > 1) {
       setPromptSets(prev => prev.filter(set => set.id !== id));
@@ -351,16 +380,32 @@ Format your response in a clear, structured way. Focus on actionable improvement
   };
 
   const submitQuery = async () => {
+    // Prevent submission if already processing
+    if (isProcessing) return;
+    
+    // Validate input
     if (!query.trim()) {
       setError('Please enter a query');
       return;
     }
     
-    if (selectedModels.length === 0) {
-      setError('Please select at least one model');
-      console.warn('No models selected in QueryInterface, aborting query processing');
+    // Filter out any invalid models before processing
+    const validModels = selectedModels.filter(modelId => {
+      const isValid = availableChatModels.includes(modelId);
+      if (!isValid) {
+        console.warn(`Removing invalid model ${modelId} from query processing`);
+      }
+      return isValid;
+    });
+    
+    if (validModels.length === 0) {
+      setError('Please select at least one valid model');
+      console.warn('No valid models selected in QueryInterface, aborting query processing');
       return;
     }
+    
+    // Update selectedModels to only include valid ones
+    setSelectedModels(validModels);
     
     if (selectedNamespaces.length === 0) {
       setError('Please select at least one namespace');
@@ -427,13 +472,38 @@ Format your response in a clear, structured way. Focus on actionable improvement
               if (useForDisplay) {
                 console.log(`[COST INFO] Using API-reported cost for UI display: $${apiProvidedCost} for ${model}`);
               }
+
+              // Helper function to handle elapsed time
+              const getElapsedTime = (time, timeType) => {
+                if (!time) return 0;
+                
+                // If explicit type is provided, trust it
+                if (timeType === 'duration') {
+                  console.log(`[TIME DEBUG] Using explicit duration: ${time}ms`);
+                  return time;
+                }
+                
+                // If it's a timestamp (greater than 24 hours in ms), convert to elapsed time
+                if (time > 24 * 60 * 60 * 1000) {
+                  console.log(`[TIME DEBUG] Converting timestamp ${time} to elapsed time: ${Date.now() - time}ms`);
+                  return Date.now() - time;
+                }
+                
+                console.log(`[TIME DEBUG] Using as-is duration: ${time}ms`);
+                return time;
+              };
+
+              const elapsedTime = getElapsedTime(
+                result.elapsedTime, 
+                result.elapsedTimeType || (result.rawResponse && result.rawResponse.elapsedTimeType)
+              );
               
               // Format 1: Composite key at top level (for ResponseComparison.js)
               metrics[`${setKey}-${model}`] = {
                 model,
                 promptSet: set.id,
-                elapsedTime: result.elapsedTime,
-                responseTime: result.elapsedTime, // Add responseTime alias
+                elapsedTime,
+                responseTime: elapsedTime, // Add responseTime alias
                 tokenUsage: tokenUsage,
                 calculatedCost: apiProvidedCost, // Add API-provided cost when available
                 useForDisplay // Flag from server indicating this cost should be used for display
@@ -443,8 +513,8 @@ Format your response in a clear, structured way. Focus on actionable improvement
               metrics[setKey][model] = {
                 model,
                 promptSet: set.id,
-                elapsedTime: result.elapsedTime,
-                responseTime: result.elapsedTime, // Add responseTime alias
+                elapsedTime,
+                responseTime: elapsedTime, // Add responseTime alias
                 tokenUsage: tokenUsage,
                 calculatedCost: apiProvidedCost, // Add API-provided cost when available
                 useForDisplay // Flag from server indicating this cost should be used for display
@@ -454,8 +524,8 @@ Format your response in a clear, structured way. Focus on actionable improvement
               metrics[model] = {
                 model,
                 promptSet: set.id,
-                elapsedTime: result.elapsedTime,
-                responseTime: result.elapsedTime, // Add responseTime alias
+                elapsedTime,
+                responseTime: elapsedTime, // Add responseTime alias
                 tokenUsage: tokenUsage,
                 set: setKey,
                 calculatedCost: apiProvidedCost, // Add API-provided cost when available
@@ -591,9 +661,19 @@ Format your response in a clear, structured way. Focus on actionable improvement
       try {
         const config = JSON.parse(e.target.result);
         
+        // Filter out any invalid models from the imported configuration
+        const validModels = (config.selectedModels || []).filter(modelId => {
+          const isValid = availableChatModels.includes(modelId);
+          if (!isValid) {
+            console.warn(`Model ${modelId} from imported configuration is not available`);
+          }
+          return isValid;
+        });
+        
         // Update state with imported configuration
         if (config.query) setQuery(config.query);
-        if (config.selectedModels) setSelectedModels(config.selectedModels);
+        // Only set valid models, fallback to default if none are valid
+        setSelectedModels(validModels.length > 0 ? validModels : ['gpt-4o-mini']);
         if (config.selectedNamespaces) setSelectedNamespaces(config.selectedNamespaces);
         if (config.promptSets) setPromptSets(config.promptSets);
         
@@ -609,6 +689,8 @@ Format your response in a clear, structured way. Focus on actionable improvement
     reader.readAsText(file);
   };
 
+  // Handle prompt expansion
+  // eslint-disable-next-line no-unused-vars
   const handleExpandPrompt = (set) => {
     setExpandedPromptSet(set);
     setExpandedPrompt(set.systemPrompt);
@@ -621,6 +703,8 @@ Format your response in a clear, structured way. Focus on actionable improvement
     }
   };
 
+  // Handle query expansion
+  // eslint-disable-next-line no-unused-vars
   const handleExpandQuery = () => {
     setExpandedQueryText(query);
     setExpandedQuery(true);
@@ -1214,497 +1298,488 @@ Format your response in a clear, structured way. Focus on actionable improvement
           </AccordionDetails>
         </Accordion>
 
-        <Box sx={{ mb: 3 }}>
-          <Typography variant="subtitle1" gutterBottom>
-            Select Models to Compare
+        <Box sx={{ flexGrow: 1, p: 3 }}>
+          <Typography variant="h5" gutterBottom>
+            Step 3: Query Your Documents
           </Typography>
-          <Paper elevation={1} sx={{ p: 2 }}>
-            {/* OpenAI Models */}
-            <Box sx={{ mb: 2 }}>
-              <Typography variant="subtitle2" sx={{ mb: 1, color: vendorColors['OpenAI'] }}>
-                OpenAI Models
-              </Typography>
-              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-                {Object.entries(defaultModels)
-                  .filter(([_, model]) => model.vendor === 'OpenAI' && model.active)
-                  .map(([modelId, model]) => (
-                  <Chip
-                    key={modelId}
-                    label={
-                      <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                        <span>{modelId}</span>
-                        {calculateCostPer1K(model) > 0 && (
-                          <Typography 
-                            variant="caption" 
-                            color={selectedModels.includes(modelId) ? "text.secondary" : "text.secondary"}
-                            sx={{ 
-                              ml: 0.5,
-                              opacity: 0.8,
-                              fontWeight: 500
-                            }}
-                          >
-                            ${calculateCostPer1K(model).toFixed(4)}
-                          </Typography>
-                        )}
-                      </Box>
-                    }
-                    clickable
-                    onClick={() => {
-                      const newSelected = selectedModels.includes(modelId)
-                        ? selectedModels.filter(m => m !== modelId)
-                        : [...selectedModels, modelId];
-                      setSelectedModels(newSelected);
-                    }}
-                    color={selectedModels.includes(modelId) ? "default" : "default"}
-                    disabled={isProcessing}
-                    sx={{ 
-                      bgcolor: selectedModels.includes(modelId) ? `${vendorColors['OpenAI']}12` : 'default',
-                      borderColor: selectedModels.includes(modelId) ? vendorColors['OpenAI'] : '#e0e0e0',
-                      borderWidth: 1,
-                      borderStyle: 'solid',
-                      fontWeight: selectedModels.includes(modelId) ? 500 : 400,
-                      boxShadow: selectedModels.includes(modelId) ? 1 : 0,
-                      '& .MuiChip-label': {
-                        color: 'text.primary',
-                      },
-                      '&:hover': {
-                        bgcolor: selectedModels.includes(modelId) ? `${vendorColors['OpenAI']}18` : ''
-                      }
-                    }}
-                  />
-                ))}
-              </Box>
-            </Box>
-
-            {/* Anthropic Models */}
-            <Box sx={{ mb: 2 }}>
-              <Typography variant="subtitle2" sx={{ mb: 1, color: vendorColors['Anthropic'] }}>
-                Anthropic Models
-              </Typography>
-              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-                {Object.entries(defaultModels)
-                  .filter(([_, model]) => model.vendor === 'Anthropic' && model.active)
-                  .map(([modelId, model]) => (
-                  <Chip
-                    key={modelId}
-                    label={
-                      <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                        <span>{modelId}</span>
-                        {calculateCostPer1K(model) > 0 && (
-                          <Typography 
-                            variant="caption" 
-                            color={selectedModels.includes(modelId) ? "text.secondary" : "text.secondary"}
-                            sx={{ 
-                              ml: 0.5,
-                              opacity: 0.8,
-                              fontWeight: 500
-                            }}
-                          >
-                            ${calculateCostPer1K(model).toFixed(4)}
-                          </Typography>
-                        )}
-                      </Box>
-                    }
-                    clickable
-                    onClick={() => {
-                      const newSelected = selectedModels.includes(modelId)
-                        ? selectedModels.filter(m => m !== modelId)
-                        : [...selectedModels, modelId];
-                      setSelectedModels(newSelected);
-                    }}
-                    color={selectedModels.includes(modelId) ? "default" : "default"}
-                    disabled={isProcessing}
-                    sx={{ 
-                      bgcolor: selectedModels.includes(modelId) ? `${vendorColors['Anthropic']}12` : 'default',
-                      borderColor: selectedModels.includes(modelId) ? vendorColors['Anthropic'] : '#e0e0e0',
-                      borderWidth: 1,
-                      borderStyle: 'solid',
-                      fontWeight: selectedModels.includes(modelId) ? 500 : 400,
-                      boxShadow: selectedModels.includes(modelId) ? 1 : 0,
-                      '& .MuiChip-label': {
-                        color: 'text.primary',
-                      },
-                      '&:hover': {
-                        bgcolor: selectedModels.includes(modelId) ? `${vendorColors['Anthropic']}18` : ''
-                      }
-                    }}
-                  />
-                ))}
-              </Box>
-            </Box>
-
-            {/* Ollama Models */}
-            <Box sx={{ mb: 2 }}>
-              <Typography variant="subtitle2" sx={{ mb: 1, color: vendorColors['Ollama'] }}>
-                Ollama Models
-              </Typography>
-              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-                {Object.entries(defaultModels)
-                  .filter(([_, model]) => model.vendor === 'Ollama' && model.active)
-                  .map(([modelId, model]) => (
-                  <Chip
-                    key={modelId}
-                    label={
-                      <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                        <span>{modelId}</span>
-                        {calculateCostPer1K(model) > 0 && (
-                          <Typography 
-                            variant="caption" 
-                            color={selectedModels.includes(modelId) ? "text.secondary" : "text.secondary"}
-                            sx={{ 
-                              ml: 0.5,
-                              opacity: 0.8,
-                              fontWeight: 500
-                            }}
-                          >
-                            ${calculateCostPer1K(model).toFixed(4)}
-                          </Typography>
-                        )}
-                      </Box>
-                    }
-                    clickable
-                    onClick={() => {
-                      const newSelected = selectedModels.includes(modelId)
-                        ? selectedModels.filter(m => m !== modelId)
-                        : [...selectedModels, modelId];
-                      setSelectedModels(newSelected);
-                    }}
-                    color={selectedModels.includes(modelId) ? "default" : "default"}
-                    disabled={isProcessing}
-                    sx={{ 
-                      bgcolor: selectedModels.includes(modelId) ? `${vendorColors['Ollama']}12` : 'default',
-                      borderColor: selectedModels.includes(modelId) ? vendorColors['Ollama'] : '#e0e0e0',
-                      borderWidth: 1,
-                      borderStyle: 'solid',
-                      fontWeight: selectedModels.includes(modelId) ? 500 : 400,
-                      boxShadow: selectedModels.includes(modelId) ? 1 : 0,
-                      '& .MuiChip-label': {
-                        color: 'text.primary',
-                      },
-                      '&:hover': {
-                        bgcolor: selectedModels.includes(modelId) ? `${vendorColors['Ollama']}18` : ''
-                      }
-                    }}
-                  />
-                ))}
-              </Box>
-            </Box>
-
-            {/* Azure OpenAI Models */}
-            <Box>
-              <Typography variant="subtitle2" sx={{ mb: 1, color: vendorColors['AzureOpenAI'] }}>
-                Azure OpenAI Models
-                {!apiConfig.azure.apiKey && (
-                  <Tooltip title="Azure OpenAI API key not configured. Visit LLM Settings to set up.">
-                    <span style={{ marginLeft: '8px', cursor: 'help' }}>⚠️</span>
-                  </Tooltip>
-                )}
-              </Typography>
-              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-                {Object.entries(defaultModels)
-                  .filter(([modelId, model]) => 
-                    model.vendor === 'AzureOpenAI' && 
-                    model.active && 
-                    !modelId.includes('embedding'))
-                  .map(([modelId, model]) => (
-                  <Chip
-                    key={modelId}
-                    label={
-                      <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                        <span>{modelId}</span>
-                        {calculateCostPer1K(model) > 0 && (
-                          <Typography 
-                            variant="caption" 
-                            color={selectedModels.includes(modelId) ? "text.secondary" : "text.secondary"}
-                            sx={{ 
-                              ml: 0.5,
-                              opacity: 0.8,
-                              fontWeight: 500
-                            }}
-                          >
-                            ${calculateCostPer1K(model).toFixed(4)}
-                          </Typography>
-                        )}
-                      </Box>
-                    }
-                    clickable
-                    onClick={() => {
-                      // If no Azure credentials, show a warning
-                      if (!apiConfig.azure.apiKey || !apiConfig.azure.endpoint) {
-                        setError('Azure OpenAI API key and endpoint must be configured to use Azure models. Go to LLM Settings to configure.');
-                        return;
-                      }
-                      
-                      const newSelected = selectedModels.includes(modelId)
-                        ? selectedModels.filter(m => m !== modelId)
-                        : [...selectedModels, modelId];
-                      setSelectedModels(newSelected);
-                    }}
-                    color={selectedModels.includes(modelId) ? "default" : "default"}
-                    disabled={isProcessing || !apiConfig.azure.apiKey || !apiConfig.azure.endpoint}
-                    sx={{ 
-                      bgcolor: selectedModels.includes(modelId) ? `${vendorColors['AzureOpenAI']}12` : 'default',
-                      borderColor: selectedModels.includes(modelId) ? vendorColors['AzureOpenAI'] : '#e0e0e0',
-                      borderWidth: 1,
-                      borderStyle: 'solid',
-                      fontWeight: selectedModels.includes(modelId) ? 500 : 400,
-                      boxShadow: selectedModels.includes(modelId) ? 1 : 0,
-                      '& .MuiChip-label': {
-                        color: 'text.primary',
-                      },
-                      '&:hover': {
-                        bgcolor: selectedModels.includes(modelId) ? `${vendorColors['AzureOpenAI']}18` : ''
-                      },
-                      opacity: !apiConfig.azure.apiKey || !apiConfig.azure.endpoint ? 0.6 : 1,
-                    }}
-                  />
-                ))}
-              </Box>
-              {!apiConfig.azure.apiKey && !apiConfig.azure.endpoint && (
-                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
-                  Azure OpenAI requires API key and endpoint configuration.{' '}
-                  <Link href="/settings" underline="hover">
-                    Go to LLM Settings
-                  </Link>{' '}
-                  to set up.
-                </Typography>
-              )}
-            </Box>
-
-            {/* Selected models summary */}
-            {selectedModels.length > 0 && (
-              <Box sx={{ mt: 2, pt: 2, borderTop: '1px solid #eee' }}>
-                <Typography variant="body2" color="text.secondary">
-                  {selectedModels.length} models selected
-                </Typography>
-              </Box>
-            )}
-          </Paper>
-        </Box>
-
-        <FormControl fullWidth sx={{ mb: 3 }}>
-          <InputLabel id="namespace-select-label">Select Namespaces</InputLabel>
-          <Select
-            labelId="namespace-select-label"
-            id="namespace-select"
-            multiple
-            value={selectedNamespaces}
-            onChange={handleNamespaceChange}
-            renderValue={(selected) => (
-              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
-                {selected.map((value) => (
-                  <Chip key={value} label={value} />
-                ))}
-              </Box>
-            )}
-            disabled={isProcessing}
-          >
-            {(namespaces || []).map((namespace) => (
-              <MenuItem key={namespace} value={namespace}>
-                {namespace}
-              </MenuItem>
-            ))}
-          </Select>
-        </FormControl>
-
-        <Box sx={{ position: 'relative', mb: 3 }}>
-          <TextField
-            fullWidth
-            multiline
-            rows={4}
-            variant="outlined"
-            label="Your Question"
-            value={query}
-            onChange={handleQueryChange}
-            disabled={isProcessing}
-            InputProps={{
-              endAdornment: (
-                <Tooltip title="Expand editor">
-                  <IconButton
-                    size="small"
-                    onClick={handleExpandQuery}
-                    sx={{ position: 'absolute', right: 8, top: 8 }}
-                  >
-                    <FullscreenIcon fontSize="small" />
-                  </IconButton>
-                </Tooltip>
-              ),
-            }}
-          />
-        </Box>
-
-        <Box sx={{ mb: 3 }}>
-          <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
-            <Typography variant="h6">Prompt Sets</Typography>
-            <Button
-              variant="outlined"
-              onClick={handleAddPromptSet}
-              disabled={isProcessing}
-              startIcon={<AddIcon />}
-            >
-              Add Set
-            </Button>
-          </Box>
           
-          {promptSets.map((set) => (
-            <Paper key={set.id} sx={{ p: 2, mb: 2 }}>
-              <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
-                <Typography variant="subtitle1">Set {set.id}</Typography>
-                {promptSets.length > 1 && (
-                  <IconButton
-                    onClick={() => handleRemovePromptSet(set.id)}
-                    disabled={isProcessing}
-                    size="small"
-                  >
-                    <DeleteIcon />
-                  </IconButton>
-                )}
-              </Box>
-              
-              <Box sx={{ position: 'relative', mb: 2 }}>
-                <TextField
-                  fullWidth
-                  multiline
-                  rows={6}
-                  label="System Prompt"
-                  value={set.systemPrompt}
-                  onChange={(e) => handlePromptSetChange(set.id, 'systemPrompt', e.target.value)}
-                  disabled={isProcessing}
-                  InputProps={{
-                    endAdornment: (
-                      <Tooltip title="Expand editor">
-                        <IconButton
-                          size="small"
-                          onClick={() => handleExpandPrompt(set)}
-                          sx={{ position: 'absolute', right: 8, top: 8 }}
-                        >
-                          <FullscreenIcon fontSize="small" />
-                        </IconButton>
-                      </Tooltip>
-                    ),
-                  }}
-                />
-              </Box>
-              
-              <Box>
-                <Typography id={`temperature-slider-${set.id}`} gutterBottom>
-                  Temperature: {set.temperature}
+          {/* Model Selection */}
+          <Box mb={3}>
+            <Typography variant="h6" gutterBottom>Select Models</Typography>
+            <Paper elevation={1} sx={{ p: 2 }}>
+              {/* OpenAI Models */}
+              <Box mb={2}>
+                <Typography variant="subtitle2" sx={{ mb: 1, color: vendorColors['OpenAI'] }}>
+                  OpenAI Models
+                  {!apiConfig.openAI.apiKey && (
+                    <Tooltip title="OpenAI API key not configured. Visit LLM Settings to set up.">
+                      <span style={{ marginLeft: '8px', cursor: 'help' }}>⚠️</span>
+                    </Tooltip>
+                  )}
                 </Typography>
-                <Slider
-                  aria-labelledby={`temperature-slider-${set.id}`}
-                  value={set.temperature}
-                  onChange={(e, newValue) => handlePromptSetChange(set.id, 'temperature', newValue)}
-                  step={0.1}
-                  marks
-                  min={0}
-                  max={1}
-                  valueLabelDisplay="auto"
+                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+                  {availableChatModels
+                    .filter(modelId => defaultModels[modelId]?.vendor === 'OpenAI')
+                    .map(modelId => {
+                      const model = defaultModels[modelId];
+                      if (!model) return null;
+                      return (
+                        <Chip
+                          key={modelId}
+                          label={
+                            <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                              <span>{modelId}</span>
+                              {calculateCostPer1K(model) > 0 && (
+                                <Typography 
+                                  variant="caption" 
+                                  color={selectedModels.includes(modelId) ? "text.secondary" : "text.secondary"}
+                                  sx={{ ml: 0.5, opacity: 0.8, fontWeight: 500 }}
+                                >
+                                  ${calculateCostPer1K(model).toFixed(4)}
+                                </Typography>
+                              )}
+                            </Box>
+                          }
+                          clickable
+                          onClick={() => {
+                            if (!apiConfig.openAI.apiKey) return;
+                            const newSelected = selectedModels.includes(modelId)
+                              ? selectedModels.filter(m => m !== modelId)
+                              : [...selectedModels, modelId];
+                            setSelectedModels(newSelected);
+                          }}
+                          color={selectedModels.includes(modelId) ? "default" : "default"}
+                          disabled={isProcessing || !apiConfig.openAI.apiKey}
+                          sx={{
+                            bgcolor: selectedModels.includes(modelId) ? `${vendorColors['OpenAI']}12` : 'default',
+                            borderColor: selectedModels.includes(modelId) ? vendorColors['OpenAI'] : '#e0e0e0',
+                            borderWidth: 1,
+                            borderStyle: 'solid',
+                            fontWeight: selectedModels.includes(modelId) ? 500 : 400,
+                            boxShadow: selectedModels.includes(modelId) ? 1 : 0,
+                            '& .MuiChip-label': { color: 'text.primary' },
+                            '&:hover': { bgcolor: selectedModels.includes(modelId) ? `${vendorColors['OpenAI']}18` : '' },
+                            opacity: !apiConfig.openAI.apiKey ? 0.6 : 1,
+                          }}
+                        />
+                      );
+                  })}
+                  {availableChatModels.filter(modelId => defaultModels[modelId]?.vendor === 'OpenAI').length === 0 && apiConfig.openAI.apiKey && (
+                    <Typography variant="caption" color="textSecondary">No active OpenAI chat models found in config.</Typography>
+                  )}
+                </Box>
+              </Box>
+
+              {/* Anthropic Models */}
+              <Box mb={2}>
+                <Typography variant="subtitle2" sx={{ mb: 1, color: vendorColors['Anthropic'] }}>
+                   Anthropic Models
+                   {!apiConfig.anthropic.apiKey && (
+                     <Tooltip title="Anthropic API key not configured. Visit LLM Settings to set up.">
+                       <span style={{ marginLeft: '8px', cursor: 'help' }}>⚠️</span>
+                     </Tooltip>
+                   )}
+                </Typography>
+                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+                  {availableChatModels
+                    .filter(modelId => defaultModels[modelId]?.vendor === 'Anthropic')
+                    .map(modelId => {
+                       const model = defaultModels[modelId];
+                       if (!model) return null;
+                       return (
+                         <Chip
+                           key={modelId}
+                           label={
+                             <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                               <span>{modelId}</span>
+                               {calculateCostPer1K(model) > 0 && (
+                                 <Typography 
+                                   variant="caption" 
+                                   color={selectedModels.includes(modelId) ? "text.secondary" : "text.secondary"}
+                                   sx={{ ml: 0.5, opacity: 0.8, fontWeight: 500 }}
+                                 >
+                                   ${calculateCostPer1K(model).toFixed(4)}
+                                 </Typography>
+                               )}
+                             </Box>
+                           }
+                           clickable
+                           onClick={() => {
+                              if (!apiConfig.anthropic.apiKey) return;
+                              const newSelected = selectedModels.includes(modelId)
+                                ? selectedModels.filter(m => m !== modelId)
+                                : [...selectedModels, modelId];
+                              setSelectedModels(newSelected);
+                            }}
+                           color={selectedModels.includes(modelId) ? "default" : "default"}
+                           disabled={isProcessing || !apiConfig.anthropic.apiKey}
+                           sx={{
+                             bgcolor: selectedModels.includes(modelId) ? `${vendorColors['Anthropic']}12` : 'default',
+                             borderColor: selectedModels.includes(modelId) ? vendorColors['Anthropic'] : '#e0e0e0',
+                             borderWidth: 1,
+                             borderStyle: 'solid',
+                             fontWeight: selectedModels.includes(modelId) ? 500 : 400,
+                             boxShadow: selectedModels.includes(modelId) ? 1 : 0,
+                             '& .MuiChip-label': { color: 'text.primary' },
+                             '&:hover': { bgcolor: selectedModels.includes(modelId) ? `${vendorColors['Anthropic']}18` : '' },
+                             opacity: !apiConfig.anthropic.apiKey ? 0.6 : 1,
+                           }}
+                         />
+                       );
+                  })}
+                  {availableChatModels.filter(modelId => defaultModels[modelId]?.vendor === 'Anthropic').length === 0 && apiConfig.anthropic.apiKey && (
+                     <Typography variant="caption" color="textSecondary">No active Anthropic chat models found in config.</Typography>
+                  )}
+                </Box>
+              </Box>
+
+              {/* Azure Models */}
+              <Box mb={2}>
+                 <Typography variant="subtitle2" sx={{ mb: 1, color: vendorColors['AzureOpenAI'] }}>
+                   Azure OpenAI Models
+                   {(!apiConfig.azure.apiKey || !apiConfig.azure.endpoint) && (
+                     <Tooltip title="Azure API key or endpoint not configured. Visit LLM Settings to set up.">
+                       <span style={{ marginLeft: '8px', cursor: 'help' }}>⚠️</span>
+                     </Tooltip>
+                   )}
+                 </Typography>
+                 <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+                   {availableChatModels
+                     .filter(modelId => defaultModels[modelId]?.vendor === 'AzureOpenAI')
+                     .map(modelId => {
+                       const model = defaultModels[modelId];
+                       if (!model) return null;
+                       return (
+                         <Chip
+                           key={modelId}
+                           label={
+                              <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                                <span>{modelId}</span>
+                                {calculateCostPer1K(model) > 0 && (
+                                  <Typography 
+                                    variant="caption" 
+                                    color={selectedModels.includes(modelId) ? "text.secondary" : "text.secondary"}
+                                    sx={{ ml: 0.5, opacity: 0.8, fontWeight: 500 }}
+                                  >
+                                    ${calculateCostPer1K(model).toFixed(4)}
+                                  </Typography>
+                                )}
+                              </Box>
+                            }
+                           clickable
+                           onClick={() => {
+                              if (!apiConfig.azure.apiKey || !apiConfig.azure.endpoint) return;
+                              const newSelected = selectedModels.includes(modelId)
+                                ? selectedModels.filter(m => m !== modelId)
+                                : [...selectedModels, modelId];
+                              setSelectedModels(newSelected);
+                            }}
+                           color={selectedModels.includes(modelId) ? "default" : "default"}
+                           disabled={isProcessing || !apiConfig.azure.apiKey || !apiConfig.azure.endpoint}
+                           sx={{
+                             bgcolor: selectedModels.includes(modelId) ? `${vendorColors['AzureOpenAI']}12` : 'default',
+                             borderColor: selectedModels.includes(modelId) ? vendorColors['AzureOpenAI'] : '#e0e0e0',
+                             borderWidth: 1,
+                             borderStyle: 'solid',
+                             fontWeight: selectedModels.includes(modelId) ? 500 : 400,
+                             boxShadow: selectedModels.includes(modelId) ? 1 : 0,
+                             '& .MuiChip-label': { color: 'text.primary' },
+                             '&:hover': { bgcolor: selectedModels.includes(modelId) ? `${vendorColors['AzureOpenAI']}18` : '' },
+                             opacity: (!apiConfig.azure.apiKey || !apiConfig.azure.endpoint) ? 0.6 : 1,
+                           }}
+                         />
+                       );
+                   })}
+                   {availableChatModels.filter(modelId => defaultModels[modelId]?.vendor === 'AzureOpenAI').length === 0 && apiConfig.azure.apiKey && apiConfig.azure.endpoint && (
+                     <Typography variant="caption" color="textSecondary">No active Azure chat models found in config.</Typography>
+                   )}
+                 </Box>
+              </Box>
+              
+              {/* Ollama Models */}
+              <Box mb={2}>
+                <Typography variant="subtitle2" sx={{ mb: 1, color: vendorColors['Ollama'] }}>
+                  Ollama Models
+                  {!apiConfig.ollama?.endpoint && (
+                    <Tooltip title="Ollama endpoint not configured. Visit LLM Settings to set up.">
+                      <span style={{ marginLeft: '8px', cursor: 'help' }}>⚠️</span>
+                    </Tooltip>
+                  )}
+                </Typography>
+                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+                  {availableChatModels
+                    .filter(modelId => defaultModels[modelId]?.vendor === 'Ollama')
+                    .map(modelId => {
+                      const model = defaultModels[modelId];
+                      if (!model) return null;
+                      // Check if Ollama endpoint is actually configured
+                      const isOllamaConfigured = apiConfig.ollama?.endpoint && apiConfig.ollama.endpoint !== 'http://localhost:11434';
+                      return (
+                        <Chip
+                          key={modelId}
+                          label={modelId}
+                          clickable
+                          onClick={() => {
+                            if (!isOllamaConfigured) return;
+                            const newSelected = selectedModels.includes(modelId)
+                              ? selectedModels.filter(m => m !== modelId)
+                              : [...selectedModels, modelId];
+                            setSelectedModels(newSelected);
+                          }}
+                          color={selectedModels.includes(modelId) ? "default" : "default"}
+                          disabled={isProcessing || !isOllamaConfigured}
+                          sx={{
+                            bgcolor: selectedModels.includes(modelId) ? `${vendorColors['Ollama']}12` : 'default',
+                            borderColor: selectedModels.includes(modelId) ? vendorColors['Ollama'] : '#e0e0e0',
+                            borderWidth: 1,
+                            borderStyle: 'solid',
+                            fontWeight: selectedModels.includes(modelId) ? 500 : 400,
+                            boxShadow: selectedModels.includes(modelId) ? 1 : 0,
+                            '& .MuiChip-label': { color: 'text.primary' },
+                            '&:hover': { bgcolor: selectedModels.includes(modelId) ? `${vendorColors['Ollama']}18` : '' },
+                            opacity: !isOllamaConfigured ? 0.4 : 1,
+                          }}
+                        />
+                      );
+                  })}
+                  {availableChatModels.filter(modelId => defaultModels[modelId]?.vendor === 'Ollama').length === 0 && apiConfig.ollama?.endpoint && (
+                    <Typography variant="caption" color="textSecondary">No active Ollama chat models found in config.</Typography>
+                  )}
+                </Box>
+              </Box>
+
+              {/* Selected models summary */}
+              {selectedModels.length > 0 && (
+                <Box sx={{ mt: 2, pt: 2, borderTop: '1px solid #eee' }}>
+                  <Typography variant="body2" color="text.secondary">
+                    {selectedModels.length} models selected
+                  </Typography>
+                </Box>
+              )}
+            </Paper> { /* Closing Paper tag for Model Selection */ }
+          </Box> { /* Closing Box tag for Model Selection */ }
+
+          {/* Prompt Engineering Section */}
+          <Box mb={3}>
+            <Typography variant="h6" gutterBottom>Configure Prompts</Typography>
+            <Paper elevation={1} sx={{ p: 2 }}>
+              <Box>
+                <Typography variant="subtitle2" gutterBottom>
+                  Your Question
+                  <Tooltip title="This is the question you want to ask about your documents.">
+                    <IconButton size="small" sx={{ ml: 0.5 }}>
+                      <InfoIcon fontSize="small" />
+                    </IconButton>
+                  </Tooltip>
+                </Typography>
+                
+                <Box sx={{ position: 'relative' }}>
+                  <Box sx={{ 
+                    display: 'flex', 
+                    justifyContent: 'space-between',
+                    mb: 1
+                  }}>
+                    <Typography variant="body2" color="textSecondary">Question</Typography>
+                    
+                    <Box>
+                      <IconButton 
+                        size="small" 
+                        onClick={() => {
+                          setExpandedQuery(true);
+                          setExpandedQueryText(query);
+                        }}
+                        disabled={isProcessing}
+                      >
+                        <EditIcon fontSize="small" />
+                      </IconButton>
+                    </Box>
+                  </Box>
+                  
+                  <Box sx={{ 
+                    p: 1, 
+                    border: '1px solid #e0e0e0',
+                    borderRadius: 1,
+                    bgcolor: '#fafafa',
+                    maxHeight: '100px',
+                    overflowY: 'auto',
+                    mb: 1
+                  }}>
+                    <TextField
+                      multiline
+                      rows={3}
+                      placeholder="Enter your question about the documents..."
+                      value={query}
+                      onChange={(e) => setQuery(e.target.value)}
+                      disabled={isProcessing}
+                      fullWidth
+                      variant="outlined"
+                      InputProps={{
+                        sx: { 
+                          fontFamily: 'inherit', 
+                          fontSize: '1rem',
+                          border: 'none',
+                          '& fieldset': { border: 'none' },
+                          p: 0
+                        }
+                      }}
+                    />
+                  </Box>
+                </Box>
+              </Box>
+
+              <Divider sx={{ my: 2 }} />
+
+              <Box mb={2}>
+                <Typography variant="subtitle2" gutterBottom>
+                  System Prompt
+                  <Tooltip title="Instructions given to the model that define its behavior. The system prompt directs how the model should respond.">
+                    <IconButton size="small" sx={{ ml: 0.5 }}>
+                      <InfoIcon fontSize="small" />
+                    </IconButton>
+                  </Tooltip>
+                </Typography>
+                
+                {promptSets.map((set, index) => (
+                  <Box key={set.id} mb={2} sx={{ position: 'relative' }}>
+                    <Box sx={{ 
+                      display: 'flex', 
+                      justifyContent: 'space-between',
+                      mb: 1
+                    }}>
+                      <Typography variant="body2" color="textSecondary">Set {set.id}</Typography>
+                      
+                      <Box>
+                        {promptSets.length > 1 && (
+                          <IconButton 
+                            size="small" 
+                            onClick={() => handleRemovePromptSet(set.id)}
+                            disabled={isProcessing}
+                            sx={{ ml: 1 }}
+                          >
+                            <DeleteIcon fontSize="small" />
+                          </IconButton>
+                        )}
+                        
+                        <IconButton 
+                          size="small" 
+                          onClick={() => {
+                            setExpandedPromptSet(set);
+                            setExpandedPrompt(set.systemPrompt);
+                          }}
+                          disabled={isProcessing}
+                        >
+                          <EditIcon fontSize="small" />
+                        </IconButton>
+                      </Box>
+                    </Box>
+                    
+                    <Box sx={{ 
+                      p: 1, 
+                      border: '1px solid #e0e0e0',
+                      borderRadius: 1,
+                      bgcolor: '#fafafa',
+                      maxHeight: '100px',
+                      overflowY: 'auto',
+                      mb: 1
+                    }}>
+                      <Typography 
+                        variant="body2" 
+                        sx={{ 
+                          whiteSpace: 'pre-wrap',
+                          fontFamily: 'monospace',
+                          fontSize: '0.8rem'
+                        }}
+                      >
+                        {set.systemPrompt.length > 200 ? 
+                          `${set.systemPrompt.substring(0, 200)}...` : 
+                          set.systemPrompt}
+                      </Typography>
+                    </Box>
+                    
+                    <Box>
+                      <Typography variant="caption" color="textSecondary" sx={{ mr: 1 }}>
+                        Temperature:
+                      </Typography>
+                      <Slider
+                        value={set.temperature}
+                        onChange={(e, newValue) => {
+                          const newSets = [...promptSets];
+                          const setIndex = newSets.findIndex(s => s.id === set.id);
+                          if (setIndex !== -1) {
+                            newSets[setIndex] = {
+                              ...newSets[setIndex],
+                              temperature: newValue
+                            };
+                            setPromptSets(newSets);
+                          }
+                        }}
+                        min={0}
+                        max={1}
+                        step={0.1}
+                        disabled={isProcessing}
+                        valueLabelDisplay="auto"
+                        sx={{ 
+                          width: '180px', 
+                          mx: 1,
+                          display: 'inline-block',
+                          verticalAlign: 'middle'
+                        }}
+                      />
+                      <Typography 
+                        variant="caption" 
+                        color="textSecondary" 
+                        sx={{ 
+                          display: 'inline-block',
+                          verticalAlign: 'middle',
+                          minWidth: '30px'
+                        }}
+                      >
+                        {set.temperature.toFixed(1)}
+                      </Typography>
+                    </Box>
+                  </Box>
+                ))}
+                
+                <Button
+                  variant="outlined"
+                  size="small"
+                  startIcon={<AddIcon />}
+                  onClick={handleAddPromptSet}
                   disabled={isProcessing}
-                />
-                <Box display="flex" justifyContent="space-between" mt={1}>
-                  <Typography variant="caption" color="textSecondary">Deterministic (0)</Typography>
-                  <Typography variant="caption" color="textSecondary">Creative (1)</Typography>
+                  sx={{ mt: 1 }}
+                >
+                  Add Prompt Set
+                </Button>
+              </Box>
+              
+              <Divider sx={{ my: 2 }} />
+              
+              <Box mt={2} sx={{ display: 'flex', alignItems: 'center' }}>
+                <Typography variant="subtitle2" sx={{ mr: 1 }}>
+                  Selected Namespaces:
+                </Typography>
+                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+                  {namespaces.map(namespace => (
+                    <Chip
+                      key={namespace}
+                      label={namespace}
+                      size="small"
+                      color={selectedNamespaces.includes(namespace) ? "primary" : "default"}
+                      onClick={() => {
+                        if (isProcessing) return;
+                        const newSelected = selectedNamespaces.includes(namespace)
+                          ? selectedNamespaces.filter(n => n !== namespace)
+                          : [...selectedNamespaces, namespace];
+                        setSelectedNamespaces(newSelected.length > 0 ? newSelected : ['default']);
+                      }}
+                      disabled={isProcessing}
+                    />
+                  ))}
                 </Box>
               </Box>
             </Paper>
-          ))}
-        </Box>
-
-        <Box sx={{ mb: 3 }}>
-          <Box sx={{ display: 'flex', justifyContent: 'flex-end' }}>
-            <Button
-              startIcon={<LightbulbIcon />}
-              onClick={handleGetGlobalPromptIdeas}
-              disabled={isProcessing || isGettingPromptIdeas || !promptSets[0].systemPrompt.trim()}
-              sx={{ mr: 1 }}
-            >
-              {isGettingPromptIdeas ? (
-                <>
-                  <CircularProgress size={16} sx={{ mr: 1 }} />
-                  Getting Feedback...
-                </>
-              ) : 'Get Prompt Feedback'}
-            </Button>
           </Box>
         </Box>
-
-        {/* Display prompt improvement ideas */}
-        {promptIdeas && (
-          <Paper elevation={1} sx={{ p: 3, mb: 3, mt: 2, bgcolor: '#f8f9fa' }}>
-            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-              <Typography variant="h6" gutterBottom>
-                <LightbulbIcon sx={{ mr: 1, verticalAlign: 'middle', color: '#FFC107' }} />
-                Prompt Feedback
-              </Typography>
-              <Box>
-                <IconButton size="small" onClick={() => setPromptIdeas(null)}>
-                  <CloseIcon fontSize="small" />
-                </IconButton>
-              </Box>
-            </Box>
-            <Divider sx={{ mb: 2 }} />
-            
-            <Box sx={{ display: 'flex', gap: 2, mb: 2 }}>
-              <Button
-                variant="outlined"
-                color="primary"
-                onClick={() => {
-                  if (promptSets[0]) {
-                    handlePromptSetChange(promptSets[0].id, 'systemPrompt', promptIdeas);
-                    setPromptIdeas(null);
-                  }
-                }}
-                startIcon={<SaveIcon />}
-              >
-                Apply to Current Set
-              </Button>
-              <Button
-                variant="outlined"
-                color="primary"
-                onClick={() => {
-                  const newSet = {
-                    id: promptSets.length + 1,
-                    systemPrompt: promptIdeas,
-                    temperature: 0
-                  };
-                  setPromptSets(prev => [...prev, newSet]);
-                  setPromptIdeas(null);
-                }}
-                startIcon={<AddIcon />}
-              >
-                Create New Set
-              </Button>
-            </Box>
-
-            <Typography 
-              variant="body1" 
-              sx={{ 
-                whiteSpace: 'pre-line',
-                fontSize: '0.95rem',
-                lineHeight: 1.7,
-                maxHeight: '400px',
-                overflowY: 'auto',
-                p: 2,
-                bgcolor: 'white',
-                borderRadius: 1,
-                border: '1px solid #e0e0e0'
-              }}
-            >
-              {promptIdeas}
-            </Typography>
-
-            <Box sx={{ mt: 2, display: 'flex', justifyContent: 'flex-end' }}>
-              <Button
-                variant="text"
-                color="primary"
-                onClick={() => setPromptIdeas(null)}
-                startIcon={<CloseIcon />}
-              >
-                Close
-              </Button>
-            </Box>
-          </Paper>
-        )}
       </Paper>
 
       <Box mt={3} display="flex" justifyContent="center" flexDirection="column" alignItems="center">

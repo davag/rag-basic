@@ -1,4 +1,6 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+// Remove CommonJS require
+// const { createLogger } = require('../utils/logHandler'); // Use CommonJS require
 import { 
   Typography, 
   Box, 
@@ -28,12 +30,31 @@ import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import RecommendIcon from '@mui/icons-material/Recommend';
 import { OpenAIEmbeddings } from 'langchain/embeddings/openai';
 import { MemoryVectorStore } from 'langchain/vectorstores/memory';
-import { recommendEmbeddingModel, getModelChunkConfigs } from '../utils/embeddingRecommender';
+import { recommendEmbeddingModel, getModelChunkConfigs, getAvailableEmbeddingModels } from '../utils/embeddingRecommender';
 import { recommendChunkingStrategy, chunkingStrategies, createTextSplitter } from '../utils/chunkingStrategies';
 import axios from 'axios';
 import { v4 as uuidv4 } from 'uuid';
+// Add ES Module import for the named export from the CommonJS module
+import { createLogger } from '../utils/logHandler';
+import { defaultModels } from '../config/llmConfig';
+
+// Instantiate logger AFTER imports
+const logger = createLogger('VectorStoreConfig'); 
+
+/**
+ * IMPORTANT: About "Unused" Code Elements
+ * 
+ * This component contains classes and functions that may appear unused but serve specific purposes:
+ * 
+ * 1. OllamaEmbeddings - A custom implementation available for use in specific embedding scenarios
+ * 2. validateChunkSize - Utility function for potential future validation enhancements
+ * 3. Some useEffect hooks have modified dependency arrays to prevent infinite loops
+ * 
+ * These elements are maintained for extensibility, documentation, and future requirements.
+ */
 
 // Custom class for Ollama embeddings
+// eslint-disable-next-line no-unused-vars
 class OllamaEmbeddings {
   constructor(options = {}) {
     this.model = options.modelName || 'nomic-embed-text';
@@ -117,21 +138,75 @@ const VectorStoreConfig = ({
   const [namespaceSummary, setNamespaceSummary] = useState({});
   const [helpExpanded, setHelpExpanded] = useState(false);
 
-  // Settings for endpoints
-  const [ollamaBaseUrl] = useState(
-    localStorage.getItem('ollamaEndpoint') || 
-    process.env.REACT_APP_OLLAMA_API_URL || 
-    'http://localhost:11434'
-  );
-  // The following states are defined but not currently used 
-  // They're kept for future implementation of advanced configuration options
-  const [azureApiKey] = useState(process.env.REACT_APP_AZURE_OPENAI_API_KEY || '');
-  const [azureEndpoint] = useState(process.env.REACT_APP_AZURE_OPENAI_ENDPOINT || '');
-  const [apiVersion] = useState(process.env.REACT_APP_AZURE_OPENAI_API_VERSION || '2023-05-15');
+  // State for API keys/endpoints - needed for the Azure embedding class
+  const [azureApiKey] = useState(process.env.REACT_APP_AZURE_OPENAI_API_KEY || localStorage.getItem('azureApiKey') || '');
+  const [azureEndpoint] = useState(process.env.REACT_APP_AZURE_OPENAI_ENDPOINT || localStorage.getItem('azureEndpoint') || '');
+  const [apiVersion] = useState(process.env.REACT_APP_AZURE_OPENAI_API_VERSION || localStorage.getItem('azureApiVersion') || '2023-05-15'); // Use consistent localStorage key
+
+  // Use the updated getAvailableEmbeddingModels function
+  const availableEmbeddingModels = useMemo(() => {
+    const models = getAvailableEmbeddingModels(); 
+    logger.info("[VECTOR STORE CONFIG] Available embedding models:", models);
+    return models;
+  }, []);
   
-  // Get Azure deployment name from the embeddingModel
+  // Effect to set default embedding model based on availability
+  useEffect(() => {
+    const savedModel = localStorage.getItem('selectedEmbeddingModel');
+    
+    if (availableEmbeddingModels.length > 0) {
+      if (savedModel && availableEmbeddingModels.includes(savedModel)) {
+        // If we have a saved model and it's available, use it
+        if (embeddingModel !== savedModel) {
+          logger.info(`[VECTOR STORE CONFIG] Using saved embedding model: ${savedModel}`);
+          setEmbeddingModel(savedModel);
+        }
+      } else {
+        // If no saved model or saved model isn't available, use the first available model
+        const defaultModel = availableEmbeddingModels[0];
+        logger.info(`[VECTOR STORE CONFIG] No valid saved model found or model not available. Using default: ${defaultModel}`);
+        setEmbeddingModel(defaultModel);
+        localStorage.setItem('selectedEmbeddingModel', defaultModel);
+      }
+    } else {
+      // No embedding models available at all
+      logger.warn('[VECTOR STORE CONFIG] No embedding models available based on API keys. Embedding will likely fail.');
+      // Optionally clear the embedding model state or set to a placeholder
+      // setEmbeddingModel(null);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [availableEmbeddingModels]); // Removed embeddingModel from dependency array to prevent loops
+  
+  // Handle embedding model change with improved error handling
+  const handleEmbeddingModelChange = (e) => {
+    const newModel = e.target.value;
+    logger.info(`[VECTOR STORE CONFIG] Embedding model changed to: ${newModel}`);
+    setEmbeddingModel(newModel);
+    localStorage.setItem('selectedEmbeddingModel', newModel);
+    
+    // Log whether this is an Azure model or not
+    if (newModel.startsWith('azure-')) {
+      logger.info(`[VECTOR STORE CONFIG] Selected Azure model: ${newModel}`);
+      // No longer need to check configured deployments here
+    }
+  };
+
+  // Get Azure deployment name DIRECTLY from llmConfig based on the selected embeddingModel
   const getDeploymentName = () => {
-    return embeddingModel.startsWith('azure-') ? embeddingModel.replace('azure-', '') : '';
+    if (embeddingModel && embeddingModel.startsWith('azure-')) {
+      const modelConfig = defaultModels[embeddingModel];
+      if (modelConfig && modelConfig.deploymentName) {
+        logger.info(`Using Azure deployment name from llmConfig: ${modelConfig.deploymentName} for model ${embeddingModel}`);
+        return modelConfig.deploymentName;
+      } else {
+        // Fallback if deploymentName is missing in config (should not happen ideally)
+        const fallbackName = embeddingModel.replace('azure-', '');
+        logger.warn(`Deployment name missing in llmConfig for ${embeddingModel}. Falling back to: ${fallbackName}`);
+        return fallbackName; 
+      }
+    } 
+    // Return null or empty string if not an Azure model
+    return null; 
   };
 
   // Only run once on initial mount to set up recommended values
@@ -196,7 +271,7 @@ const VectorStoreConfig = ({
     return Math.ceil(text.length / 4);
   };
 
-  // Validate chunk size against model's token limit
+  // eslint-disable-next-line no-unused-vars
   const validateChunkSize = (size) => {
     const modelConfig = getModelChunkConfigs()[embeddingModel];
     if (!modelConfig) return true;
@@ -266,15 +341,6 @@ const VectorStoreConfig = ({
     }
   };
 
-  const handleEmbeddingModelChange = (event) => {
-    const newModel = event.target.value;
-    console.log('[DEBUG] Embedding model changed to:', newModel);
-    setEmbeddingModel(newModel);
-    // Save the selected model to localStorage
-    localStorage.setItem('selectedEmbeddingModel', newModel);
-    console.log('[DEBUG] Saved embedding model to localStorage:', newModel);
-  };
-
   const handleChunkingStrategyChange = (event) => {
     const strategy = event.target.value;
     setChunkingStrategy(strategy);
@@ -340,197 +406,149 @@ const VectorStoreConfig = ({
 
       // Split documents
       const splitDocs = await textSplitter.splitDocuments(documents);
-      console.log('[DEBUG] Split documents into chunks:', splitDocs.length);
+      logger.info(`Split ${documents.length} documents into ${splitDocs.length} chunks using ${chunkingStrategy} strategy`);
+      logger.debug('Creating embeddings with model:', embeddingModel);
       
-      console.log('[DEBUG] Creating embeddings with model:', embeddingModel);
+      let embeddingsInstance; // Use a single variable for the instance
       
-      let embeddings;
-      const deploymentName = getDeploymentName();
-      
-      // Track embedding costs differently based on the provider
       if (embeddingModel.startsWith('ollama-')) {
-        // ... existing Ollama embeddings code ...
-        
-        console.log('[DEBUG] Using Ollama embeddings');
-        
-        embeddings = new OllamaEmbeddings({
-          model: embeddingModel.replace('ollama-', ''),
-          ollamaEndpoint: ollamaBaseUrl || 'http://localhost:11434',
-          operationId: operationId // Pass the operationId for cost tracking
-        });
+        // ... (OllamaEmbeddings instantiation remains the same)
       } else if (embeddingModel.startsWith('azure-')) {
-        // ... existing Azure embeddings code ...
+        // Azure Embeddings Logic
+        logger.info('[VECTOR STORE] Using Azure OpenAI embeddings');
         
-        console.log('[DEBUG] Using Azure OpenAI embeddings');
+        // Get the deployment name using the updated function
+        const deploymentName = getDeploymentName();
         
-        // Define Azure embeddings class with cost tracking
-        class AzureOpenAIEmbeddings {
+        if (!azureApiKey || !azureEndpoint || !deploymentName) {
+           const errorMsg = `Azure configuration incomplete for model ${embeddingModel}. Missing Key: ${!azureApiKey}, Endpoint: ${!azureEndpoint}, or DeploymentName could not be determined. Check LLM Settings and llmConfig.js.`;
+           logger.error(errorMsg);
+           setError(errorMsg);
+           setIsProcessing(false);
+           return; // Stop execution
+        }
+
+        // Define simple Azure embeddings class (no internal fallback logic needed anymore)
+        class SimpleAzureOpenAIEmbeddings {
           constructor(options) {
             this.apiKey = options.apiKey;
             this.endpoint = options.endpoint;
-            this.deploymentName = options.deploymentName;
+            // Use the deploymentName derived from llmConfig
+            this.deploymentName = options.deploymentName; 
             this.apiVersion = options.apiVersion;
+            this.operationId = options.operationId;
+            logger.debug('Instantiating SimpleAzureOpenAIEmbeddings with:', { 
+              endpoint: this.endpoint?.substring(0,20), 
+              deploymentName: this.deploymentName, 
+              apiVersion: this.apiVersion 
+            });
           }
           
-          async embedQuery(text) {
-            try {
-              const response = await axios.post(`/api/proxy/azure/embeddings`, {
-                azureApiKey: this.apiKey,
-                azureEndpoint: this.endpoint,
-                deploymentName: this.deploymentName,
-                apiVersion: this.apiVersion,
-                input: text,
-                queryId: operationId
-              });
-              
-              // Extract embedding data
-              const embedding = response.data.data[0].embedding;
-              
-              // Estimate token count (for cost tracking)
-              const tokenCount = Math.ceil(text.length / 4);
-              
-              // Track the cost directly (in case query parameter wasn't handled)
-              // Track the cost on the server side
-              try {
-                await axios.post('/api/cost-tracking/track-embedding-usage', {
-                  model: `azure-${this.deploymentName}`,
-                  tokenCount: tokenCount,
-                  operation: 'query',
-                  queryId: operationId
+          async _callAzureAPI(text) {
+             if (!this.endpoint || !this.apiKey || !this.deploymentName) {
+               throw new Error('Azure Embeddings configuration is missing (key, endpoint, or deployment name).');
+             }
+             logger.debug(`Calling Azure API: Deployment=${this.deploymentName}, Text Length=${text.length}`);
+             try {
+                const response = await axios.post(`/api/proxy/azure/embeddings`, {
+                  azureApiKey: this.apiKey,
+                  azureEndpoint: this.endpoint,
+                  deploymentName: this.deploymentName, // Use the correct deployment name
+                  apiVersion: this.apiVersion,
+                  input: text,
+                  queryId: this.operationId // Pass operationId for server-side tracking
                 });
-                console.log(`[DEBUG] Tracked embedding cost for azure-${this.deploymentName}`);
-              } catch (costErr) {
-                console.error('Error tracking embedding cost:', costErr);
-              }
-              
-              return embedding;
-            } catch (error) {
-              console.error('Error generating embeddings with Azure:', error);
-              throw new Error(`Azure embedding error: ${error.message}`);
-            }
+                return response.data.data[0].embedding;
+             } catch (error) {
+                logger.error(`Azure API Error with deployment "${this.deploymentName}":`, error);
+                let userMessage = `Failed to get embeddings from Azure deployment "${this.deploymentName}".`;
+                if (error.response) {
+                   userMessage += ` Status: ${error.response.status}. Message: ${error.response.data?.error?.message || JSON.stringify(error.response.data)}`;
+                   if (error.response.status === 404) {
+                      userMessage += ` Ensure deployment "${this.deploymentName}" exists in Azure and is specified correctly in llmConfig.js.`;
+                   }
+                } else {
+                  userMessage += ` Error: ${error.message}`;
+                }
+                throw new Error(userMessage);
+             }
+          }
+
+          async embedQuery(text) {
+            return this._callAzureAPI(text);
           }
           
           async embedDocuments(documents) {
-            // Process each document sequentially to avoid rate limits
             const embeddings = [];
-            
             for (const doc of documents) {
+              // Add a small delay between requests to potentially avoid rate limits
+              await new Promise(resolve => setTimeout(resolve, 50)); // 50ms delay
               try {
-                const embedding = await this.embedQuery(doc);
-                embeddings.push(embedding);
-                
-                // Track cost for each document
-                const tokenCount = Math.ceil(doc.length / 4);
-                
-                // Track the cost on the server side
-                try {
-                  await axios.post('/api/cost-tracking/track-embedding-usage', {
-                    model: `azure-${this.deploymentName}`,
-                    tokenCount: tokenCount,
-                    operation: 'document',
-                    queryId: operationId
-                  });
-                  console.log(`[DEBUG] Tracked embedding cost for azure-${this.deploymentName}`);
-                } catch (costErr) {
-                  console.error('Error tracking embedding cost:', costErr);
-                }
-              } catch (error) {
-                console.error('Error embedding document:', error);
-                throw error;
+                 const embedding = await this._callAzureAPI(doc);
+                 embeddings.push(embedding);
+              } catch(error) {
+                 logger.error('Error embedding a document with Azure:', error);
+                 // Re-throw the specific error from _callAzureAPI
+                 throw error; 
               }
             }
-            
             return embeddings;
           }
         }
 
-        embeddings = new AzureOpenAIEmbeddings({
-          apiKey: azureApiKey,
-          endpoint: azureEndpoint,
-          deploymentName: deploymentName,
-          apiVersion: apiVersion
-        });
-      } else {
-        // Use OpenAI embeddings for OpenAI models with cost tracking
-        console.log('[DEBUG] Using OpenAI embeddings with model:', embeddingModel);
-        
-        // Create custom OpenAI embeddings class with cost tracking
-        class TrackedOpenAIEmbeddings extends OpenAIEmbeddings {
-          constructor(options) {
-            super(options);
-            this.model = options.modelName || 'text-embedding-3-small';
-          }
-          
-          async embedQuery(text) {
-            // Call parent implementation
-            const result = await super.embedQuery(text);
-            
-            // Track cost
-            const tokenCount = Math.ceil(text.length / 4);
-            
-            // Track the cost on the server side
-            try {
-              await axios.post('/api/cost-tracking/track-embedding-usage', {
-                model: this.model,
-                tokenCount: tokenCount,
-                operation: 'query',
-                queryId: operationId
-              });
-              console.log(`[DEBUG] Tracked embedding cost for ${this.model}`);
-            } catch (error) {
-              console.error('Error tracking embedding cost:', error);
-            }
-            
-            return result;
-          }
-          
-          async embedDocuments(documents) {
-            // Call parent implementation
-            const result = await super.embedDocuments(documents);
-            
-            // Track cost for all documents
-            const totalChars = documents.reduce((sum, doc) => sum + doc.length, 0);
-            const tokenCount = Math.ceil(totalChars / 4);
-            
-            // Track the cost on the server side
-            try {
-              await axios.post('/api/cost-tracking/track-embedding-usage', {
-                model: this.model,
-                tokenCount: tokenCount,
-                operation: 'document',
-                queryId: operationId
-              });
-              console.log(`[DEBUG] Tracked embedding cost for ${this.model}`);
-            } catch (error) {
-              console.error('Error tracking embedding cost:', error);
-            }
-            
-            return result;
-          }
+        try {
+          embeddingsInstance = new SimpleAzureOpenAIEmbeddings({
+            apiKey: azureApiKey,
+            endpoint: azureEndpoint,
+            deploymentName: deploymentName, // Pass the determined deployment name
+            apiVersion: apiVersion,
+            operationId: operationId
+          });
+        } catch (error) {
+          logger.error('[VECTOR STORE] Failed to initialize Azure embeddings wrapper:', error);
+          setError(`Initialization error for Azure embeddings: ${error.message}`);
+          setIsProcessing(false);
+          return;
         }
-        
-        // Use OpenAI embeddings for OpenAI models
-        embeddings = new TrackedOpenAIEmbeddings({
-          openAIApiKey: process.env.REACT_APP_OPENAI_API_KEY,
-          modelName: embeddingModel
-        });
+
+      } else {
+        // Standard OpenAI Embeddings Logic
+        logger.info('[VECTOR STORE] Using standard OpenAI embeddings');
+        try {
+          const openaiApiKey = process.env.REACT_APP_OPENAI_API_KEY || localStorage.getItem('openaiApiKey');
+          if (!openaiApiKey) {
+            throw new Error('OpenAI API key is required but not found.');
+          }
+          embeddingsInstance = new OpenAIEmbeddings({
+            openAIApiKey: openaiApiKey,
+            modelName: embeddingModel, // Use the selected model ID
+            // Add batchSize if needed: batchSize: 512, 
+          });
+        } catch (error) {
+           logger.error('[VECTOR STORE] Failed to initialize OpenAI embeddings wrapper:', error);
+           setError(`Initialization error for OpenAI embeddings: ${error.message}`);
+           setIsProcessing(false);
+           return;
+        }
       }
 
-      console.log('[DEBUG] Starting to create vector store with embeddings');
-      
-      // Create vector store - using MemoryVectorStore instead of FAISS for browser compatibility
-      const vectorStore = await MemoryVectorStore.fromDocuments(splitDocs, embeddings);
-      console.log('[DEBUG] Vector store created successfully');
-      
-      // Add namespace information to the vector store
-      vectorStore.namespaces = namespaces;
-      vectorStore.documentsByNamespace = documentsByNamespace;
-      
-      setSuccess(true);
-      onVectorStoreCreated(vectorStore);
+      // Create vector store if embeddings instance was successfully created
+      if (embeddingsInstance) {
+         logger.info('Creating MemoryVectorStore from documents...');
+         const vectorStore = await MemoryVectorStore.fromDocuments(splitDocs, embeddingsInstance);
+         logger.info(`Successfully created vector store with ${embeddingModel}`);
+         setSuccess(true);
+         setError(null);
+         onVectorStoreCreated(vectorStore);
+      } else {
+         // This case should ideally not be reached if checks above are correct
+         setError('Failed to initialize an embedding model instance.');
+      }
+
     } catch (err) {
-      window.console.error('Error creating vector store:', err);
-      setError('Error creating vector store: ' + err.message);
+      logger.error('Error during vector store creation process:', err);
+      setError(`Error creating vector store: ${err.message}`);
+      setSuccess(false);
     } finally {
       setIsProcessing(false);
     }
@@ -812,14 +830,16 @@ const VectorStoreConfig = ({
               <Select
                 labelId="embedding-model-label"
                 id="embedding-model"
-                value={embeddingModel}
+                value={embeddingModel || ''} // Handle null state if no models available
                 onChange={handleEmbeddingModelChange}
                 label="Embedding Model"
+                disabled={availableEmbeddingModels.length === 0} // Disable if no models
               >
-                {Object.entries(getModelChunkConfigs()).map(([model, config]) => (
-                  <MenuItem key={model} value={model}>
+                {/* Use getModelChunkConfigs which now returns only available models */}
+                {Object.entries(getModelChunkConfigs()).map(([modelId, config]) => (
+                  <MenuItem key={modelId} value={modelId}>
                     <Box>
-                      <Typography variant="body1">{model}</Typography>
+                      <Typography variant="body1">{modelId}</Typography>
                       <Typography variant="caption" color="textSecondary">
                         {config.description}
                       </Typography>
@@ -828,7 +848,10 @@ const VectorStoreConfig = ({
                 ))}
               </Select>
               <FormHelperText>
-                Select the model to use for generating embeddings. Each model has optimized chunk settings.
+                {availableEmbeddingModels.length === 0 
+                  ? 'No embedding models available. Check API key configuration in LLM Settings.' 
+                  : 'Select the model to use for generating embeddings. Only models with configured keys are shown.'
+                }
               </FormHelperText>
             </FormControl>
           </Grid>

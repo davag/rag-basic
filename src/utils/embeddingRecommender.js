@@ -2,6 +2,10 @@
  * Analyzes document characteristics to recommend the most suitable embedding model
  */
 
+// Convert imports to requires
+const { getAvailableModelsBasedOnKeys, defaultModels } = require('../config/llmConfig');
+const { createLogger } = require('./logHandler'); // Use CommonJS require
+
 const TECHNICAL_KEYWORDS = [
   'algorithm', 'function', 'class', 'method', 'api',
   'implementation', 'database', 'query', 'system',
@@ -17,6 +21,11 @@ const SCIENTIFIC_KEYWORDS = [
   'statistical', 'scientific', 'empirical',
   'laboratory', 'observation', 'measurement'
 ];
+
+// const createLogger = require('../utils/logHandler').createLogger; // Remove CommonJS require
+
+// Create a logger instance for this module
+const logger = createLogger('embedding-recommender');
 
 /**
  * Calculate document complexity score based on various metrics
@@ -53,63 +62,70 @@ const calculateComplexity = (text) => {
 };
 
 /**
- * Get model-specific chunk configurations
- * @returns {Object} Mapping of model names to their optimal chunk configurations
+ * Get ONLY available EMBEDDING models based on configured API keys.
+ * @returns {Array<string>} - Array of embedding model IDs whose vendor keys are configured.
  */
-export const getModelChunkConfigs = () => ({
-  // OpenAI models
-  'text-embedding-3-small': {
-    chunkSize: 1024,
-    chunkOverlap: 200,
-    maxTokens: 8191,
-    maxChunkSize: 4000,  // ~1000 tokens
-    maxChunkOverlap: 800, // 20% of max chunk size
-    description: 'Optimized for general text with good performance and cost efficiency'
-  },
-  'text-embedding-3-large': {
-    chunkSize: 2048,
-    chunkOverlap: 400,
-    maxTokens: 8191,
-    maxChunkSize: 8000,  // ~2000 tokens
-    maxChunkOverlap: 1600, // 20% of max chunk size
-    description: 'Better for complex technical content and longer context'
-  },
+function getAvailableEmbeddingModels() {
+  // Get all models available based on keys
+  const allAvailableModels = getAvailableModelsBasedOnKeys();
   
-  // Azure OpenAI models (inherit from OpenAI)
-  'azure-text-embedding-3-small': {
-    chunkSize: 1024,
-    chunkOverlap: 200,
-    maxTokens: 8191,
-    maxChunkSize: 4000,  // ~1000 tokens
-    maxChunkOverlap: 800, // 20% of max chunk size
-    description: 'Azure-hosted version of text-embedding-3-small'
-  },
-  'azure-text-embedding-3-large': {
-    chunkSize: 2048,
-    chunkOverlap: 400,
-    maxTokens: 8191,
-    maxChunkSize: 8000,  // ~2000 tokens
-    maxChunkOverlap: 1600, // 20% of max chunk size
-    description: 'Azure-hosted version of text-embedding-3-large'
-  },
+  // Filter for models of type 'embedding'
+  const embeddingModels = allAvailableModels.filter(modelId => {
+    const modelConfig = defaultModels[modelId];
+    return modelConfig && modelConfig.type === 'embedding';
+  });
   
-  // Ollama models
-  'nomic-embed-text': {
-    chunkSize: 512,
-    chunkOverlap: 100,
-    maxTokens: 2048,
-    maxChunkSize: 2048,  // ~512 tokens
-    maxChunkOverlap: 400, // 20% of max chunk size
-    description: 'Local inference model optimized for shorter chunks'
+  logger.info('Filtered available embedding models:', embeddingModels);
+
+  if (embeddingModels.length === 0) {
+    logger.warn('No embedding models available with current configuration! Check API keys/endpoints and model definitions in llmConfig.js.');
+    // Provide a default fallback if absolutely needed, but ideally rely on config
+    if (allAvailableModels.includes('azure-text-embedding-3-small')) {
+      return ['azure-text-embedding-3-small'];
+    }
+     if (allAvailableModels.includes('text-embedding-3-small')) {
+      return ['text-embedding-3-small'];
+    }
+    // No fallback if no keys are configured at all
   }
-});
+  
+  return embeddingModels;
+}
+
+/**
+ * Get model-specific chunk configurations ONLY for available embedding models.
+ * @returns {Object} Mapping of available embedding model names to their optimal chunk configurations
+ */
+const getModelChunkConfigs = () => {
+  const availableEmbeddingModelIds = getAvailableEmbeddingModels();
+  const allModelConfigs = defaultModels; // Use models directly from llmConfig
+  const filteredConfigs = {};
+
+  availableEmbeddingModelIds.forEach(modelId => {
+    const config = allModelConfigs[modelId];
+    if (config) {
+      // Extract only chunking-related properties if needed, or just return the relevant part
+      filteredConfigs[modelId] = {
+        chunkSize: config.chunkSize || 1024, // Provide defaults if missing
+        chunkOverlap: config.chunkOverlap || 200,
+        maxTokens: config.maxTokens || 8191,
+        description: config.description || 'Embedding model',
+        vendor: config.vendor
+        // Add other relevant properties from defaultModels if needed
+      };
+    }
+  });
+
+  logger.debug('Returning chunk configs for available embedding models:', filteredConfigs);
+  return filteredConfigs;
+};
 
 /**
  * Recommend the most suitable embedding model based on document characteristics
  * @param {Array} documents - Array of document objects with pageContent
  * @returns {Object} Recommendation details including chunk configuration
  */
-export const recommendEmbeddingModel = (documents) => {
+const recommendEmbeddingModel = (documents) => {
   if (!documents || documents.length === 0) {
     const defaultConfig = getModelChunkConfigs()['text-embedding-3-small'];
     return {
@@ -175,4 +191,11 @@ export const recommendEmbeddingModel = (documents) => {
       chunkConfig: config
     };
   }
+};
+
+// Export functions using CommonJS
+module.exports = {
+  getAvailableEmbeddingModels,
+  getModelChunkConfigs,
+  recommendEmbeddingModel
 }; 

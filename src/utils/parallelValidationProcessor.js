@@ -2,7 +2,7 @@
  * Utility module for processing response validations in parallel
  */
 import { createLlmInstance } from './apiServices';
-import { defaultSettings } from '../config/llmConfig';
+import { defaultSettings, apiConfig } from '../config/llmConfig';
 
 /**
  * Process multiple validation queries in parallel
@@ -28,11 +28,88 @@ export const validateResponsesInParallel = async (
   
   // Helper function to determine if a key is a valid model key
   const isModelKey = (key) => {
+    // Allow both OpenAI and Azure models
     return key.includes('gpt-') || 
            key.includes('claude-') ||
            key.includes('llama') ||
            key.includes('mistral') ||
-           key.includes('gemma');
+           key.includes('gemma') ||
+           key.includes('o1-') ||
+           key.includes('o3-') ||
+           key.includes('azure-');
+  };
+  
+  // Function to check if a model has valid configuration
+  const hasValidConfiguration = (modelName, apiConfig) => {
+    console.log(`Checking configuration for model: ${modelName}`);
+    
+    // Get user environment preference
+    const useAzureOpenAI = localStorage.getItem('useAzureOpenAI') === 'true';
+    console.log(`Environment preference: ${useAzureOpenAI ? 'Azure' : 'OpenAI'}`);
+    
+    // For Azure models
+    if (modelName.startsWith('azure-')) {
+      const hasApiKey = !!(apiConfig.azure && apiConfig.azure.apiKey);
+      const hasEndpoint = !!(apiConfig.azure && apiConfig.azure.endpoint);
+      console.log(`Azure model ${modelName} config:`, {
+        hasApiKey,
+        hasEndpoint,
+        valid: hasApiKey && hasEndpoint
+      });
+      
+      // Only require proper configuration if we're explicitly using Azure
+      if (useAzureOpenAI) {
+        return hasApiKey && hasEndpoint;
+      } else {
+        // Otherwise, we'll convert to OpenAI
+        console.log('Using OpenAI environment for validation instead of Azure');
+        return true;
+      }
+    }
+    
+    // For OpenAI models
+    if (modelName.startsWith('gpt-') || modelName.startsWith('o1') || modelName.startsWith('o3')) {
+      const hasApiKey = !!(apiConfig.openAI && apiConfig.openAI.apiKey);
+      console.log(`OpenAI model ${modelName} config:`, { hasApiKey });
+      
+      // If we're using OpenAI environment, require API key
+      if (!useAzureOpenAI) {
+        return hasApiKey;
+      } else {
+        // Otherwise, we'll convert to Azure if Azure is configured
+        const hasAzureKey = !!(apiConfig.azure && apiConfig.azure.apiKey);
+        const hasAzureEndpoint = !!(apiConfig.azure && apiConfig.azure.endpoint);
+        if (hasAzureKey && hasAzureEndpoint) {
+          console.log('Using Azure environment for validation instead of OpenAI');
+          return true;
+        } else {
+          // If Azure isn't configured, we need OpenAI config
+          return hasApiKey;
+        }
+      }
+    }
+    
+    // For Anthropic models
+    if (modelName.startsWith('claude')) {
+      const hasApiKey = !!apiConfig.anthropic.apiKey;
+      console.log(`Anthropic model ${modelName} config:`, { hasApiKey });
+      return hasApiKey;
+    }
+    
+    // For Ollama models
+    if (modelName.includes('llama') || modelName.includes('mistral') || modelName.includes('gemma')) {
+      const ollamaEndpoint = localStorage.getItem('ollamaEndpoint') || defaultSettings.ollamaEndpoint;
+      // Only show if endpoint is configured AND it's not the default value
+      const isValid = !!(ollamaEndpoint && ollamaEndpoint !== 'http://localhost:11434');
+      console.log(`Ollama model ${modelName} config:`, { 
+        ollamaEndpoint, 
+        isValid 
+      });
+      return isValid;
+    }
+    
+    console.log(`Model ${modelName} has no recognized format for validation`);
+    return false;
   };
   
   // Helper function to extract the answer content from a model response
@@ -101,6 +178,12 @@ export const validateResponsesInParallel = async (
     if (!isModelKey(key) && !key.match(/^Set \d+-/)) {
       // Non-model property, skip it
       console.log(`Skipping non-model key: ${key}`);
+      return;
+    }
+    
+    // Skip if model doesn't have valid configuration
+    if (!hasValidConfiguration(modelName, apiConfig)) {
+      console.log(`Skipping model ${modelName} due to missing configuration (API key or endpoint)`);
       return;
     }
     
@@ -183,7 +266,8 @@ YOUR EVALUATION (in JSON format):
       // Create LLM instance for validation
       const llm = createLlmInstance(validatorModelName, '', {
         ollamaEndpoint: ollamaEndpoint,
-        temperature: 0,
+        // Skip temperature for o3-mini which doesn't support it
+        ...(validatorModelName.includes('o3-mini') ? {} : { temperature: 0 }),
         isForValidation: true // Signal this is for validation to prevent fallback issues
       });
       

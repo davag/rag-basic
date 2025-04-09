@@ -3,6 +3,9 @@
  * This serves as the single source of truth for model definitions, costs, and default settings
  */
 
+// import { createClient } from "@supabase/supabase-js"; // REMOVE THIS LINE
+const { createLogger } = require('../utils/logHandler'); // Use CommonJS require
+
 // Default vendor colors for UI display
 const vendorColors = {
   'OpenAI': '#10a37f',    // Green
@@ -24,21 +27,42 @@ const defaultModels = {
     input: 2.5,
     output: 10,
     active: true,
-    description: 'Most capable GPT-4 model optimized for chat at a lower price.'
+    description: 'Most capable GPT-4 model optimized for chat at a lower price.',
+    type: 'chat'
   },
   'gpt-4o-mini': {
     vendor: 'OpenAI',
     input: 0.150,
     output: 0.600,
     active: true,
-    description: 'Affordable GPT-4 class model for everyday use.'
+    description: 'Affordable GPT-4 class model for everyday use.',
+    type: 'chat'
   },
   'o3-mini': {
     vendor: 'OpenAI',
     input: 1.10,
     output: 4.40,
     active: true,
-    description: 'OpenAI\'s newest model with improved reasoning capabilities.'
+    description: 'OpenAI\'s newest model with improved reasoning capabilities.',
+    type: 'chat'
+  },
+  
+  // OpenAI embedding models
+  'text-embedding-3-small': {
+    vendor: 'OpenAI',
+    input: 0.00002,
+    output: 0.00002,
+    active: true,
+    description: 'OpenAI\'s text-embedding-3-small - optimized for general text with good performance and cost efficiency.',
+    type: 'embedding'
+  },
+  'text-embedding-3-large': {
+    vendor: 'OpenAI',
+    input: 0.00013,
+    output: 0.00013,
+    active: true,
+    description: 'OpenAI\'s text-embedding-3-large - better for complex technical content and longer context.',
+    type: 'embedding'
   },
   
   // Azure OpenAI models
@@ -49,7 +73,8 @@ const defaultModels = {
     active: true,
     description: 'Azure-hosted GPT-4o - optimized version of GPT-4.',
     deploymentName: 'gpt-4o',
-    apiVersion: '2023-05-15'
+    apiVersion: '2023-05-15',
+    type: 'chat'
   },
   'azure-gpt-4o-mini': {
     vendor: 'AzureOpenAI',
@@ -58,7 +83,8 @@ const defaultModels = {
     active: true,
     description: 'Azure-hosted GPT-4o-mini - affordable, faster version of GPT-4o.',
     deploymentName: 'gpt-4o-mini',
-    apiVersion: '2023-05-15'
+    apiVersion: '2023-05-15',
+    type: 'chat'
   },
   'azure-o3-mini': {
     vendor: 'AzureOpenAI',
@@ -67,7 +93,8 @@ const defaultModels = {
     active: true,
     description: 'Azure-hosted o3-mini model',
     deploymentName: 'o3-mini',
-    apiVersion: '2023-05-15'
+    apiVersion: '2023-05-15',
+    type: 'chat'
   },
   
   // Azure OpenAI embedding models
@@ -78,7 +105,8 @@ const defaultModels = {
     active: true,
     description: 'Azure-hosted text-embedding-3-small - optimized for general text with good performance and cost efficiency.',
     deploymentName: 'text-embedding-3-small',
-    apiVersion: '2023-05-15'
+    apiVersion: '2023-05-15',
+    type: 'embedding'
   },
   'azure-text-embedding-3-large': {
     vendor: 'AzureOpenAI',
@@ -87,7 +115,8 @@ const defaultModels = {
     active: true,
     description: 'Azure-hosted text-embedding-3-large - better for complex technical content and longer context.',
     deploymentName: 'text-embedding-3-large',
-    apiVersion: '2023-05-15'
+    apiVersion: '2023-05-15',
+    type: 'embedding'
   },
   
   // Anthropic models
@@ -97,7 +126,8 @@ const defaultModels = {
     output: 15.0,
     maxTokens: 200000,
     active: true,
-    description: 'Fast and cost-effective Claude model with excellent performance.'
+    description: 'Fast and cost-effective Claude model with excellent performance.',
+    type: 'chat'
   },
   'claude-3-7-sonnet': {
     vendor: 'Anthropic',
@@ -105,7 +135,8 @@ const defaultModels = {
     output: 75.0,
     maxTokens: 200000,
     active: true,
-    description: 'Anthropic\'s most advanced Claude model with exceptional reasoning capabilities.'
+    description: 'Anthropic\'s most advanced Claude model with exceptional reasoning capabilities.',
+    type: 'chat'
   },
   
   // Ollama models (free for local inference)
@@ -114,21 +145,24 @@ const defaultModels = {
     input: 0,
     output: 0,
     active: true,
-    description: 'Open source Llama 3 (8B) model for local inference via Ollama.'
+    description: 'Open source Llama 3 (8B) model for local inference via Ollama.',
+    type: 'chat'
   },
   'gemma3:12b': {
     vendor: 'Ollama',
     input: 0,
     output: 0,
     active: true,
-    description: 'Open source Gemma 3 (12B) model for local inference via Ollama.'
+    description: 'Open source Gemma 3 (12B) model for local inference via Ollama.',
+    type: 'chat'
   },
   'mistral:latest': {
     vendor: 'Ollama',
     input: 0,
     output: 0,
     active: true,
-    description: 'Open source Mistral (7B) model for local inference via Ollama.'
+    description: 'Open source Mistral (7B) model for local inference via Ollama.',
+    type: 'chat'
   }
 };
 
@@ -163,6 +197,9 @@ const apiConfig = {
     apiVersion: process.env.REACT_APP_AZURE_OPENAI_API_VERSION
   }
 };
+
+// Create a module-specific logger
+const logger = createLogger('llm-config');
 
 /**
  * Calculate cost for token usage with a specific model
@@ -240,14 +277,82 @@ const getModelsByVendor = (vendor, customModels = null) => {
  * @returns {Object} - Configuration status for each provider
  */
 const checkApiConfiguration = () => {
+  // Check for Ollama endpoint in localStorage or environment variable
+  const hasOllamaEndpoint = !!(process.env.REACT_APP_OLLAMA_API_URL || localStorage.getItem('ollamaEndpoint'));
+  
   return {
     openAI: !!apiConfig.openAI.apiKey,
     anthropic: !!apiConfig.anthropic.apiKey,
     azure: !!(apiConfig.azure.apiKey && apiConfig.azure.endpoint),
-    ollama: true // Ollama is always available if running locally
+    ollama: hasOllamaEndpoint // Only return true if an Ollama endpoint is configured
   };
 };
 
+/**
+ * Get models available based solely on configured API keys/endpoints.
+ * This function does NOT filter by model type (chat/embedding).
+ * @returns {Array<string>} - Array of model IDs whose vendor API keys are configured.
+ */
+function getAvailableModelsBasedOnKeys() {
+  const availableModels = [];
+
+  // Check API key presence
+  const hasOpenAI = !!(process.env.REACT_APP_OPENAI_API_KEY || localStorage.getItem('openaiApiKey'));
+  const hasAnthropic = !!(process.env.REACT_APP_ANTHROPIC_API_KEY || localStorage.getItem('anthropicApiKey'));
+  const hasAzure = !!(process.env.REACT_APP_AZURE_OPENAI_API_KEY || localStorage.getItem('azureApiKey')) &&
+                   !!(process.env.REACT_APP_AZURE_OPENAI_ENDPOINT || localStorage.getItem('azureEndpoint'));
+  const hasOllama = !!(process.env.REACT_APP_OLLAMA_API_URL || localStorage.getItem('ollamaEndpoint'));
+  
+  // Log which keys/endpoints are found
+  logger.debug('Checking model availability based on keys:',
+    {
+      hasOpenAI,
+      hasAnthropic,
+      hasAzure,
+      hasOllama
+    }
+  );
+
+  // Iterate through all defined models
+  for (const modelId in defaultModels) {
+    const modelConfig = defaultModels[modelId];
+    let isAvailable = false;
+
+    // Check availability based on vendor and key presence
+    switch (modelConfig.vendor) {
+      case 'OpenAI':
+        isAvailable = hasOpenAI;
+        break;
+      case 'Anthropic':
+        isAvailable = hasAnthropic;
+        break;
+      case 'AzureOpenAI':
+        isAvailable = hasAzure;
+        break;
+      case 'Ollama':
+        isAvailable = hasOllama;
+        break;
+      default:
+        logger.warn(`Unknown vendor for model ${modelId}: ${modelConfig.vendor}`);
+        break;
+    }
+
+    // If the vendor's key is configured and the model is active, add it
+    if (isAvailable && modelConfig.active) {
+      availableModels.push(modelId);
+    }
+  }
+
+  if (availableModels.length === 0) {
+    logger.warn('No models available based on current API key/endpoint configuration.');
+  } else {
+    logger.info('Available models based on keys:', availableModels);
+  }
+
+  return availableModels;
+}
+
+// USE COMMONJS EXPORTS INSTEAD
 module.exports = {
   vendorColors,
   defaultModels,
@@ -256,5 +361,6 @@ module.exports = {
   calculateCost,
   getActiveModels,
   getModelsByVendor,
-  checkApiConfiguration
+  checkApiConfiguration,
+  getAvailableModelsBasedOnKeys
 }; 

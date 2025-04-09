@@ -13,7 +13,6 @@ import {
   Button,
   Stack,
   Alert,
-  Snackbar,
   Tooltip,
   Tabs,
   Tab
@@ -52,9 +51,10 @@ const ResponseComparison = ({
   vectorStore,
   availableModels
 }) => {
-  const [snackbarOpen, setSnackbarOpen] = useState(false);
-  const [snackbarMessage, setSnackbarMessage] = useState('');
-  const [snackbarSeverity, setSnackbarSeverity] = useState('success');
+  // Remove unused state variables but keep the setter functions
+  const [, setSnackbarOpen] = useState(false);
+  const [, setSnackbarMessage] = useState('');
+  const [, setSnackbarSeverity] = useState('success');
   
   // Reference to the file input element
   const fileInputRef = useRef(null);
@@ -172,7 +172,7 @@ const ResponseComparison = ({
   // Add new state variables
   const [selectedTab, setSelectedTab] = useState('comparison');
   const [sortConfig, setSortConfig] = useState({
-    key: 'responseTime',
+    key: 'elapsedTime',
     direction: 'ascending'
   });
 
@@ -190,45 +190,41 @@ const ResponseComparison = ({
     if (!sortConfig.key) return data;
     
     return [...data].sort((a, b) => {
-      // Get metrics for both rows
-      let aMetrics = null;
-      let bMetrics = null;
+      // Get responses for both models
+      const aResponse = responses?.models?.[a.setName]?.[a.displayName] || 
+                       responses?.[a.setName]?.[a.displayName] ||
+                       responses?.[a.displayName];
       
-      // Try to find metrics using our robust lookup helper
-      aMetrics = findMetrics(metrics, a.displayName);
-      bMetrics = findMetrics(metrics, b.displayName);
+      const bResponse = responses?.models?.[b.setName]?.[b.displayName] || 
+                       responses?.[b.setName]?.[b.displayName] ||
+                       responses?.[b.displayName];
       
       let aValue = 0;
       let bValue = 0;
       
-      // Calculate values based on sort key
       switch (sortConfig.key) {
-        case 'responseTime':
-          aValue = aMetrics?.responseTime || aMetrics?.elapsedTime || 0;
-          bValue = bMetrics?.responseTime || bMetrics?.elapsedTime || 0;
+        case 'elapsedTime':
+          aValue = aResponse?.elapsedTime || 0;
+          bValue = bResponse?.elapsedTime || 0;
           break;
           
         case 'tokenUsage':
-          aValue = aMetrics?.tokenUsage?.total || 0;
-          bValue = bMetrics?.tokenUsage?.total || 0;
+          aValue = aResponse?.tokenUsage?.total || 0;
+          bValue = bResponse?.tokenUsage?.total || 0;
           break;
           
         case 'cost':
           // First check if cost is directly available in the response
-          const aResponse = responses?.models?.[a.setName]?.[a.displayName] || 
-                            responses?.[a.setName]?.[a.displayName] ||
-                            responses?.[a.displayName];
-          const bResponse = responses?.models?.[b.setName]?.[b.displayName] || 
-                            responses?.[b.setName]?.[b.displayName] ||
-                            responses?.[b.displayName];
+          const aResponseCost = aResponse?.cost || aResponse?.rawResponse?.cost;
+          const bResponseCost = bResponse?.cost || bResponse?.rawResponse?.cost;
                             
           // Use cost from API response if available, otherwise calculate
-          aValue = aResponse?.cost || aResponse?.rawResponse?.cost;
-          bValue = bResponse?.cost || bResponse?.rawResponse?.cost;
+          aValue = aResponseCost;
+          bValue = bResponseCost;
           
           // Fallback to calculation if no cost in response
           if (aValue === undefined || aValue === null) {
-            const aTokenUsage = aMetrics?.tokenUsage?.total || 0;
+            const aTokenUsage = aResponse?.tokenUsage?.total || 0;
             const aCalculatedCost = calculateCost(window.costTracker?.normalizeModelName?.(a.displayName) || a.displayName, {
               input: aTokenUsage / 2,  // estimate split
               output: aTokenUsage / 2
@@ -237,7 +233,7 @@ const ResponseComparison = ({
           }
           
           if (bValue === undefined || bValue === null) {
-            const bTokenUsage = bMetrics?.tokenUsage?.total || 0;
+            const bTokenUsage = bResponse?.tokenUsage?.total || 0;
             const bCalculatedCost = calculateCost(window.costTracker?.normalizeModelName?.(b.displayName) || b.displayName, {
               input: bTokenUsage / 2,  // estimate split
               output: bTokenUsage / 2
@@ -251,59 +247,71 @@ const ResponseComparison = ({
           bValue = 0;
       }
       
-      // Handle numeric comparisons
-      if (typeof aValue === 'number' && typeof bValue === 'number') {
-        if (sortConfig.direction === 'ascending') {
-          return aValue - bValue;
-        }
-        return bValue - aValue;
-      }
-      
-      // Fallback for non-numeric values
       if (sortConfig.direction === 'ascending') {
-        return aValue > bValue ? 1 : -1;
+        return aValue - bValue;
       }
-      return aValue < bValue ? 1 : -1;
+      return bValue - aValue;
     });
   };
 
-  const formatResponseTime = (ms) => {
-    if (ms === undefined || ms === null || isNaN(ms)) {
-      return 'Unknown';
+  // Helper function to get elapsed time from metrics
+  const formatElapsedTime = (ms, timeType) => {
+    console.log(`[TIME DEBUG] formatElapsedTime called with: ${ms}ms, type: ${timeType || 'unknown'}`);
+    
+    if (!ms || isNaN(ms)) return 'N/A';
+    
+    // Ensure we're dealing with a duration, not a timestamp
+    let duration = ms;
+    
+    // If it's a timestamp (greater than 24 hours in ms), convert to elapsed time
+    // Skip this check if we explicitly know it's already a duration
+    if (timeType !== 'duration' && ms > 24 * 60 * 60 * 1000) {
+      const calculatedElapsed = Date.now() - ms;
+      console.log(`[TIME DEBUG] Converting timestamp ${ms} to elapsed time: ${calculatedElapsed}ms`);
+      duration = calculatedElapsed;
+    } else {
+      console.log(`[TIME DEBUG] Using as duration: ${duration}ms`);
     }
-    if (ms < 1000) {
-      return `${ms}ms`;
+    
+    // Format the duration for display
+    if (duration < 1000) {
+      return `${duration.toFixed(2)}ms`;
+    } else if (duration < 60000) {
+      return `${(duration / 1000).toFixed(2)}s`;
+    } else {
+      const minutes = Math.floor(duration / 60000);
+      const seconds = ((duration % 60000) / 1000).toFixed(1);
+      return `${minutes}m ${seconds}s`;
     }
-    return `${(ms / 1000).toFixed(2)}s`;
   };
 
   const formatCost = (costValue) => {
     console.log(`[COST DEBUG] formatCost called with: ${costValue}, type: ${typeof costValue}`);
-    if (costValue === null || costValue === undefined) return 'N/A';
+    
+    // Handle invalid inputs
+    if (costValue === null || costValue === undefined || isNaN(costValue)) {
+      console.log('[COST DEBUG] Invalid cost value:', costValue);
+      return 'N/A';
+    }
+    
+    // Convert to number if it's a string
+    const cost = Number(costValue);
+    
     // For very small costs, use fixed decimal notation with 10 decimal places
-    if (costValue > 0 && costValue < 0.0000001) {
-      return `$${costValue.toFixed(10)}`;
-    }
-    return `$${costValue.toFixed(7)}`;
-  };
-
-  const formatElapsedTime = (ms) => {
-    if (ms === undefined || ms === null || isNaN(ms)) {
-      return 'Unknown';
+    if (cost > 0 && cost < 0.0000001) {
+      return `$${cost.toFixed(10)}`;
     }
     
-    const seconds = Math.floor(ms / 1000);
-    const minutes = Math.floor(seconds / 60);
-    const remainingSeconds = seconds % 60;
-    
-    if (minutes > 0) {
-      return `${minutes}m ${remainingSeconds}s`;
-    } else {
-      return `${remainingSeconds}.${Math.floor((ms % 1000) / 100)}s`;
-    }
+    // For regular costs, use 7 decimal places
+    return `$${cost.toFixed(7)}`;
   };
 
   const modelColors = {
+    // Azure OpenAI models (blue)
+    'azure-gpt-4o': '#0078d4',
+    'azure-gpt-4o-mini': '#0078d4',
+    'azure-o3-mini': '#0078d4',
+    
     // OpenAI models (green)
     'gpt-4o': '#10a37f',
     'gpt-4o-mini': '#10a37f',
@@ -459,10 +467,6 @@ const ResponseComparison = ({
     reader.readAsText(file);
   };
 
-  const handleSnackbarClose = () => {
-    setSnackbarOpen(false);
-  };
-
   const generatePDF = () => {
     try {
       console.log("Starting PDF generation with updated jsPDF");
@@ -539,7 +543,7 @@ const ResponseComparison = ({
             // Find the first key with valid metrics
             const validMetricsKey = backupMetricsKeys.find(key => 
               metrics[key] && (
-                !isNaN(metrics[key]?.responseTime) || 
+                !isNaN(metrics[key]?.elapsedTime) || 
                 (metrics[key]?.tokenUsage && metrics[key]?.tokenUsage?.total)
               )
             );
@@ -580,13 +584,25 @@ const ResponseComparison = ({
             console.log(`[Cost Debug] Using raw response API cost for ${modelName}: $${cost} (useForDisplay=true)`);
           }
           // Fall back to any available cost
+          else if (modelMetrics?.useForDisplay === true && modelMetrics?.calculatedCost !== undefined) {
+            cost = Number(modelMetrics.calculatedCost);
+            useApiCost = true;
+            console.log(`[Cost Debug FINAL] Using metrics API cost: ${cost}`);
+          }
+          // Priority 2: Any calculatedCost
+          else if (modelMetrics?.calculatedCost !== undefined) {
+            cost = Number(modelMetrics.calculatedCost);
+            console.log(`[Cost Debug FINAL] Using metrics calculated cost: ${cost}`);
+          }
+          // Priority 3: Any other cost
           else if (modelResponse?.cost !== undefined) {
             cost = Number(modelResponse.cost);
-            console.log(`[Cost Debug] Using model response cost for ${modelName}: $${cost} (no useForDisplay flag)`);
+            console.log(`[Cost Debug FINAL] Using local cost variable: ${cost}`);
           }
-          else if (modelResponse?.rawResponse?.cost !== undefined) {
-            cost = Number(modelResponse.rawResponse.cost);
-            console.log(`[Cost Debug] Using raw response cost for ${modelName}: $${cost} (no useForDisplay flag)`);
+          // Fall back to 0
+          else {
+            cost = 0;
+            console.log(`[Cost Debug FINAL] Using fallback cost: ${cost}`);
           }
           
           // Set useForDisplay flag on modelMetrics if we're using an API-reported cost
@@ -598,8 +614,7 @@ const ResponseComparison = ({
           
           tableData.push([
             `${modelName} / ${setName}`,
-            modelMetrics?.responseTime ? formatResponseTime(modelMetrics.responseTime) : 
-              modelMetrics?.elapsedTime ? formatElapsedTime(modelMetrics.elapsedTime) : 'N/A',
+            modelMetrics?.elapsedTime ? formatElapsedTime(modelMetrics.elapsedTime, modelMetrics?.elapsedTimeType) : 'N/A',
             `${modelMetrics?.tokenUsage?.total || 'Unknown'} tokens`,
             formatCost(cost)
           ]);
@@ -1006,229 +1021,117 @@ const ResponseComparison = ({
   };
 
   // Extract models and metadata
+  // eslint-disable-next-line no-unused-vars
   const { models } = separateModelsAndMetadata(responses);
 
   // Find metrics for a model using a robust lookup method
+  // eslint-disable-next-line no-unused-vars
   const findMetrics = (metrics, modelName) => {
     if (!metrics || !modelName) return null;
     
-    console.log(`[Cost Debug] Finding metrics for model: ${modelName}`);
+    // Try different possible keys for finding metrics
+    const possibleKeys = [
+      modelName,
+      `Default-${modelName}`,
+      `Default.${modelName}`,
+      modelName.toLowerCase(),
+      modelName.replace(/[^a-zA-Z0-9]/g, '')
+    ];
     
-    // Direct match
-    if (metrics[modelName]) {
-      console.log(`[Cost Debug] Found direct match in metrics for ${modelName}`);
-      console.log(`[Cost Debug] Metrics has calculatedCost: ${metrics[modelName].calculatedCost !== undefined ? 'YES' : 'NO'}`);
-      return metrics[modelName];
+    // Find first key that has valid metrics
+    for (const key of possibleKeys) {
+      const metric = metrics[key];
+      if (metric && (
+        typeof metric.elapsedTime === 'number' ||
+        typeof metric.responseTime === 'number' ||
+        (metric.tokenUsage && typeof metric.tokenUsage.total === 'number')
+      )) {
+        return metric;
+      }
     }
     
-    // Normalize the model name for consistent lookup
-    let normalizedModelName = modelName;
-    if (typeof window !== 'undefined' && window.costTracker) {
-      normalizedModelName = window.costTracker.normalizeModelName(modelName);
-      console.log(`[Cost Debug] Normalized model name from ${modelName} to ${normalizedModelName}`);
-    }
-    
-    // Try with normalized name
-    if (normalizedModelName !== modelName && metrics[normalizedModelName]) {
-      console.log(`[Cost Debug] Found match with normalized name ${normalizedModelName}`);
-      console.log(`[Cost Debug] Metrics has calculatedCost: ${metrics[normalizedModelName].calculatedCost !== undefined ? 'YES' : 'NO'}`);
-      return metrics[normalizedModelName];
-    }
-    
-    // Check for model-specific tracking ID matches
+    // If no direct match, look in nested structures
     for (const key in metrics) {
-      if (metrics[key]?.model === modelName || metrics[key]?.model === normalizedModelName) {
-        console.log(`[Cost Debug] Found match by model property: ${key}`);
-        console.log(`[Cost Debug] Metrics has calculatedCost: ${metrics[key].calculatedCost !== undefined ? 'YES' : 'NO'}`);
-        return metrics[key];
-      }
-    }
-    
-    // Check if this is a composite key like "Set 1-gpt-4o"
-    if (modelName.includes('-')) {
-      const setMatch = modelName.match(/^(Set \d+)-(.+)$/);
-      
-      if (setMatch) {
-        const setName = setMatch[1]; // e.g., "Set 1"
-        const baseModelName = setMatch[2]; // e.g., "gpt-4o"
-        
-        // Try normalized base model name
-        let normalizedBaseModelName = baseModelName;
-        if (typeof window !== 'undefined' && window.costTracker) {
-          normalizedBaseModelName = window.costTracker.normalizeModelName(baseModelName);
-        }
-        
-        // Check for metrics under the set key
-        if (metrics[setName]) {
-          // Try with the original or normalized model name
-          if (metrics[setName][baseModelName]) {
-            console.log(`[Cost Debug] Found in nested structure: ${setName}[${baseModelName}]`);
-            console.log(`[Cost Debug] Metrics has calculatedCost: ${metrics[setName][baseModelName].calculatedCost !== undefined ? 'YES' : 'NO'}`);
-            return metrics[setName][baseModelName];
-          }
-          if (normalizedBaseModelName !== baseModelName && metrics[setName][normalizedBaseModelName]) {
-            console.log(`[Cost Debug] Found in nested structure with normalized name: ${setName}[${normalizedBaseModelName}]`);
-            console.log(`[Cost Debug] Metrics has calculatedCost: ${metrics[setName][normalizedBaseModelName].calculatedCost !== undefined ? 'YES' : 'NO'}`);
-            return metrics[setName][normalizedBaseModelName];
-          }
-        }
-        
-        // Try just the base model name
-        if (metrics[baseModelName]) {
-          console.log(`[Cost Debug] Found with base model name: ${baseModelName}`);
-          console.log(`[Cost Debug] Metrics has calculatedCost: ${metrics[baseModelName].calculatedCost !== undefined ? 'YES' : 'NO'}`);
-          return metrics[baseModelName];
-        }
-        
-        // Try with normalized base model name
-        if (normalizedBaseModelName !== baseModelName && metrics[normalizedBaseModelName]) {
-          console.log(`[Cost Debug] Found with normalized base model name: ${normalizedBaseModelName}`);
-          console.log(`[Cost Debug] Metrics has calculatedCost: ${metrics[normalizedBaseModelName].calculatedCost !== undefined ? 'YES' : 'NO'}`);
-          return metrics[normalizedBaseModelName];
-        }
-        
-        // Check composite key directly
-        const compositeKey = `${setName}-${baseModelName}`;
-        if (metrics[compositeKey]) {
-          console.log(`[Cost Debug] Found with composite key: ${compositeKey}`);
-          console.log(`[Cost Debug] Metrics has calculatedCost: ${metrics[compositeKey].calculatedCost !== undefined ? 'YES' : 'NO'}`);
-          return metrics[compositeKey];
-        }
-        
-        // Check with normalized component
-        const normalizedCompositeKey = `${setName}-${normalizedBaseModelName}`;
-        if (normalizedBaseModelName !== baseModelName && metrics[normalizedCompositeKey]) {
-          console.log(`[Cost Debug] Found with normalized composite key: ${normalizedCompositeKey}`);
-          console.log(`[Cost Debug] Metrics has calculatedCost: ${metrics[normalizedCompositeKey].calculatedCost !== undefined ? 'YES' : 'NO'}`);
-          return metrics[normalizedCompositeKey];
+      if (metrics[key] && typeof metrics[key] === 'object') {
+        const nestedMetric = metrics[key][modelName];
+        if (nestedMetric && (
+          typeof nestedMetric.elapsedTime === 'number' ||
+          typeof nestedMetric.responseTime === 'number' ||
+          (nestedMetric.tokenUsage && typeof nestedMetric.tokenUsage.total === 'number')
+        )) {
+          return nestedMetric;
         }
       }
     }
     
-    // Try checking all keys that might contain the model name
-    for (const key in metrics) {
-      if (key.includes(modelName)) {
-        console.log(`[Cost Debug] Found through partial key match: ${key}`);
-        console.log(`[Cost Debug] Metrics has calculatedCost: ${metrics[key].calculatedCost !== undefined ? 'YES' : 'NO'}`);
-        return metrics[key];
-      }
-      // Also check for normalized name
-      if (normalizedModelName !== modelName && key.includes(normalizedModelName)) {
-        console.log(`[Cost Debug] Found through partial normalized key match: ${key}`);
-        console.log(`[Cost Debug] Metrics has calculatedCost: ${metrics[key].calculatedCost !== undefined ? 'YES' : 'NO'}`);
-        return metrics[key];
-      }
-    }
-    
-    console.log(`[Cost Debug] No metrics found for ${modelName}`);
     return null;
-  };
-
-  // Add a debug section at the top to show raw response data
-  const renderDebugSection = () => {
-    return (
-      <Paper elevation={1} sx={{ p: 2, mb: 3, bgcolor: '#f5f5f5' }}>
-        <Typography variant="h6" gutterBottom>
-          Debug Information
-        </Typography>
-        
-        <Box sx={{ mb: 2 }}>
-          <Typography variant="subtitle1">Query:</Typography>
-          <Paper elevation={0} sx={{ p: 1, bgcolor: 'white' }}>
-            <Typography variant="body2">{currentQuery || "No query found"}</Typography>
-          </Paper>
-        </Box>
-        
-        <Box sx={{ mb: 2 }}>
-          <Typography variant="subtitle1">Response Structure Check:</Typography>
-          <Paper elevation={0} sx={{ p: 1, bgcolor: 'white' }}>
-            <Typography variant="body2" component="div">
-              <ul style={{ margin: 0, paddingLeft: '1.5rem' }}>
-                <li>Response exists: <strong>{responses ? "Yes" : "No"}</strong></li>
-                <li>Response type: <strong>{typeof responses}</strong></li>
-                <li>Response has 'models' key: <strong>{responses?.models ? "Yes" : "No"}</strong></li>
-                <li>Response has 'Set X' keys: <strong>{Object.keys(responses || {}).some(k => k.startsWith('Set ')) ? "Yes" : "No"}</strong></li>
-                <li>Number of top-level keys: <strong>{Object.keys(responses || {}).length}</strong></li>
-                <li>Number of models detected: <strong>{modelRows?.length || 0}</strong></li>
-              </ul>
-            </Typography>
-          </Paper>
-        </Box>
-        
-        <Box sx={{ mb: 2 }}>
-          <Typography variant="subtitle1">Response Structure:</Typography>
-          <Paper elevation={0} sx={{ p: 1, bgcolor: 'white', maxHeight: '300px', overflow: 'auto' }}>
-            <pre style={{ margin: 0, fontSize: '12px' }}>
-              {JSON.stringify(responses, null, 2) || "No responses data"}
-            </pre>
-          </Paper>
-        </Box>
-        
-        <Box sx={{ mb: 2 }}>
-          <Typography variant="subtitle1">Metrics:</Typography>
-          <Paper elevation={0} sx={{ p: 1, bgcolor: 'white', maxHeight: '200px', overflow: 'auto' }}>
-            <pre style={{ margin: 0, fontSize: '12px' }}>
-              {JSON.stringify(metrics, null, 2) || "No metrics data"}
-            </pre>
-          </Paper>
-        </Box>
-        
-        <Box sx={{ mb: 2 }}>
-          <Typography variant="subtitle1">Available Models:</Typography>
-          <Paper elevation={0} sx={{ p: 1, bgcolor: 'white' }}>
-            <Typography variant="body2">{availableModels?.join(', ') || "No models found"}</Typography>
-          </Paper>
-        </Box>
-        
-        <Box>
-          <Typography variant="subtitle1">Troubleshooting Tips:</Typography>
-          <Paper elevation={0} sx={{ p: 1, bgcolor: 'white' }}>
-            <Typography variant="body2" component="div">
-              <ul style={{ margin: 0, paddingLeft: '1.5rem' }}>
-                <li>If you don't see responses, check the network logs for successful API calls</li>
-                <li>Look at the Response Structure to confirm the API returned content</li>
-                <li>If API responses are successful but content isn't displaying, the response format may be unexpected</li>
-                <li>Try different model types (OpenAI vs Claude) as they have different response formats</li>
-              </ul>
-            </Typography>
-          </Paper>
-        </Box>
-      </Paper>
-    );
   };
 
   // Improved function to extract model data from responses
   const extractModelData = () => {
-    console.log("Extracting model data from:", responses);
+    console.log('Extracting model data from:', responses);
+    
     const modelRows = [];
     
-    // Check if responses exists and is an object
+    // Check if responses is a proper object
     if (!responses || typeof responses !== 'object') {
-      console.log("Response is empty or not an object");
-      return modelRows;
+      console.log('No valid responses object found');
+      return [];
     }
     
-    // CASE 1: New response structure with 'models' key
-    if (responses.models && typeof responses.models === 'object') {
-      console.log("Using new response structure with 'models' key");
+    // Helper function to check if a model is available
+    const isModelAvailable = (modelName) => {
+      // Check if model exists in availableModels prop
+      if (!availableModels || !Array.isArray(availableModels)) {
+        console.log(`No availableModels array provided for ${modelName}`);
+        return true; // Default to available if we can't check
+      }
+      const isAvailable = availableModels.includes(modelName);
+      if (!isAvailable) {
+        console.log(`Model ${modelName} is not in availableModels list`);
+      }
+      return isAvailable;
+    };
+    
+    // New structured format with 'models' key
+    if (responses.models) {
+      console.log('Using new response structure with \'models\' key');
       
-      // Loop through each prompt set
-      Object.entries(responses.models).forEach(([setKey, modelSet]) => {
-        // Skip non-object entries
-        if (!modelSet || typeof modelSet !== 'object') return;
+      // Iterate through prompt sets
+      Object.keys(responses.models).forEach(setKey => {
+        const setModels = responses.models[setKey];
+        console.log(`Processing model set: ${setKey}, models:`, Object.keys(setModels));
         
-        // Loop through each model in the set
-        Object.entries(modelSet).forEach(([modelName, modelResponse]) => {
+        // Iterate through models in this set
+        Object.keys(setModels).forEach(modelName => {
           console.log(`Found model ${modelName} in set ${setKey}`);
-          modelRows.push({
-            setName: setKey,
-            displayName: modelName,
-            metricsKey: `${setKey}-${modelName}`,
-            response: modelResponse
-          });
+          const modelResponse = setModels[modelName];
+          
+          // Only add if model is available
+          if (isModelAvailable(modelName)) {
+            // Add this model to our model rows
+            modelRows.push({
+              setName: setKey,
+              displayName: modelName,
+              modelName: modelName,
+              response: modelResponse,
+              metricsKey: `${setKey}-${modelName}`
+            });
+          }
         });
       });
-    } 
+      
+      console.log('Final extracted model responses:', 
+        modelRows.map(row => ({
+          set: row.setName,
+          model: row.displayName,
+          hasText: row.response && row.response.text ? 'Yes' : 'No',
+          textLength: row.response && row.response.text ? row.response.text.length : 0
+        }))
+      );
+      
+      return modelRows;
+    }
     
     // CASE 2: Check for 'Set X' keys at top level
     const setKeys = Object.keys(responses).filter(key => key.startsWith('Set '));
@@ -1240,12 +1143,15 @@ const ResponseComparison = ({
         if (typeof setModels === 'object' && !Array.isArray(setModels)) {
           Object.entries(setModels).forEach(([modelName, modelResponse]) => {
             console.log(`Found model ${modelName} in set ${setKey}`);
-            modelRows.push({
-              setName: setKey,
-              displayName: modelName,
-              metricsKey: `${setKey}-${modelName}`,
-              response: modelResponse
-            });
+            // Only add if model is available
+            if (isModelAvailable(modelName)) {
+              modelRows.push({
+                setName: setKey,
+                displayName: modelName,
+                metricsKey: `${setKey}-${modelName}`,
+                response: modelResponse
+              });
+            }
           });
         }
       });
@@ -1276,12 +1182,15 @@ const ResponseComparison = ({
         
         if (isModelName) {
           console.log(`Found direct model: ${key}`);
-          modelRows.push({
-            setName: 'Default',
-            displayName: key,
-            metricsKey: key,
-            response: responses[key]
-          });
+          // Only add if model is available
+          if (isModelAvailable(key)) {
+            modelRows.push({
+              setName: 'Default',
+              displayName: key,
+              metricsKey: key,
+              response: responses[key]
+            });
+          }
         } else {
           // For non-pattern matches, check if it has response-like properties
           const value = responses[key];
@@ -1290,12 +1199,15 @@ const ResponseComparison = ({
                value.response || value.choices || 
                (value.rawResponse && value.rawResponse.choices))) {
             console.log(`Found response-like object for key: ${key}`);
-            modelRows.push({
-              setName: 'Default',
-              displayName: key,
-              metricsKey: key,
-              response: value
-            });
+            // Only add if model is available
+            if (isModelAvailable(key)) {
+              modelRows.push({
+                setName: 'Default',
+                displayName: key,
+                metricsKey: key,
+                response: value
+              });
+            }
           }
         }
       });
@@ -1325,15 +1237,17 @@ const ResponseComparison = ({
 
   // Helper to extract actual text content from model responses
   const getResponseText = (modelResponse) => {
-    console.log("Getting text from model response:", modelResponse);
+    console.log("Getting text from model response:", JSON.stringify(modelResponse).substring(0, 300) + "...");
     
     // Handle string responses
     if (typeof modelResponse === 'string') {
+      console.log("Found string response:", modelResponse.substring(0, 50) + "...");
       return modelResponse;
     }
     
     // If response is not an object, try to convert to string
     if (!modelResponse || typeof modelResponse !== 'object') {
+      console.log("Response is not an object, converting to string");
       return String(modelResponse || '');
     }
     
@@ -1341,24 +1255,36 @@ const ResponseComparison = ({
     
     // Check for nested content in choices (common in OpenAI/Azure responses)
     if (modelResponse.choices && Array.isArray(modelResponse.choices) && modelResponse.choices.length > 0) {
+      console.log("Found choices array in response");
       const choice = modelResponse.choices[0];
       
       if (choice.message && choice.message.content) {
+        console.log("Found content in message.content");
         return choice.message.content;
       }
       
       if (choice.text) {
+        console.log("Found content in choice.text");
         return choice.text;
       }
       
       if (choice.delta && choice.delta.content) {
+        console.log("Found content in delta.content");
         return choice.delta.content;
       }
     }
     
+    // Check for text property directly on model response
+    if (modelResponse.text) {
+      console.log("Found direct text property:", modelResponse.text.substring(0, 50) + "...");
+      return modelResponse.text;
+    }
+    
     // Check for raw response formats - common due to API wrapping
     if (modelResponse.rawResponse) {
+      console.log("Found rawResponse property");
       if (typeof modelResponse.rawResponse === 'string') {
+        console.log("rawResponse is a string");
         return modelResponse.rawResponse;
       }
       
@@ -1366,13 +1292,16 @@ const ResponseComparison = ({
           Array.isArray(modelResponse.rawResponse.choices) && 
           modelResponse.rawResponse.choices.length > 0) {
         
+        console.log("Found choices in rawResponse");
         const choice = modelResponse.rawResponse.choices[0];
         
         if (choice.message && choice.message.content) {
+          console.log("Found content in rawResponse.choices[0].message.content");
           return choice.message.content;
         }
         
         if (choice.text) {
+          console.log("Found content in rawResponse.choices[0].text");
           return choice.text;
         }
       }
@@ -1388,29 +1317,31 @@ const ResponseComparison = ({
     }
     
     // Check for various text fields that might contain the response
-    if (modelResponse.text) {
-      return modelResponse.text;
-    }
-    
     if (modelResponse.content) {
+      console.log("Found content property:", modelResponse.content.substring(0, 50) + "...");
       return modelResponse.content;
     }
     
     if (modelResponse.response) {
+      console.log("Found response property");
       if (typeof modelResponse.response === 'string') {
+        console.log("response is a string:", modelResponse.response.substring(0, 50) + "...");
         return modelResponse.response;
       } else if (modelResponse.response.text) {
+        console.log("Found text in response.text:", modelResponse.response.text.substring(0, 50) + "...");
         return modelResponse.response.text;
       }
     }
     
     // Anthropic format
     if (modelResponse.completion) {
+      console.log("Found completion property:", modelResponse.completion.substring(0, 50) + "...");
       return modelResponse.completion;
     }
     
     // Look for any property that might contain the response text
     // Loop through all properties and check if any look like they have content
+    console.log("Searching all properties for potential content");
     for (const key in modelResponse) {
       const value = modelResponse[key];
       
@@ -1420,6 +1351,8 @@ const ResponseComparison = ({
         continue;
       }
       
+      console.log(`Checking property '${key}', type: ${typeof value}`);
+      
       // If we find a string property that's reasonably long, it might be the content
       if (typeof value === 'string' && value.length > 10) {
         console.log(`Found potential content in property '${key}':`, value.substring(0, 50) + '...');
@@ -1428,24 +1361,30 @@ const ResponseComparison = ({
       
       // Check nested objects like message.content pattern
       if (typeof value === 'object' && value !== null) {
+        console.log(`Examining nested object in property '${key}'`);
         if (value.content && typeof value.content === 'string') {
+          console.log(`Found content in ${key}.content:`, value.content.substring(0, 50) + '...');
           return value.content;
         }
         
         if (value.text && typeof value.text === 'string') {
+          console.log(`Found content in ${key}.text:`, value.text.substring(0, 50) + '...');
           return value.text;
         }
         
         if (value.message && value.message.content) {
+          console.log(`Found content in ${key}.message.content:`, value.message.content.substring(0, 50) + '...');
           return value.message.content;
         }
       }
     }
     
     // Last resort: stringify the object
+    console.log("Could not find content in any expected field, returning stringified object");
     try {
       return JSON.stringify(modelResponse, null, 2);
     } catch (e) {
+      console.error("Error stringifying model response:", e);
       return "Could not display response";
     }
   };
@@ -1453,6 +1392,7 @@ const ResponseComparison = ({
   // Render model responses section
   const renderModelResponses = () => {
     if (!modelRows || modelRows.length === 0) {
+      console.log("No model rows found for rendering responses");
       return (
         <Paper elevation={1} sx={{ p: 2, mb: 3 }}>
           <Alert severity="warning">
@@ -1462,6 +1402,8 @@ const ResponseComparison = ({
       );
     }
     
+    console.log("Rendering responses for model rows:", modelRows.map(m => m.displayName));
+    
     return (
       <Paper elevation={1} sx={{ p: 2, mb: 3 }}>
         <Typography variant="h6" gutterBottom>Model Responses</Typography>
@@ -1469,6 +1411,12 @@ const ResponseComparison = ({
         {modelRows.map((model, index) => {
           const responseText = getResponseText(model.response);
           const hasContent = responseText && responseText.trim().length > 0;
+          
+          console.log(`Model ${model.displayName} response:`, {
+            hasContent,
+            textLength: responseText?.length || 0,
+            responsePreview: responseText ? responseText.substring(0, 50) + '...' : 'N/A'
+          });
           
           return (
             <Box key={`${model.setName}-${model.displayName}`} sx={{ mb: 3 }}>
@@ -1672,11 +1620,11 @@ const ResponseComparison = ({
                   <TableRow>
                     <TableCell>Model</TableCell>
                     <TableCell 
-                      onClick={() => handleSort('responseTime')}
+                      onClick={() => handleSort('elapsedTime')}
                       sx={{ cursor: 'pointer' }}
                     >
                       Response Time
-                      {sortConfig.key === 'responseTime' && (
+                      {sortConfig.key === 'elapsedTime' && (
                         <span style={{ marginLeft: '4px' }}>
                           {sortConfig.direction === 'ascending' ? '↑' : '↓'}
                         </span>
@@ -1791,7 +1739,7 @@ const ResponseComparison = ({
                         // Find the first key with valid metrics
                         validMetricsKey = backupMetricsKeys.find(key => 
                           metrics[key] && (
-                            !isNaN(metrics[key]?.responseTime) || 
+                            !isNaN(metrics[key]?.elapsedTime) || 
                             (metrics[key]?.tokenUsage && metrics[key]?.tokenUsage?.total)
                           )
                         );
@@ -1821,19 +1769,32 @@ const ResponseComparison = ({
                         console.log(`[Cost Debug] Using model response API cost for ${displayName}: $${cost} (useForDisplay=true)`);
                       }
                       // Check if raw response has cost
-                      else if (modelResponse?.rawResponse?.useForDisplay === true && modelResponse?.rawResponse?.cost !== undefined) {
+                      else if (modelResponse?.rawResponse?.useForDisplay === true && 
+                               modelResponse?.rawResponse?.cost !== undefined) {
                         cost = Number(modelResponse.rawResponse.cost);
                         useApiCost = true;
                         console.log(`[Cost Debug] Using raw response API cost for ${displayName}: $${cost} (useForDisplay=true)`);
                       }
                       // Fall back to any available cost
+                      else if (modelMetrics?.useForDisplay === true && modelMetrics?.calculatedCost !== undefined) {
+                        cost = Number(modelMetrics.calculatedCost);
+                        useApiCost = true;
+                        console.log(`[Cost Debug FINAL] Using metrics API cost: ${cost}`);
+                      }
+                      // Priority 2: Any calculatedCost
+                      else if (modelMetrics?.calculatedCost !== undefined) {
+                        cost = Number(modelMetrics.calculatedCost);
+                        console.log(`[Cost Debug FINAL] Using metrics calculated cost: ${cost}`);
+                      }
+                      // Priority 3: Any other cost
                       else if (modelResponse?.cost !== undefined) {
                         cost = Number(modelResponse.cost);
-                        console.log(`[Cost Debug] Using model response cost for ${displayName}: $${cost} (no useForDisplay flag)`);
+                        console.log(`[Cost Debug FINAL] Using local cost variable: ${cost}`);
                       }
-                      else if (modelResponse?.rawResponse?.cost !== undefined) {
-                        cost = Number(modelResponse.rawResponse.cost);
-                        console.log(`[Cost Debug] Using raw response cost for ${displayName}: $${cost} (no useForDisplay flag)`);
+                      // Fall back to 0
+                      else {
+                        cost = 0;
+                        console.log(`[Cost Debug FINAL] Using fallback cost: ${cost}`);
                       }
                       
                       // Set useForDisplay flag on modelMetrics if we're using an API-reported cost
@@ -1847,7 +1808,7 @@ const ResponseComparison = ({
                       console.log(`Card metrics for ${displayName} ${setName ? `(${setName})` : ''}:`, {
                         triedKeys: backupMetricsKeys,
                         usedKey: validMetricsKey || 'none',
-                        responseTime: modelMetrics?.responseTime,
+                        responseTime: modelMetrics?.elapsedTime,
                         tokenUsage: tokenUsage,
                         cost: cost
                       });
@@ -1872,18 +1833,11 @@ const ResponseComparison = ({
                           <TableCell>
                             <Box display="flex" alignItems="center">
                               <AccessTimeIcon fontSize="small" sx={{ mr: 1 }} />
-                              {modelMetrics && !isNaN(modelMetrics.responseTime) 
-                                ? formatResponseTime(modelMetrics.responseTime) 
-                                : modelMetrics && !isNaN(modelMetrics.elapsedTime) 
-                                  ? formatElapsedTime(modelMetrics.elapsedTime) 
-                                  : 'Unknown'}
-                              {modelMetrics && modelMetrics.elapsedTime && 
-                               modelMetrics.elapsedTime !== modelMetrics.responseTime && 
-                               !isNaN(modelMetrics.elapsedTime) && 
-                                <Tooltip title={`Total elapsed time including setup: ${formatElapsedTime(modelMetrics.elapsedTime)}`}>
-                                  <InfoIcon fontSize="small" sx={{ ml: 1, color: 'text.secondary' }} />
-                                </Tooltip>
-                              }
+                              {(() => {
+                                // Get elapsed time directly from metrics where apiServices stores it
+                                const elapsedTime = modelMetrics?.elapsedTime;
+                                return formatElapsedTime(elapsedTime, modelMetrics?.elapsedTimeType);
+                              })()}
                             </Box>
                           </TableCell>
                           <TableCell>
@@ -1939,73 +1893,51 @@ const ResponseComparison = ({
                           <TableCell>
                             <Box display="flex" alignItems="center">
                               <AttachMoneyIcon fontSize="small" sx={{ mr: 1 }} />
-                              {/* Get the API-reported cost or client-calculated cost */}
                               {(() => {
-                                let costToDisplay;
+                                // Initialize all cost-related variables
+                                let costToDisplay = 0;
                                 let sourceType = 'estimated';
-                                
-                                console.log(`[Cost Debug FINAL] Model ${displayName} options:`, {
-                                  modelResponseCost: modelResponse?.cost,
-                                  modelResponseUseForDisplay: modelResponse?.useForDisplay,
-                                  rawResponseCost: modelResponse?.rawResponse?.cost,
-                                  rawResponseUseForDisplay: modelResponse?.rawResponse?.useForDisplay,
-                                  metricsCalculatedCost: modelMetrics?.calculatedCost,
-                                  metricsUseForDisplay: modelMetrics?.useForDisplay,
-                                  localCostVariable: cost
-                                });
+                                let cost = 0;
                                 
                                 // Priority 1: Direct useForDisplay=true costs
                                 if (modelResponse?.useForDisplay === true && modelResponse?.cost !== undefined) {
-                                  costToDisplay = Number(modelResponse.cost);
+                                  cost = Number(modelResponse.cost);
+                                  costToDisplay = cost;
                                   sourceType = 'API';
-                                  console.log(`[Cost Debug FINAL] Using model response API cost: ${costToDisplay}`);
                                 }
                                 else if (modelResponse?.rawResponse?.useForDisplay === true && 
                                          modelResponse?.rawResponse?.cost !== undefined) {
-                                  costToDisplay = Number(modelResponse.rawResponse.cost);
+                                  cost = Number(modelResponse.rawResponse.cost);
+                                  costToDisplay = cost;
                                   sourceType = 'API';
-                                  console.log(`[Cost Debug FINAL] Using raw response API cost: ${costToDisplay}`);
                                 }
                                 else if (modelMetrics?.useForDisplay === true && modelMetrics?.calculatedCost !== undefined) {
-                                  costToDisplay = Number(modelMetrics.calculatedCost);
+                                  cost = Number(modelMetrics.calculatedCost);
+                                  costToDisplay = cost;
                                   sourceType = 'API';
-                                  console.log(`[Cost Debug FINAL] Using metrics API cost: ${costToDisplay}`);
                                 }
                                 // Priority 2: Any calculatedCost
                                 else if (modelMetrics?.calculatedCost !== undefined) {
-                                  costToDisplay = Number(modelMetrics.calculatedCost);
-                                  console.log(`[Cost Debug FINAL] Using metrics calculated cost: ${costToDisplay}`);
+                                  cost = Number(modelMetrics.calculatedCost);
+                                  costToDisplay = cost;
                                 }
-                                // Priority 3: Any other cost
-                                else if (cost !== undefined && cost !== null) {
-                                  costToDisplay = Number(cost);
-                                  console.log(`[Cost Debug FINAL] Using local cost variable: ${costToDisplay}`);
-                                }
-                                // Fall back to 0
-                                else {
-                                  costToDisplay = 0;
-                                  console.log(`[Cost Debug FINAL] No cost found, using 0`);
+                                // Priority 3: Any other cost from model response
+                                else if (modelResponse?.cost !== undefined) {
+                                  cost = Number(modelResponse.cost);
+                                  costToDisplay = cost;
                                 }
                                 
-                                // Format the cost for display with tooltip
                                 return (
-                                  <Tooltip title={`${sourceType === 'API' ? 'API-reported' : 'Estimated'} cost`}>
-                                    <Typography variant="body2">
-                                      {costToDisplay === 0 ? 'Free' : `$${costToDisplay.toFixed(7)}`}
-                                    </Typography>
-                                  </Tooltip>
+                                  <Box>
+                                    {formatCost(costToDisplay)}
+                                    {sourceType === 'API' && (
+                                      <Tooltip title={`Cost source: ${sourceType}`}>
+                                        <InfoIcon fontSize="small" sx={{ ml: 1, color: 'text.secondary' }} />
+                                      </Tooltip>
+                                    )}
+                                  </Box>
                                 );
                               })()}
-                              
-                              {/* Only show info icon if we have both API and estimated costs that differ */}
-                              {modelMetrics?.calculatedCost !== undefined && 
-                               cost !== undefined &&
-                               modelMetrics?.calculatedCost !== cost && 
-                               Math.abs(Number(modelMetrics.calculatedCost) - Number(cost)) > 0.000001 && (
-                                <Tooltip title={`${modelMetrics.useForDisplay ? 'API' : 'Estimated'} cost: $${Number(modelMetrics.calculatedCost).toFixed(7)}, Client estimated cost: $${typeof cost === 'number' ? cost.toFixed(7) : Number(cost).toFixed(7)}`}>
-                                  <InfoIcon fontSize="small" sx={{ ml: 1, color: modelMetrics.useForDisplay ? 'success.main' : 'warning.main' }} />
-                                </Tooltip>
-                              )}
                             </Box>
                           </TableCell>
                         </TableRow>
@@ -2015,7 +1947,7 @@ const ResponseComparison = ({
                 </TableBody>
               </Table>
             </TableContainer>
-
+            
             {/* Token Usage Analysis */}
             <TokenUsageAnalyzer
               metrics={metrics}
@@ -2031,47 +1963,57 @@ const ResponseComparison = ({
               currentQuery={currentQuery}
               metrics={metrics}
             />
+            
+            {/* Render model responses section */}
+            {renderModelResponses()}
+            
           </Paper>
-          
-          {/* Place model responses at the bottom */}
-          {renderModelResponses()}
         </Box>
       )}
 
       {selectedTab === 'sourceQuality' && (
-        <SourceContentAnalysis 
+        <SourceContentAnalysis
+          responses={responses}
+          metrics={metrics}
+          currentQuery={currentQuery}
+          systemPrompts={systemPrompts}
+          onBackToQuery={handleBackToQuery}
+          onImportResults={onImportResults}
           documents={documents}
+          vectorStore={vectorStore}
           availableModels={availableModels}
         />
       )}
 
       {selectedTab === 'embeddingQuality' && (
         <EmbeddingQualityAnalysis
-          vectorStore={vectorStore}
-          documents={documents}
-        />
-      )}
-
-      {selectedTab === 'retrievalEval' && (
-        <RetrievalEvaluation
+          responses={responses}
+          metrics={metrics}
+          currentQuery={currentQuery}
+          systemPrompts={systemPrompts}
+          onBackToQuery={handleBackToQuery}
+          onImportResults={onImportResults}
           documents={documents}
           vectorStore={vectorStore}
           availableModels={availableModels}
         />
       )}
 
-      <Snackbar
-        open={snackbarOpen}
-        autoHideDuration={6000}
-        onClose={handleSnackbarClose}
-        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
-      >
-        <Alert onClose={handleSnackbarClose} severity={snackbarSeverity} sx={{ width: '100%' }}>
-          {snackbarMessage}
-        </Alert>
-      </Snackbar>
+      {selectedTab === 'retrievalEval' && (
+        <RetrievalEvaluation
+          responses={responses}
+          metrics={metrics}
+          currentQuery={currentQuery}
+          systemPrompts={systemPrompts}
+          onBackToQuery={handleBackToQuery}
+          onImportResults={onImportResults}
+          documents={documents}
+          vectorStore={vectorStore}
+          availableModels={availableModels}
+        />
+      )}
     </Box>
   );
 };
 
-export default ResponseComparison; 
+export default ResponseComparison;

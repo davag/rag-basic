@@ -1637,6 +1637,115 @@ app.get('/api/cost-tracking-by-period', (req, res) => {
   }
 });
 
+// Proxy endpoint for Azure OpenAI API embeddings
+app.post('/api/proxy/azure/embeddings', async (req, res) => {
+  try {
+    console.log('[AZURE PROXY DEBUGGER] Request path: /embeddings');
+    console.log('[AZURE PROXY DEBUGGER] Method: POST');
+    console.log('[AZURE PROXY DEBUGGER] Content-Type:', req.headers['content-type']);
+    console.log('[AZURE PROXY DEBUGGER] Body keys:', JSON.stringify(Object.keys(req.body), null, 2));
+    console.log('[AZURE PROXY DEBUGGER] Has deploymentName:', req.body.deploymentName ? 'true' : 'false');
+    console.log('[AZURE PROXY DEBUGGER] DeploymentName value:', req.body.deploymentName);
+    
+    // Extract the Azure OpenAI API key and endpoint from the request
+    const apiKey = req.body.azureApiKey;
+    const endpoint = req.body.azureEndpoint;
+    const deploymentName = req.body.deploymentName;
+    const apiVersion = req.body.apiVersion || process.env.REACT_APP_AZURE_OPENAI_API_VERSION || '2023-05-15';
+    
+    // Extract query ID if provided for tracking costs
+    const queryId = req.body.queryId;
+    
+    if (!apiKey) {
+      return res.status(401).json({
+        error: {
+          message: 'Azure OpenAI API key is required for embeddings'
+        }
+      });
+    }
+    
+    if (!endpoint) {
+      return res.status(400).json({
+        error: {
+          message: 'Azure OpenAI endpoint is required for embeddings'
+        }
+      });
+    }
+    
+    if (!deploymentName) {
+      return res.status(400).json({
+        error: {
+          message: 'Azure OpenAI deployment name is required for embeddings'
+        }
+      });
+    }
+    
+    // Create a clean request body for the embeddings API
+    const cleanRequestBody = {
+      input: req.body.input
+    };
+    
+    // Make the request to Azure OpenAI API
+    const response = await axios.post(
+      `${endpoint}/openai/deployments/${deploymentName}/embeddings?api-version=${apiVersion}`,
+      cleanRequestBody,
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          'api-key': apiKey
+        }
+      }
+    );
+    
+    // If we have a queryId, track the usage for embeddings
+    if (queryId) {
+      try {
+        // Only track if we have usage data
+        if (response.data.usage) {
+          // Use either operation name from response or default to generic name
+          const modelUsed = `azure-${deploymentName}`;
+          const promptTokens = response.data.usage.prompt_tokens || 0;
+          
+          // Track only input tokens since embeddings only charge for input
+          const trackingData = {
+            queryId,
+            model: modelUsed,
+            promptTokens: promptTokens,
+            completionTokens: 0, // No completion tokens for embeddings
+            totalTokens: promptTokens,
+            cost: 0, // Will be calculated by cost tracker
+            operation: 'embedding',
+            timestamp: new Date().toISOString()
+          };
+          
+          // Add to cost tracker
+          costTracker.trackEmbeddingCost(modelUsed, promptTokens, queryId);
+          console.log(`[COST TRACKING] Embedded ${promptTokens} tokens with model ${modelUsed}`);
+        }
+      } catch (trackingError) {
+        console.error('Error tracking embedding usage:', trackingError);
+        // Don't fail the request if tracking fails
+      }
+    }
+    
+    // Return the response from Azure
+    res.json(response.data);
+  } catch (error) {
+    console.error('Error proxying to Azure OpenAI API for embeddings:', error.message);
+    
+    // Log more detailed error information
+    if (error.response) {
+      console.error('Response status:', error.response.status);
+      console.error('Response data:', JSON.stringify(error.response.data, null, 2));
+    }
+    
+    // Send error response
+    res.status(error.response?.status || 500).json({
+      error: error.response?.data || { message: error.message }
+    });
+  }
+});
+
 // Start the server
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);

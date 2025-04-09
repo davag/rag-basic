@@ -55,9 +55,41 @@ import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
  */
 const SourceContentAnalysis = ({ 
   documents, 
-  availableModels
+  availableModels,
+  responses,
+  metrics,
+  currentQuery,
+  systemPrompts,
+  onBackToQuery,
+  onImportResults,
+  vectorStore
 }) => {
-  const [selectedModel, setSelectedModel] = useState('gpt-4o-mini');
+  // Default to gpt-4o-mini, but first check if it's available in availableModels
+  const getDefaultModel = () => {
+    // Check if gpt-4o-mini is available
+    if (availableModels && availableModels['gpt-4o-mini'] && availableModels['gpt-4o-mini'].active) {
+      return 'gpt-4o-mini';
+    }
+    
+    // Otherwise find the first available chat model
+    if (availableModels) {
+      const firstAvailable = Object.entries(availableModels)
+        .find(([model, config]) => 
+          config.active && 
+          config.type === 'chat' && 
+          (model.includes('gpt-') || model.includes('claude') || model.includes('azure-'))
+        );
+      
+      if (firstAvailable) {
+        return firstAvailable[0];
+      }
+    }
+    
+    // Fallback to gpt-4o-mini even if not in the list
+    return 'gpt-4o-mini';
+  };
+
+  const [selectedModel, setSelectedModel] = useState(getDefaultModel());
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisResults, setAnalysisResults] = useState(null);
   const [expandedDocument, setExpandedDocument] = useState({});
@@ -77,7 +109,12 @@ const SourceContentAnalysis = ({
     }
 
     try {
-      const llm = createLlmInstance(selectedModel, 'You are an expert at analyzing document content quality for RAG systems. Provide objective assessments of text quality, formatting, and information completeness.');
+      const queryId = `doc-analysis-${Date.now()}-${index}`;
+      const llm = createLlmInstance(
+        selectedModel, 
+        'You are an expert at analyzing document content quality for RAG systems. Provide objective assessments of text quality, formatting, and information completeness.',
+        { queryId }
+      );
       
       // Take a sample of the document if it's too large
       const contentSample = document.pageContent.length > 5000 
@@ -163,13 +200,27 @@ const SourceContentAnalysis = ({
     setAnalysisResults(null);
     
     try {
+      // Verify the selected model is actually available
+      if (!availableModels || !availableModels[selectedModel]) {
+        throw new Error(`Model ${selectedModel} is not configured properly. Please select a different model.`);
+      }
+      
       const results = [];
       // Analyze up to 10 documents max to avoid overloading
       const docsToAnalyze = documents.slice(0, 10);
       
       for (let i = 0; i < docsToAnalyze.length; i++) {
-        const result = await analyzeDocument(docsToAnalyze[i], i);
-        results.push(result);
+        try {
+          const result = await analyzeDocument(docsToAnalyze[i], i);
+          results.push(result);
+        } catch (docError) {
+          console.error(`Error analyzing document ${i}:`, docError);
+          results.push({ 
+            error: docError.message,
+            source: docsToAnalyze[i].metadata?.source || 'unknown',
+            documentIndex: i
+          });
+        }
       }
       
       // Calculate aggregate scores and stats
@@ -318,16 +369,29 @@ const SourceContentAnalysis = ({
                     label="Analysis Model"
                     onChange={(e) => setSelectedModel(e.target.value)}
                   >
-                    {Object.keys(availableModels || {}).filter(model => 
-                      availableModels[model].active && 
-                      (model.includes('gpt-4') || model.includes('claude'))
-                    ).map(model => (
-                      <MenuItem key={model} value={model}>
-                        {model}
-                      </MenuItem>
-                    ))}
-                    <MenuItem value="gpt-4o-mini">gpt-4o-mini</MenuItem>
-                    <MenuItem value="gpt-4o">gpt-4o</MenuItem>
+                    {availableModels && Object.keys(availableModels).length > 0 ? 
+                      Object.entries(availableModels)
+                        .filter(([model, config]) => 
+                          config.active && 
+                          config.type === 'chat' && 
+                          (
+                            model.includes('gpt-') || 
+                            model.includes('claude') || 
+                            model.includes('azure-')
+                          )
+                        )
+                        .map(([model, config]) => (
+                          <MenuItem key={model} value={model}>
+                            {model} ({config.vendor})
+                          </MenuItem>
+                        ))
+                      : 
+                      // Fallback options if no models are available
+                      [
+                        <MenuItem key="gpt-4o-mini" value="gpt-4o-mini">gpt-4o-mini (OpenAI)</MenuItem>,
+                        <MenuItem key="gpt-4o" value="gpt-4o">gpt-4o (OpenAI)</MenuItem>
+                      ]
+                    }
                   </Select>
                 </FormControl>
                 <Tooltip title="GPT-4 and Claude models provide more detailed analysis. Use GPT-4o-mini for faster, basic analysis." arrow>
@@ -352,6 +416,19 @@ const SourceContentAnalysis = ({
             </Grid>
           </Grid>
         </Paper>
+      )}
+      
+      {analysisResults && analysisResults.error && (
+        <Alert severity="error" sx={{ mt: 3, mb: 2 }}>
+          <AlertTitle>Analysis Error</AlertTitle>
+          <Typography variant="body2">
+            {analysisResults.error}
+          </Typography>
+          <Typography variant="body2" sx={{ mt: 1 }}>
+            This could be due to a model configuration issue, missing API key, or a temporary service disruption.
+            Please try again with a different model.
+          </Typography>
+        </Alert>
       )}
       
       {analysisResults && !analysisResults.error && (
@@ -845,12 +922,6 @@ const SourceContentAnalysis = ({
             </Accordion>
           ))}
         </Box>
-      )}
-      
-      {analysisResults && analysisResults.error && (
-        <Alert severity="error" sx={{ mt: 2 }}>
-          Analysis failed: {analysisResults.error}
-        </Alert>
       )}
       
       {isAnalyzing && (

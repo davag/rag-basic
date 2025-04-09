@@ -89,6 +89,7 @@ export const processModelsInParallel = async (
         metrics: {
           responseTime,
           elapsedTime: endTime - startTime,
+          elapsedTimeType: 'duration',
           tokenUsage: {
             estimated: true,
             input: Math.round(prompt.length / 4),
@@ -138,6 +139,7 @@ export const processModelsInParallel = async (
         metrics: {
           responseTime: Date.now() - startTime,
           elapsedTime: Date.now() - startTime,
+          elapsedTimeType: 'duration',
           tokenUsage: {
             estimated: true,
             input: Math.round(prompt.length / 4),
@@ -325,7 +327,7 @@ Given the context information and not prior knowledge, answer the question: ${qu
     queryId = null // Add queryId parameter with default of null
   }) {
     // Start timer outside try block so it's available in catch
-    const startTime = performance.now();
+    const startTime = Date.now(); // Use Date.now() consistently for timing
     let answerText = '';
     let elapsedTime = 0;
     
@@ -368,11 +370,23 @@ Given the context information and not prior knowledge, answer the question: ${qu
       const endTime = Date.now();
       elapsedTime = endTime - startTime;
       
+      console.log(`[ELAPSED TIME] Model ${model} took ${elapsedTime}ms to process`);
+      
       // Get the answer text with special handling for different return types
       if (answer === null || answer === undefined) {
         console.error(`[ERROR] ${model} returned null or undefined response`);
         answerText = `Error: ${model} returned an empty response`;
       } else if (typeof answer === 'object') {
+        // Check if the answer already has an elapsed time that we should use
+        if (answer.elapsedTime !== undefined && answer.elapsedTimeType === 'duration') {
+          console.log(`[ELAPSED TIME] Using model's reported elapsed time: ${answer.elapsedTime}ms`);
+          elapsedTime = answer.elapsedTime;
+        } else if (answer.elapsedTime && answer.elapsedTime > 24 * 60 * 60 * 1000) {
+          console.log(`[ELAPSED TIME] Converting timestamp ${answer.elapsedTime} to duration`);
+          // It's a timestamp, not a duration, so convert it
+          elapsedTime = Date.now() - answer.elapsedTime;
+        }
+        
         // Log the full object structure for debugging
         console.log(`[DEBUG] ${model} returned an object:`, JSON.stringify(answer, null, 2));
         
@@ -490,6 +504,7 @@ Given the context information and not prior knowledge, answer the question: ${qu
         text: answerText,
         sources,
         elapsedTime,
+        elapsedTimeType: 'duration', // Clearly mark this as a duration and not a timestamp
         tokenUsage,
         cost: apiReportedCost !== null ? apiReportedCost : initialCost, // Use API cost if available
         useForDisplay: useForDisplayFlag,
@@ -511,6 +526,7 @@ Given the context information and not prior knowledge, answer the question: ${qu
           text: `The o3-mini model encountered an error: ${error.message}. This model is in preview and may have limitations. Please try again or use a different model like azure-gpt-4o-mini.`,
           sources,
           elapsedTime: Date.now() - startTime,
+          elapsedTimeType: 'duration', // Add the same indicator for consistency
           error: true,
           tokenUsage: {
             estimated: true,
