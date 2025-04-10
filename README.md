@@ -81,9 +81,12 @@ These tools help you:
 
 The application can be run using Docker Desktop for a consistent development environment:
 
+### Initial Setup
+
 1. Make sure Docker Desktop is installed and running on your machine
-2. Build and start the container:
-   ```
+2. Copy the `.env.example` file to `.env` and configure your environment variables
+3. Build and start the container:
+   ```bash
    docker-compose up --build
    ```
    This will:
@@ -93,20 +96,107 @@ The application can be run using Docker Desktop for a consistent development env
      - Frontend: http://localhost:3000
      - Backend: http://localhost:3002
 
-3. To stop the application:
-   ```
-   docker-compose down
+### Docker Commands Reference
+
+#### Basic Operations
+```bash
+# Start the application (with existing images)
+docker-compose up
+
+# Start in detached mode (run in background)
+docker-compose up -d
+
+# Stop the application
+docker-compose down
+
+# View logs in real-time
+docker-compose logs -f
+```
+
+#### Rebuilding and Updates
+
+When you need to rebuild (e.g., after dependency changes or Dockerfile updates):
+
+```bash
+# Full rebuild (recommended when experiencing issues)
+docker-compose down --rmi all    # Remove all images
+docker system prune -f          # Clean up unused data
+docker-compose up --build       # Rebuild and start
+
+# Quick rebuild (might not catch all changes)
+docker-compose up --build
+
+# Force rebuild of specific service
+docker-compose build --no-cache web
+docker-compose up
+```
+
+#### Development Workflow
+
+The development environment is configured for hot-reloading:
+
+- Source code is mounted as a volume
+- Changes to React components will auto-refresh
+- Server changes will trigger automatic restart
+- Environment variables from `.env` are automatically loaded
+
+#### Troubleshooting Docker Issues
+
+1. **Container won't start or crashes:**
+   ```bash
+   # Check container logs
+   docker-compose logs
+
+   # Check specific service logs
+   docker-compose logs web
+   docker-compose logs api
    ```
 
-### Docker Development Tips
+2. **Port conflicts:**
+   - Ensure ports 3000 and 3002 are not in use
+   - Check running containers: `docker ps`
+   - Stop conflicting services or modify ports in docker-compose.yml
 
-- The application code is mounted as a volume, so changes to the source code will be reflected immediately
-- Environment variables from your `.env` file are automatically loaded into the container
-- The container will automatically restart unless explicitly stopped
-- To view logs:
-  ```
-  docker-compose logs -f
-  ```
+3. **Performance issues:**
+   ```bash
+   # Clear Docker cache and unused data
+   docker system prune -a --volumes
+   
+   # Monitor container resources
+   docker stats
+   ```
+
+4. **Volume mounting issues:**
+   - Ensure proper file permissions
+   - Check volume mounts: `docker-compose ps`
+   - Verify paths in docker-compose.yml
+
+5. **Environment variables not loading:**
+   - Confirm `.env` file exists and is properly formatted
+   - Rebuild with: `docker-compose up --build`
+   - Check environment: `docker-compose exec web env`
+
+### Best Practices
+
+1. **Development:**
+   - Use volumes for hot-reloading
+   - Keep node_modules in container
+   - Use .dockerignore for faster builds
+
+2. **Production:**
+   - Use multi-stage builds
+   - Minimize image size
+   - Set NODE_ENV=production
+
+3. **Security:**
+   - Never commit .env files
+   - Use secrets management
+   - Regularly update base images
+
+4. **Performance:**
+   - Use .dockerignore
+   - Layer caching optimization
+   - Regular cleanup with `docker system prune`
 
 ## Running the Application
 

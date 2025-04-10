@@ -29,7 +29,7 @@ import UploadIcon from '@mui/icons-material/Upload';
 import { createLlmInstance } from '../utils/apiServices';
 import { ParallelLLMProcessor } from '../utils/parallelLLMProcessor';
 import { v4 as uuidv4 } from 'uuid';
-import { vendorColors, defaultModels, apiConfig, getAvailableModelsBasedOnKeys } from '../config/llmConfig';
+import { vendorColors, defaultModels, apiConfig } from '../config/llmConfig';
 import InfoIcon from '@mui/icons-material/Info';
 import DeleteIcon from '@mui/icons-material/Delete';
 import EditIcon from '@mui/icons-material/Edit';

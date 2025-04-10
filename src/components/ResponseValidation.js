@@ -1620,6 +1620,56 @@ YOUR EVALUATION (in JSON format):
                               )}
                             </AccordionDetails>
                           </Accordion>
+
+                          <Accordion sx={{ mt: 2 }}>
+                            <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+                              <Typography variant="subtitle2">Model Response</Typography>
+                            </AccordionSummary>
+                            <AccordionDetails>
+                              <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>
+                                {(() => {
+                                  // Try to get response from different possible structures
+                                  let response = responses[model];
+                                  
+                                  // If not found directly, check in the models structure
+                                  if (!response && responses.models) {
+                                    // Handle "Set X-model" format
+                                    const setMatch = model.match(/^(Set \d+)-(.+)$/);
+                                    if (setMatch) {
+                                      const [, setName, modelName] = setMatch;
+                                      response = responses.models[setName]?.[modelName];
+                                    } else {
+                                      // Search through all sets if not found in the expected set
+                                      Object.values(responses.models).some(setModels => {
+                                        if (setModels[model]) {
+                                          response = setModels[model];
+                                          return true;
+                                        }
+                                        return false;
+                                      });
+                                    }
+                                  }
+
+                                  if (!response) return 'No response available';
+                                  
+                                  if (typeof response === 'object') {
+                                    if (response.answer && typeof response.answer === 'object' && response.answer.text) {
+                                      return response.answer.text;
+                                    } else if (response.answer) {
+                                      return typeof response.answer === 'string' ? response.answer : JSON.stringify(response.answer, null, 2);
+                                    } else if (response.response) {
+                                      return typeof response.response === 'string' ? response.response : JSON.stringify(response.response, null, 2);
+                                    } else if (response.text) {
+                                      return response.text;
+                                    } else {
+                                      return JSON.stringify(response, null, 2);
+                                    }
+                                  }
+                                  return response;
+                                })()}
+                              </Typography>
+                            </AccordionDetails>
+                          </Accordion>
                         </CardContent>
                       </Card>
                     </Grid>

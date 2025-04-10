@@ -188,34 +188,86 @@ export const processYaml = async (file) => {
 export const processFile = async (file) => {
   let text = '';
   
-  if (file.type === 'application/pdf') {
-    text = await processPdf(file);
-  } else if (file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
-    text = await processDocx(file);
-  } else if (isPythonFile(file)) {
-    text = await processPython(file);
-  } else if (file.type === 'text/plain' || file.type === '') {
-    // Handle text files or files with no specified MIME type
-    text = await processTxt(file);
-  } else if (file.type === 'application/json' || file.name.endsWith('.json')) {
-    text = await processJson(file);
-  } else if (file.name.endsWith('.md')) {
-    text = await processMarkdown(file);
-  } else if (file.type === 'text/html' || file.name.endsWith('.html') || file.name.endsWith('.htm')) {
-    text = await processHtml(file);
-  } else if (file.type === 'text/csv' || file.name.endsWith('.csv') || 
-             file.type === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' || 
-             file.type === 'application/vnd.ms-excel' || 
-             file.name.endsWith('.xlsx') || file.name.endsWith('.xls')) {
-    text = await processSpreadsheet(file);
-  } else if (file.type === 'application/rtf' || file.name.endsWith('.rtf')) {
-    text = await processRtf(file);
-  } else if (file.type === 'application/xml' || file.name.endsWith('.xml')) {
-    text = await processXml(file);
-  } else if (file.type === 'text/yaml' || file.name.endsWith('.yml') || file.name.endsWith('.yaml')) {
-    text = await processYaml(file);
-  } else {
-    throw new Error(`Unsupported file type: ${file.type} for file ${file.name}`);
+  // Check for file extension and MIME type mismatch
+  const extension = file.name.split('.').pop().toLowerCase();
+  const expectedMimeTypes = {
+    'pdf': 'application/pdf',
+    'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'py': ['text/x-python', 'application/x-python-code', 'text/x-python-script', 'application/octet-stream'],
+    'json': 'application/json',
+    'md': 'text/markdown',
+    'html': ['text/html'],
+    'htm': ['text/html'],
+    'csv': ['text/csv'],
+    'xlsx': ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
+    'xls': ['application/vnd.ms-excel'],
+    'rtf': 'application/rtf',
+    'xml': 'application/xml',
+    'yml': 'text/yaml',
+    'yaml': 'text/yaml',
+    'txt': 'text/plain'
+  };
+
+  // Function to check if file type matches expected MIME type
+  const isValidMimeType = (fileType, expectedTypes) => {
+    if (Array.isArray(expectedTypes)) {
+      return expectedTypes.includes(fileType) || fileType === '';
+    }
+    return fileType === expectedTypes || fileType === '';
+  };
+
+  // Check for potential file type mismatch
+  if (expectedMimeTypes[extension]) {
+    const expectedType = expectedMimeTypes[extension];
+    if (!isValidMimeType(file.type, expectedType)) {
+      throw new Error(
+        `Possible file type mismatch for ${file.name}. ` +
+        `The file has a .${extension} extension but its content type is "${file.type || 'unknown'}". ` +
+        `Please verify that the file is actually a ${extension.toUpperCase()} file and not renamed from another format.`
+      );
+    }
+  }
+  
+  try {
+    if (file.type === 'application/pdf') {
+      text = await processPdf(file);
+    } else if (file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
+      text = await processDocx(file);
+    } else if (isPythonFile(file)) {
+      text = await processPython(file);
+    } else if (file.type === 'text/plain' || file.type === '') {
+      text = await processTxt(file);
+    } else if (file.type === 'application/json' || file.name.endsWith('.json')) {
+      text = await processJson(file);
+    } else if (file.name.endsWith('.md')) {
+      text = await processMarkdown(file);
+    } else if (file.type === 'text/html' || file.name.endsWith('.html') || file.name.endsWith('.htm')) {
+      text = await processHtml(file);
+    } else if (file.type === 'text/csv' || file.name.endsWith('.csv') || 
+               file.type === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' || 
+               file.type === 'application/vnd.ms-excel' || 
+               file.name.endsWith('.xlsx') || file.name.endsWith('.xls')) {
+      text = await processSpreadsheet(file);
+    } else if (file.type === 'application/rtf' || file.name.endsWith('.rtf')) {
+      text = await processRtf(file);
+    } else if (file.type === 'application/xml' || file.name.endsWith('.xml')) {
+      text = await processXml(file);
+    } else if (file.type === 'text/yaml' || file.name.endsWith('.yml') || file.name.endsWith('.yaml')) {
+      text = await processYaml(file);
+    } else {
+      const supportedFormats = Object.keys(expectedMimeTypes).join(', ').toUpperCase();
+      throw new Error(
+        `Unsupported file type: ${file.type || 'unknown'} for file ${file.name}. ` +
+        `Supported formats are: ${supportedFormats}`
+      );
+    }
+  } catch (error) {
+    // Enhance error message with more context
+    const baseError = error.message || 'Unknown error occurred';
+    throw new Error(
+      `Error processing file ${file.name} (type: ${file.type || 'unknown'}): ${baseError}. ` +
+      `If you're seeing unexpected errors, please verify that the file extension matches its actual content type.`
+    );
   }
   
   return {
@@ -225,7 +277,8 @@ export const processFile = async (file) => {
       originalFileName: file.name,
       documentName: file.name,
       namespace: 'default', // Default namespace, will be updated by the component
-      fileType: file.name.split('.').pop().toLowerCase()
+      fileType: extension,
+      mimeType: file.type || 'unknown'
     }
   };
 }; 

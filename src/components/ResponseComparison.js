@@ -42,8 +42,6 @@ import CompareIcon from '@mui/icons-material/Compare';
 import AssessmentIcon from '@mui/icons-material/Assessment';
 import TuneIcon from '@mui/icons-material/Tune';
 import AnalyticsIcon from '@mui/icons-material/Analytics';
-import KeyboardArrowUpIcon from '@mui/icons-material/KeyboardArrowUp';
-import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 
 const ResponseComparison = ({ 
@@ -57,16 +55,13 @@ const ResponseComparison = ({
   vectorStore,
   availableModels
 }) => {
-  // Remove unused state variables but keep the setter functions
+  // State variables
   const [, setSnackbarOpen] = useState(false);
   const [, setSnackbarMessage] = useState('');
   const [, setSnackbarSeverity] = useState('success');
   
   // Reference to the file input element
   const fileInputRef = useRef(null);
-  
-  // Add state for expanded raw responses
-  const [expandedRawResponses, setExpandedRawResponses] = useState({});
   
   // Add enhanced debugging for responses
   console.log("DEBUG: Response Comparison Component Rendered");
@@ -1491,47 +1486,6 @@ const ResponseComparison = ({
                   </Alert>
                 )}
                 
-                {model.response && typeof model.response === 'object' && (
-                  <Box sx={{ mt: 2, display: 'flex', justifyContent: 'flex-end' }}>
-                    <Button 
-                      size="small" 
-                      onClick={() => {
-                        // Create an accordion state toggle for viewing raw response
-                        const newState = {...expandedRawResponses};
-                        newState[`${model.setName}-${model.displayName}`] = 
-                          !expandedRawResponses[`${model.setName}-${model.displayName}`];
-                        setExpandedRawResponses(newState);
-                      }}
-                      endIcon={expandedRawResponses[`${model.setName}-${model.displayName}`] 
-                        ? <KeyboardArrowUpIcon /> 
-                        : <KeyboardArrowDownIcon />}
-                    >
-                      {expandedRawResponses[`${model.setName}-${model.displayName}`] 
-                        ? 'Hide Raw Response' 
-                        : 'View Raw Response'}
-                    </Button>
-                  </Box>
-                )}
-                
-                {/* Expandable raw response section */}
-                {expandedRawResponses[`${model.setName}-${model.displayName}`] && (
-                  <Box sx={{ mt: 1 }}>
-                    <Paper 
-                      variant="outlined" 
-                      sx={{ 
-                        p: 2, 
-                        bgcolor: '#f0f0f0',
-                        whiteSpace: 'pre-wrap',
-                        fontFamily: 'monospace',
-                        fontSize: '0.75rem',
-                        maxHeight: '200px',
-                        overflow: 'auto'
-                      }}
-                    >
-                      {JSON.stringify(model.response, null, 2)}
-                    </Paper>
-                  </Box>
-                )}
               </Paper>
             </Box>
           );
