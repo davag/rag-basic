@@ -168,9 +168,107 @@ const DocumentAnalytics = ({ documents, vectorStore, chunkSize, chunkOverlap }) 
       </Typography>
       
       {documents.length === 0 ? (
-        <Alert severity="info">
-          Upload some documents to see analytics.
-        </Alert>
+        <Box>
+          <Alert severity="info" sx={{ mb: 3 }}>
+            No documents uploaded yet. You can still explore document analysis features and best practices below.
+          </Alert>
+          
+          <Grid container spacing={3}>
+            <Grid item xs={12} md={6}>
+              <Card variant="outlined">
+                <CardHeader 
+                  title="Document Best Practices" 
+                  titleTypographyProps={{ variant: 'h6' }}
+                />
+                <Divider />
+                <CardContent>
+                  <Typography variant="subtitle1" gutterBottom>
+                    For optimal RAG performance:
+                  </Typography>
+                  
+                  <List sx={{ listStyleType: 'disc', pl: 4 }}>
+                    <li>
+                      <Typography variant="body2">
+                        Use clean, well-structured documents with clear headings
+                      </Typography>
+                    </li>
+                    <li>
+                      <Typography variant="body2">
+                        Prefer text formats (PDF, TXT, DOCX) over images or scanned documents
+                      </Typography>
+                    </li>
+                    <li>
+                      <Typography variant="body2">
+                        Aim for content-rich documents with high signal-to-noise ratio
+                      </Typography>
+                    </li>
+                    <li>
+                      <Typography variant="body2">
+                        Ensure documents are organized with proper metadata
+                      </Typography>
+                    </li>
+                  </List>
+                  
+                  <Button 
+                    variant="contained" 
+                    color="primary" 
+                    sx={{ mt: 2 }}
+                    onClick={() => window.location.hash = '#/upload'}
+                  >
+                    Upload Documents
+                  </Button>
+                </CardContent>
+              </Card>
+            </Grid>
+            
+            <Grid item xs={12} md={6}>
+              <Card variant="outlined">
+                <CardHeader 
+                  title="Chunking Strategy Recommendations" 
+                  titleTypographyProps={{ variant: 'h6' }}
+                />
+                <Divider />
+                <CardContent>
+                  <Typography variant="subtitle1" gutterBottom>
+                    Current settings:
+                  </Typography>
+                  <Box sx={{ mb: 2 }}>
+                    <Chip 
+                      label={`Chunk Size: ${chunkSize || 1000} chars`} 
+                      sx={{ mr: 1, mb: 1 }} 
+                    />
+                    <Chip 
+                      label={`Overlap: ${chunkOverlap || 200} chars`} 
+                      sx={{ mr: 1, mb: 1 }} 
+                    />
+                  </Box>
+                  
+                  <Typography variant="subtitle1" gutterBottom>
+                    Recommended ranges:
+                  </Typography>
+                  
+                  <List sx={{ listStyleType: 'disc', pl: 4 }}>
+                    <li>
+                      <Typography variant="body2">
+                        <strong>Text documents:</strong> 1000-1500 chars with 100-200 char overlap
+                      </Typography>
+                    </li>
+                    <li>
+                      <Typography variant="body2">
+                        <strong>Code/structured data:</strong> 500-800 chars with 50-100 char overlap
+                      </Typography>
+                    </li>
+                    <li>
+                      <Typography variant="body2">
+                        <strong>Long narratives:</strong> 1500-2000 chars with 200-300 char overlap
+                      </Typography>
+                    </li>
+                  </List>
+                </CardContent>
+              </Card>
+            </Grid>
+          </Grid>
+        </Box>
       ) : (
         <Grid container spacing={3}>
           {/* Overall Stats Card */}

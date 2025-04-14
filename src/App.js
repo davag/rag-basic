@@ -16,6 +16,7 @@ import InsertChartIcon from '@mui/icons-material/InsertChart';
 import DashboardIcon from '@mui/icons-material/Dashboard';
 import BuildIcon from '@mui/icons-material/Build';
 import SpeedIcon from '@mui/icons-material/Speed';
+import StorageIcon from '@mui/icons-material/Storage';
 import AttachMoneyIcon from '@mui/icons-material/AttachMoney';
 import RagIntroduction from './components/RagIntroduction';
 import DocumentUpload from './components/DocumentUpload';
@@ -28,6 +29,7 @@ import DocumentAnalytics from './components/DocumentAnalytics';
 import QualityDashboard from './components/QualityAnalysisHub/Monitoring/QualityDashboard';
 import OptimizationRecommendations from './components/QualityAnalysisHub/Optimization/OptimizationRecommendations';
 import QualityTestSuite from './components/QualityAnalysisHub/Testing/QualityTestSuite';
+import VectorStoreExplorer from './components/VectorStoreExplorer';
 import CostTrackingDashboard from './components/CostTrackingDashboard';
 import { checkApiConfiguration, getAvailableModelsBasedOnKeys } from './config/llmConfig';
 import appConfig from './config/appConfig';
@@ -392,8 +394,7 @@ function App() {
                 <IconButton 
                   color="primary" 
                   onClick={() => setAnalysisDialogOpen(true)}
-                  disabled={!documents.length}
-                  sx={{ mr: 1, color: documents.length ? 'success.main' : 'inherit' }}
+                  sx={{ mr: 1, color: documents.length ? 'success.main' : 'primary.main' }}
                 >
                   <AnalyticsIcon />
                 </IconButton>
@@ -888,71 +889,81 @@ function App() {
             </Toolbar>
           </AppBar>
           <DialogContent dividers>
-            {!canShowAnalysis ? (
-              <Alert severity="info">
-                Upload documents to use the analysis tools.
-              </Alert>
-            ) : (
-              <>
-                <Tabs
-                  value={analysisTab}
-                  onChange={(e, newValue) => setAnalysisTab(newValue)}
-                  variant="scrollable"
-                  scrollButtons="auto"
-                  sx={{ borderBottom: 1, borderColor: 'divider', mb: 2 }}
-                >
-                  <Tab 
-                    icon={<InsertChartIcon />} 
-                    label="Basic Analytics" 
-                    iconPosition="start"
-                  />
-                  <Tab 
-                    icon={<DashboardIcon />} 
-                    label="Quality Metrics" 
-                    iconPosition="start"
-                  />
-                  <Tab 
-                    icon={<BuildIcon />} 
-                    label="Optimization" 
-                    iconPosition="start"
-                  />
-                  <Tab 
-                    icon={<SpeedIcon />} 
-                    label="Testing" 
-                    iconPosition="start"
-                  />
-                </Tabs>
+            {/* Always show content, even if there are no documents */}
+            <>
+              <Tabs
+                value={analysisTab}
+                onChange={(e, newValue) => setAnalysisTab(newValue)}
+                variant="scrollable"
+                scrollButtons="auto"
+                sx={{ borderBottom: 1, borderColor: 'divider', mb: 2 }}
+              >
+                <Tab 
+                  icon={<InsertChartIcon />} 
+                  label="Basic Analytics" 
+                  iconPosition="start"
+                />
+                <Tab 
+                  icon={<DashboardIcon />} 
+                  label="Quality Metrics" 
+                  iconPosition="start"
+                />
+                <Tab 
+                  icon={<BuildIcon />} 
+                  label="Optimization" 
+                  iconPosition="start"
+                />
+                <Tab 
+                  icon={<SpeedIcon />} 
+                  label="Testing" 
+                  iconPosition="start"
+                />
+                <Tab 
+                  icon={<StorageIcon />} 
+                  label="Vector Store Explorer" 
+                  iconPosition="start"
+                />
+              </Tabs>
 
-                <Box sx={{ mt: 2 }}>
-                  {analysisTab === 0 && (
-                    <DocumentAnalytics 
-                      documents={documents}
-                      vectorStore={vectorStore}
-                      chunkSize={chunkSize}
-                      chunkOverlap={chunkOverlap}
-                    />
-                  )}
-                  {analysisTab === 1 && (
-                    <QualityDashboard 
-                      documents={documents}
-                      vectorStore={vectorStore}
-                    />
-                  )}
-                  {analysisTab === 2 && (
-                    <OptimizationRecommendations 
-                      documents={documents}
-                      vectorStore={vectorStore}
-                    />
-                  )}
-                  {analysisTab === 3 && (
-                    <QualityTestSuite 
-                      documents={documents}
-                      vectorStore={vectorStore}
-                    />
-                  )}
-                </Box>
-              </>
-            )}
+              <Box sx={{ mt: 2 }}>
+                {analysisTab === 0 && (
+                  <DocumentAnalytics 
+                    documents={documents}
+                    vectorStore={vectorStore}
+                    chunkSize={chunkSize}
+                    chunkOverlap={chunkOverlap}
+                  />
+                )}
+                {analysisTab === 1 && (
+                  <QualityDashboard 
+                    documents={documents}
+                    vectorStore={vectorStore}
+                  />
+                )}
+                {analysisTab === 2 && (
+                  <OptimizationRecommendations 
+                    documents={documents}
+                    vectorStore={vectorStore}
+                  />
+                )}
+                {analysisTab === 3 && (
+                  <QualityTestSuite 
+                    documents={documents}
+                    vectorStore={vectorStore}
+                  />
+                )}
+                {analysisTab === 4 && (
+                  <VectorStoreExplorer 
+                    documents={documents}
+                    vectorStore={vectorStore}
+                    onVectorStoreUpload={(uploadedStore) => {
+                      // Optional: Handle vector store uploads
+                      console.log("Vector store uploaded:", uploadedStore);
+                    }}
+                  />
+                )}
+              </Box>
+            </>
           </DialogContent>
         </Dialog>
         
