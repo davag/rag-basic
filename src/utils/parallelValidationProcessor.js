@@ -11,6 +11,7 @@ import { defaultSettings, apiConfig } from '../config/llmConfig';
  * @param {string} criteria - The evaluation criteria to use
  * @param {string} validatorModelName - The model to use for validation
  * @param {Function} onProgress - Optional callback for progress updates (model name)
+ * @param {Object} systemPrompts - Optional system prompts for each model
  * @returns {Object} - Object mapping model names to validation results
  */
 export const validateResponsesInParallel = async (
@@ -18,7 +19,8 @@ export const validateResponsesInParallel = async (
   query,
   criteria,
   validatorModelName,
-  onProgress = null
+  onProgress = null,
+  systemPrompts = {}
 ) => {
   // Prepare the validation tasks array
   const validationTasks = [];
@@ -238,6 +240,9 @@ export const validateResponsesInParallel = async (
       const prompt = `
 You are an impartial judge evaluating the quality of an AI assistant's response to a user query.
 
+SYSTEM PROMPT:
+${systemPrompts[modelKey] || 'No system prompt provided'}
+
 USER QUERY:
 ${query}
 
@@ -247,15 +252,36 @@ ${answer}
 EVALUATION CRITERIA:
 ${criteria}
 
-Please evaluate the response based on the criteria above. Provide a score from 1-10 for each criterion, where 1 is poor and 10 is excellent. 
+IMPORTANT INSTRUCTIONS:
+1. You MUST evaluate EACH criterion listed above EXACTLY as written, preserving names and descriptions
+2. For EACH criterion, provide:
+   - A score from 1-10 (where 1 is poor and 10 is excellent)
+   - A brief explanation justifying the score
+3. Do not skip any criteria or add new ones
+4. You MUST use the EXACT criterion names as provided above - do not modify, reformat, or change the case
+5. For unclear statements criterion, explicitly list any unclear or ambiguous statements found
 
 Your evaluation should be structured as a JSON object with these properties:
-- criteria: an object with each criterion as a key and a score as its value
-- explanation: a brief explanation for each score
-- strengths: an array of strengths in the response
-- weaknesses: an array of weaknesses or areas for improvement
-- overall_score: the average of all criteria scores (1-10)
-- overall_assessment: a brief summary of your evaluation
+{
+  "criteria": {
+    // Use the EXACT criterion names from above, including any numbers or special characters
+    "criterion_name": {
+      "score": number, // 1-10
+      "explanation": "string"
+    }
+  },
+  "strengths": ["string"], // List of specific strengths
+  "weaknesses": ["string"], // List of specific areas for improvement
+  "unclear_statements": ["string"], // List of unclear or ambiguous statements with explanations
+  "overall_score": number, // Average of all criteria scores (1-10)
+  "overall_assessment": "string" // Brief summary of the evaluation
+}
+
+IMPORTANT: 
+- Your response must be valid JSON
+- You MUST include ALL criteria provided above with their EXACT names
+- Preserve any numbers in criteria names (e.g., "Conciseness3")
+- Include unclear statements even if empty
 
 YOUR EVALUATION (in JSON format):
 `;
@@ -390,54 +416,53 @@ YOUR EVALUATION (in JSON format):
       // Normalize criteria scores to ensure they're numbers between 0-10
       if (result.criteria) {
         Object.keys(result.criteria).forEach(key => {
-          const score = result.criteria[key];
-          if (score === undefined || score === null || isNaN(score)) {
-            // Default to 5 if score is missing or invalid
-            result.criteria[key] = 5;
+          const value = result.criteria[key];
+          if (typeof value === 'object' && value !== null) {
+            // Handle case where criteria already has score and explanation
+            if (value.score !== undefined) {
+              value.score = Math.max(0, Math.min(10, Number(value.score)));
+            } else {
+              value.score = 5; // Default if no score
+            }
           } else {
-            // Convert to number and clamp between 0-10
-            result.criteria[key] = Math.max(0, Math.min(10, Number(score)));
-          }
-        });
-        
-        // Ensure common criteria fields exist
-        const commonCriteria = ['accuracy', 'completeness', 'relevance', 'conciseness', 'clarity'];
-        commonCriteria.forEach(criterion => {
-          // Look for the criterion with various casing and formatting
-          const criterionKey = Object.keys(result.criteria).find(key => 
-            key.toLowerCase() === criterion.toLowerCase() || 
-            key.toLowerCase().includes(criterion.toLowerCase())
-          );
-          
-          if (!criterionKey) {
-            // If criterion doesn't exist, add it with a default score of 5
-            result.criteria[criterion] = 5;
-          } else if (criterionKey !== criterion) {
-            // If criterion exists but with different casing, normalize the key
-            result.criteria[criterion] = result.criteria[criterionKey];
+            // Convert direct score value to object format
+            result.criteria[key] = {
+              score: Math.max(0, Math.min(10, Number(value) || 5)),
+              explanation: `Score normalized for ${key}`
+            };
           }
         });
       }
       
-      // Ensure overall_score is a valid number
-      if (result.overall_score === undefined || result.overall_score === null || isNaN(result.overall_score)) {
-        // Calculate from criteria if available, otherwise default to 5
-        if (result.criteria && Object.keys(result.criteria).length > 0) {
-          const scores = Object.values(result.criteria).filter(score => !isNaN(Number(score)));
-          result.overall_score = scores.length > 0 
-            ? Number((scores.reduce((sum, score) => sum + Number(score), 0) / scores.length).toFixed(1))
-            : 5;
-        } else {
-          result.overall_score = 5;
+      // Calculate overall score from criteria scores
+      if (result.criteria && Object.keys(result.criteria).length > 0) {
+        const scores = Object.values(result.criteria)
+          .map(c => typeof c === 'object' ? c.score : Number(c))
+          .filter(score => !isNaN(score));
+          
+        if (scores.length > 0) {
+          result.overall_score = Number((scores.reduce((sum, score) => sum + score, 0) / scores.length).toFixed(1));
         }
-      } else {
-        // Convert to number and clamp between 0-10
-        result.overall_score = Math.max(0, Math.min(10, Number(result.overall_score)));
+      }
+      
+      // Ensure overall score is a number between 0-10
+      result.overall_score = Math.max(0, Math.min(10, Number(result.overall_score || 5)));
+      
+      // Create overall object if it doesn't exist
+      if (!result.overall || typeof result.overall !== 'object') {
+        result.overall = {
+          score: result.overall_score * 10, // Convert to 0-100 scale
+          explanation: result.overall_assessment || 'Score calculated from criteria average'
+        };
+      } else if (typeof result.overall === 'object') {
+        // Ensure overall.score exists and is on 0-100 scale
+        result.overall.score = Math.round(result.overall_score * 10);
       }
       
       // Ensure arrays exist
       if (!Array.isArray(result.strengths)) result.strengths = [];
       if (!Array.isArray(result.weaknesses)) result.weaknesses = [];
+      if (!Array.isArray(result.unclear_statements)) result.unclear_statements = [];
     }
     
     validationResults[modelKey] = result;

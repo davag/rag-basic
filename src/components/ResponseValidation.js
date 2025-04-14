@@ -28,6 +28,7 @@ import {
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import EditIcon from '@mui/icons-material/Edit';
+import InfoIcon from '@mui/icons-material/Info';
 import { validateResponsesInParallel } from '../utils/parallelValidationProcessor';
 import 'jspdf-autotable';
 import { defaultSettings, apiConfig, defaultModels } from '../config/llmConfig';
@@ -310,15 +311,14 @@ const CriteriaTextArea = ({ value, onChange, rows = 8, sx = {} }) => (
 const normalizeCriterionName = (criterion) => {
   // Split by colon to handle format like "Accuracy: Description"
   const parts = criterion.split(':');
+  // Keep the exact name as provided by the user
   const name = parts[0].trim();
-  // Convert to title case (first letter uppercase, rest lowercase)
-  const normalized = name.charAt(0).toUpperCase() + name.slice(1).toLowerCase();
   
   // If there was a description after the colon, add it back
   if (parts.length > 1) {
-    return `${normalized}: ${parts.slice(1).join(':').trim()}`;
+    return `${name}: ${parts.slice(1).join(':').trim()}`;
   }
-  return normalized;
+  return name;
 };
 
 function ResponseValidation({ 
@@ -397,12 +397,7 @@ function ResponseValidation({
   
   const [validatorModel, setValidatorModel] = useState(getInitialModel());
   const [customCriteria, setCustomCriteria] = useState(
-    'Accuracy: Does the response correctly answer the query based on the provided context?\n' +
-    'Completeness: Does the response address all aspects of the query?\n' +
-    'Relevance: Is the information in the response relevant to the query?\n' +
-    'Conciseness: Is the response appropriately concise without omitting important information?\n' +
-    'Clarity: Is the response clear, well-structured, and easy to understand?\n' +
-    'Exception handling: Only if the output is code then check exceptions paths'
+    localStorage.getItem('defaultEvaluationCriteria') || ''
   );
   const [currentValidatingModel, setCurrentValidatingModel] = useState(null);
   const [sortConfig] = useState({ key: 'overallScore', direction: 'descending' });
@@ -941,7 +936,8 @@ function ResponseValidation({
           currentQuery,
           customCriteria,
           validatorModelToUse,
-          handleParallelProgress
+          handleParallelProgress,
+          systemPrompts // Pass system prompts to parallel validation
         );
         
         console.log("Parallel validation finished, results:", Object.keys(parallelResults).length);
@@ -994,6 +990,9 @@ function ResponseValidation({
             const prompt = `
 You are an impartial judge evaluating the quality of an AI assistant's response to a user query.
 
+SYSTEM PROMPT:
+${systemPrompts[modelKey] || 'No system prompt provided'}
+
 USER QUERY:
 ${currentQuery}
 
@@ -1003,15 +1002,35 @@ ${answer}
 EVALUATION CRITERIA:
 ${customCriteria}
 
-Please evaluate the response based on the criteria above. Provide a score from 1-10 for each criterion, where 1 is poor and 10 is excellent. 
+IMPORTANT INSTRUCTIONS:
+1. You MUST evaluate EACH criterion listed above individually
+2. For EACH criterion, provide:
+   - A score from 1-10 (where 1 is poor and 10 is excellent)
+   - A brief explanation justifying the score
+3. Do not skip any criteria or add new ones
+4. You MUST use the EXACT criterion names as provided above - do not modify, reformat, or change the case of the criterion names
 
 Your evaluation should be structured as a JSON object with these properties:
-- criteria: an object with each criterion as a key and a score as its value
-- explanation: a brief explanation for each score
-- strengths: an array of strengths in the response
-- weaknesses: an array of weaknesses or areas for improvement
-- overall_score: the average of all criteria scores (1-10)
-- overall_assessment: a brief summary of your evaluation
+{
+  "criteria": {
+    // Use the EXACT criterion names from above, preserving case and format
+    "criterion_name": {
+      "score": number, // 1-10
+      "explanation": "string"
+    },
+    // ... repeat for all criteria, using exact names
+  },
+  "strengths": ["string"], // List of specific strengths
+  "weaknesses": ["string"], // List of specific areas for improvement
+  "unclear_statements": ["string"], // List of unclear or ambiguous statements with explanations
+  "overall_score": number, // Average of all criteria scores (1-10)
+  "overall_assessment": "string" // Brief summary of the evaluation
+}
+
+IMPORTANT: 
+- Your response must be valid JSON
+- You MUST include ALL criteria provided above
+- You MUST use the EXACT criterion names as shown above
 
 YOUR EVALUATION (in JSON format):
 `;
@@ -1115,46 +1134,86 @@ YOUR EVALUATION (in JSON format):
 
   // Helper function to format criterion label
   const formatCriterionLabel = (criterion) => {
-    const normalized = normalizeCriterionName(criterion);
-    return normalized.charAt(0).toUpperCase() + normalized.slice(1);
+    // Return the exact criterion name without any modification
+    return criterion;
   };
 
   // Helper function to normalize validation result
   const normalizeValidationResult = (result) => {
-    if (result.error) {
-      return {
-        error: result.error,
-        criteria: {},
-        strengths: [],
-        weaknesses: [],
-        overall: { score: 0, explanation: 'Validation failed' }
-      };
+    if (!result || typeof result !== 'object' || result.error) {
+      return result;
     }
     
-    // Calculate average of criteria scores if overall score is missing or zero
-    let overallScore = result.overall?.score || result.overall_score || 0;
-    if (overallScore === 0 && result.criteria && Object.keys(result.criteria).length > 0) {
-      const criteriaValues = Object.values(result.criteria);
-      if (criteriaValues.length > 0) {
-        // Calculate average and convert to 0-100 scale if criteria scores are on 1-10 scale
-        const sum = criteriaValues.reduce((a, b) => Number(a) + Number(b), 0);
-        const avg = sum / criteriaValues.length;
+    // Ensure criteria object exists
+    if (!result.criteria || typeof result.criteria !== 'object') {
+      result.criteria = {};
+    }
+    
+    // Get the list of expected criteria from localStorage
+    const expectedCriteria = localStorage.getItem('defaultEvaluationCriteria')
+      ?.split('\n')
+      .filter(line => line.trim())
+      .map(line => {
+        const colonIndex = line.indexOf(':');
+        return colonIndex > -1 ? line.substring(0, colonIndex).trim() : line.trim();
+      }) || [];
+    
+    // Ensure all expected criteria exist in the result
+    expectedCriteria.forEach(criterion => {
+      if (!result.criteria[criterion]) {
+        result.criteria[criterion] = {
+          score: 5,
+          explanation: 'No evaluation provided for this criterion'
+        };
+      }
+    });
+    
+    // Normalize criteria scores
+    Object.entries(result.criteria).forEach(([key, value]) => {
+      if (typeof value === 'object' && value !== null) {
+        if (value.score !== undefined) {
+          value.score = Math.max(0, Math.min(10, Number(value.score)));
+        } else {
+          value.score = 5;
+        }
+      } else {
+        result.criteria[key] = {
+          score: Math.max(0, Math.min(10, Number(value) || 5)),
+          explanation: `Score normalized for ${key}`
+        };
+      }
+    });
+    
+    // Calculate overall score from criteria scores
+    if (Object.keys(result.criteria).length > 0) {
+      const scores = Object.values(result.criteria)
+        .map(c => typeof c === 'object' ? c.score : Number(c))
+        .filter(score => !isNaN(score));
         
-        // If the average is less than 20, assume it's on a 1-10 scale and convert to 0-100
-        overallScore = avg < 20 ? avg * 10 : avg;
+      if (scores.length > 0) {
+        result.overall_score = Number((scores.reduce((sum, score) => sum + score, 0) / scores.length).toFixed(1));
       }
     }
     
-    return {
-      ...result,
-      criteria: result.criteria || {},
-      strengths: result.strengths || [],
-      weaknesses: result.weaknesses || [],
-      overall: {
-        score: overallScore,
-        explanation: result.overall?.explanation || result.overall_assessment || ''
-      }
-    };
+    // Ensure overall score is a number between 0-10
+    result.overall_score = Math.max(0, Math.min(10, Number(result.overall_score || 5)));
+    
+    // Create overall object if it doesn't exist
+    if (!result.overall || typeof result.overall !== 'object') {
+      result.overall = {
+        score: result.overall_score * 10,
+        explanation: result.overall_assessment || 'Score calculated from criteria average'
+      };
+    } else if (typeof result.overall === 'object') {
+      result.overall.score = Math.round(result.overall_score * 10);
+    }
+    
+    // Ensure arrays exist
+    if (!Array.isArray(result.strengths)) result.strengths = [];
+    if (!Array.isArray(result.weaknesses)) result.weaknesses = [];
+    if (!Array.isArray(result.unclear_statements)) result.unclear_statements = [];
+    
+    return result;
   };
 
   // Helper function to get score color based on score
@@ -1549,75 +1608,146 @@ YOUR EVALUATION (in JSON format):
                           
                           <Divider sx={{ my: 1.5 }} />
                           
-                          <Typography variant="subtitle2" gutterBottom>Criteria Scores</Typography>
-                          <Grid container spacing={1}>
-                            {Object.entries(result.criteria || {})
-                              // First normalize all criterion keys to prevent duplicates
-                              .reduce((uniqueCriteria, [criterion, score]) => {
-                                // Convert the criterion name to lowercase for comparison
-                                const normalizedKey = criterion.toLowerCase().trim();
-                                
-                                // If we haven't seen this criterion before, add it
-                                if (!uniqueCriteria.some(([key]) => key.toLowerCase().trim() === normalizedKey)) {
-                                  uniqueCriteria.push([criterion, score]);
-                                }
-                                return uniqueCriteria;
-                              }, [])
-                              .map(([criterion, score]) => (
-                              <Grid item xs={6} key={criterion}>
-                                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                                  <Typography variant="body2" noWrap title={criterion}>
-                                    {formatCriterionLabel(criterion)}
-                                  </Typography>
-                                  <Typography 
-                                    variant="body2" 
-                                    fontWeight="bold"
-                                    color={getScoreColor(score * 10)}
-                                  >
-                                    {score}
-                                  </Typography>
-                                </Box>
-                              </Grid>
-                            ))}
-                          </Grid>
-                          
-                          <Accordion sx={{ mt: 2 }}>
+                          <Box sx={{ mb: 2 }}>
+                            <Typography variant="subtitle2" gutterBottom>Criteria Scores</Typography>
+                            <Grid container spacing={2}>
+                              {Object.entries(result.criteria || {})
+                                .map(([criterion, criterionData], index) => {
+                                  const score = typeof criterionData === 'object' ? criterionData.score : criterionData;
+                                  const explanation = typeof criterionData === 'object' ? criterionData.explanation : null;
+                                  
+                                  return (
+                                    <Grid item xs={6} key={criterion}>
+                                      <Box sx={{ 
+                                        display: 'flex', 
+                                        justifyContent: 'space-between',
+                                        alignItems: 'center',
+                                        p: 1,
+                                        border: '1px solid',
+                                        borderColor: 'divider',
+                                        borderRadius: 1
+                                      }}>
+                                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                                          <Typography variant="body2">
+                                            {formatCriterionLabel(criterion)}
+                                          </Typography>
+                                          {explanation && (
+                                            <Tooltip 
+                                              title={
+                                                <Box>
+                                                  <Typography variant="body2" fontWeight="bold">
+                                                    {formatCriterionLabel(criterion)}
+                                                  </Typography>
+                                                  <Typography variant="body2" sx={{ mt: 0.5 }}>
+                                                    {explanation}
+                                                  </Typography>
+                                                </Box>
+                                              }
+                                              arrow
+                                            >
+                                              <Box 
+                                                component="span" 
+                                                sx={{ 
+                                                  display: 'flex', 
+                                                  alignItems: 'center',
+                                                  cursor: 'help',
+                                                  color: 'action.active',
+                                                  '&:hover': { color: 'primary.main' }
+                                                }}
+                                              >
+                                                <InfoIcon sx={{ fontSize: '1rem' }} />
+                                              </Box>
+                                            </Tooltip>
+                                          )}
+                                        </Box>
+                                        <Typography 
+                                          variant="body2" 
+                                          fontWeight="bold"
+                                          color={getScoreColor(score * 10)}
+                                        >
+                                          {score}/10
+                                        </Typography>
+                                      </Box>
+                                    </Grid>
+                                  );
+                                })}
+                            </Grid>
+                          </Box>
+
+                          <Accordion>
                             <AccordionSummary expandIcon={<ExpandMoreIcon />}>
                               <Typography variant="subtitle2">Assessment Details</Typography>
                             </AccordionSummary>
                             <AccordionDetails>
-                              {result.overall?.explanation && (
-                                <Box sx={{ mb: 2 }}>
-                                  <Typography variant="subtitle2" gutterBottom>Overall Assessment</Typography>
-                                  <Typography variant="body2">{result.overall.explanation}</Typography>
-                                </Box>
-                              )}
-                              
+                              {/* Strengths Section */}
                               {result.strengths && result.strengths.length > 0 && (
                                 <Box sx={{ mb: 2 }}>
-                                  <Typography variant="subtitle2" gutterBottom>Strengths</Typography>
+                                  <Typography variant="subtitle2" color="success.main" gutterBottom>
+                                    Strengths
+                                  </Typography>
                                   <ul style={{ margin: 0, paddingLeft: '1.5rem' }}>
-                                    {result.strengths.map((strength, idx) => (
-                                      <li key={idx}>
+                                    {result.strengths.map((strength, index) => (
+                                      <li key={index}>
                                         <Typography variant="body2">{strength}</Typography>
                                       </li>
                                     ))}
                                   </ul>
                                 </Box>
                               )}
-                              
+
+                              {/* Areas for Improvement Section */}
                               {result.weaknesses && result.weaknesses.length > 0 && (
-                                <Box>
-                                  <Typography variant="subtitle2" gutterBottom>Areas for Improvement</Typography>
+                                <Box sx={{ mb: 2 }}>
+                                  <Typography variant="subtitle2" color="error.main" gutterBottom>
+                                    Areas for Improvement
+                                  </Typography>
                                   <ul style={{ margin: 0, paddingLeft: '1.5rem' }}>
-                                    {result.weaknesses.map((weakness, idx) => (
-                                      <li key={idx}>
+                                    {result.weaknesses.map((weakness, index) => (
+                                      <li key={index}>
                                         <Typography variant="body2">{weakness}</Typography>
                                       </li>
                                     ))}
                                   </ul>
                                 </Box>
                               )}
+
+                              {/* Unclear Statements Section */}
+                              {result.unclear_statements && result.unclear_statements.length > 0 && (
+                                <Box sx={{ mb: 2 }}>
+                                  <Typography variant="subtitle2" color="warning.main" gutterBottom>
+                                    Unclear Statements
+                                  </Typography>
+                                  <ul style={{ margin: 0, paddingLeft: '1.5rem' }}>
+                                    {result.unclear_statements.map((statement, index) => (
+                                      <li key={index}>
+                                        <Typography variant="body2">{statement}</Typography>
+                                      </li>
+                                    ))}
+                                  </ul>
+                                </Box>
+                              )}
+
+                              {/* Detailed Criteria Explanations */}
+                              <Box>
+                                <Typography variant="subtitle2" gutterBottom>
+                                  Detailed Criteria Analysis
+                                </Typography>
+                                {Object.entries(result.criteria || {}).map(([criterion, criterionData]) => {
+                                  const explanation = typeof criterionData === 'object' ? criterionData.explanation : null;
+                                  if (!explanation) return null;
+                                  
+                                  return (
+                                    <Box key={criterion} sx={{ mb: 1.5 }}>
+                                      <Typography variant="body2" fontWeight="bold">
+                                        {formatCriterionLabel(criterion)}
+                                      </Typography>
+                                      <Typography variant="body2" color="text.secondary">
+                                        {explanation}
+                                      </Typography>
+                                    </Box>
+                                  );
+                                })}
+                              </Box>
                             </AccordionDetails>
                           </Accordion>
 
@@ -1628,18 +1758,14 @@ YOUR EVALUATION (in JSON format):
                             <AccordionDetails>
                               <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>
                                 {(() => {
-                                  // Try to get response from different possible structures
                                   let response = responses[model];
                                   
-                                  // If not found directly, check in the models structure
                                   if (!response && responses.models) {
-                                    // Handle "Set X-model" format
                                     const setMatch = model.match(/^(Set \d+)-(.+)$/);
                                     if (setMatch) {
                                       const [, setName, modelName] = setMatch;
                                       response = responses.models[setName]?.[modelName];
                                     } else {
-                                      // Search through all sets if not found in the expected set
                                       Object.values(responses.models).some(setModels => {
                                         if (setModels[model]) {
                                           response = setModels[model];
@@ -1697,15 +1823,35 @@ YOUR EVALUATION (in JSON format):
           />
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setEditCriteriaOpen(false)}>Cancel</Button>
+          <Button onClick={() => setEditCriteriaOpen(false)}>
+            Cancel
+          </Button>
           <Button 
-            onClick={() => {
-              localStorage.setItem('defaultEvaluationCriteria', customCriteria);
+            variant="contained" 
+            color="primary"
+            onClick={async () => {
               setEditCriteriaOpen(false);
-            }} 
-            variant="contained"
+              localStorage.setItem('defaultEvaluationCriteria', customCriteria);
+              localStorage.setItem('responseValidatorModel', validatorModel);
+              
+              if (!responses || Object.keys(responses).length === 0) {
+                console.error("No responses available to validate");
+                alert("No responses available to validate. Please run a query first.");
+                return;
+              }
+              
+              setIsProcessing(true);
+              handleValidationComplete({});
+              try {
+                console.log("Re-validating with new criteria:", customCriteria);
+                await validateResponses();
+              } catch (error) {
+                console.error("Error during revalidation:", error);
+                setIsProcessing(false);
+              }
+            }}
           >
-            Save
+            Save & Revalidate
           </Button>
         </DialogActions>
       </Dialog>
