@@ -382,63 +382,6 @@ export default function PromptOptimizer({
     }
   }, [open, availableSets, currentSystemPrompt, systemPrompts, validationResults, extractValidationData]);
 
-  // Modify the useEffect that handles selected set changes to better debug and handle validation results (around line 190)
-  useEffect(() => {
-    if (open && selectedSet && validationResults) {
-      console.log("Selected set changed to:", selectedSet);
-      console.log("All validation results:", validationResults);
-      console.log("Results for this set:", validationResults[selectedSet]);
-      
-      const results = validationResults[selectedSet];
-      const prompt = getSystemPromptForSet(selectedSet);
-      
-      if (results) {
-        // Get the model used for validating this set
-        const modelForSet = results.model || validatorModel;
-        if (modelForSet && modelForSet !== selectedModel) {
-          console.log(`Updating model to match set ${selectedSet}: ${modelForSet}`);
-          setSelectedModel(modelForSet);
-        }
-        
-        // Check if we have criteria results
-        if (results.criteria) {
-          console.log("Validation criteria found for set:", results.criteria);
-          
-          // Extract criteria scores
-          const scores = results.criteria;
-          
-          // Calculate average score
-          const scoreValues = Object.values(scores).map(item => item.score);
-          const avgScore = scoreValues.length > 0 ? 
-            scoreValues.reduce((sum, score) => sum + score, 0) / scoreValues.length : 0;
-          
-          console.log(`Average score for set ${selectedSet}:`, avgScore);
-          
-          // Update optimization history
-          setOptimizationHistory([{
-            iteration: 0,
-            prompt: prompt,
-            scores: scores,
-            averageScore: avgScore
-          }]);
-          
-          // Set best prompt
-          setBestPrompt(prompt);
-        } else {
-          console.warn(`Set ${selectedSet} has validation results but no criteria data`);
-          // Handle case where there are results but no criteria
-          setOptimizationHistory([]);
-          setBestPrompt(null);
-        }
-      } else {
-        console.warn(`No validation results found for set ${selectedSet}`);
-        // Clear history if there are no results for this set
-        setOptimizationHistory([]);
-        setBestPrompt(null);
-      }
-    }
-  }, [selectedSet, validationResults, validatorModel, open, getSystemPromptForSet, selectedModel]);
-
   // Debug log to see what's in validation results
   useEffect(() => {
     if (open && validationResults && selectedSet) {
@@ -496,50 +439,43 @@ export default function PromptOptimizer({
     { id: 'claude-3-haiku', name: 'Claude 3 Haiku', type: 'chat', badge: 'Anthropic' }
   ];
 
-  const createLlmInstance = () => {
+  // Refactor createLlmInstance to accept a modelId parameter
+  const createLlmInstance = (modelIdOverride) => {
     const apiKey = process.env.REACT_APP_OPENAI_API_KEY;
     const useProxy = !apiKey || apiKey === '';
     const endpoint = useProxy ? '/api/proxy/openai' : 'https://api.openai.com/v1';
-    
-    // Use the model selected specifically for prompt optimization
-    // This is separate from the validatorModel which is used for results validation
-    const modelToUse = selectedModel || generatorModel || defaultSettings.defaultModel || 'gpt-4o-mini';
-    
+
+    // Use the provided modelIdOverride, or fallback to selectedModel
+    const modelToUse = modelIdOverride || selectedModel || generatorModel || defaultSettings.defaultModel || 'gpt-4o-mini';
+
     // Get vendor information from the loaded models
     const modelConfig = models[modelToUse] || {};
     const vendor = modelConfig.vendor || (
       modelToUse.startsWith('gpt') || modelToUse.startsWith('o1') || modelToUse.startsWith('o3') ? 'OpenAI' :
       modelToUse.startsWith('claude') ? 'Anthropic' : 'OpenAI'
     );
-    
-    console.log(`Using ${modelToUse} (${vendor}) for prompt optimization`);
-    
+
+    console.log(`Using ${modelToUse} (${vendor}) for LLM call`);
+
     return {
       generate: async (prompt) => {
         try {
-          console.log(`Generating with ${modelToUse} for prompt optimization`);
-          
+          console.log(`Generating with ${modelToUse}`);
           const headers = {
             'Content-Type': 'application/json',
           };
-          
           if (!useProxy && apiKey) {
             headers['Authorization'] = `Bearer ${apiKey}`;
           }
-          
-          // If it's an Anthropic model, use their API
+          // Anthropic
           if (vendor === 'Anthropic') {
             const anthropicKey = process.env.REACT_APP_ANTHROPIC_API_KEY || localStorage.getItem('anthropicApiKey');
-            if (!anthropicKey) {
-              throw new Error('Anthropic API key not configured');
-            }
-            
+            if (!anthropicKey) throw new Error('Anthropic API key not configured');
             const anthropicHeaders = {
               'Content-Type': 'application/json',
               'x-api-key': anthropicKey,
               'anthropic-version': '2023-06-01'
             };
-            
             const anthropicEndpoint = '/api/proxy/anthropic';
             const anthropicResponse = await fetch(`${anthropicEndpoint}/v1/messages`, {
               method: 'POST',
@@ -550,30 +486,23 @@ export default function PromptOptimizer({
                   { role: 'user', content: prompt }
                 ],
                 max_tokens: 1000,
-                // Only include temperature if supported by the model
                 ...(modelToUse !== 'claude-3-sonnet' && modelToUse !== 'claude-3-haiku' ? { temperature: 0.7 } : {})
               }),
             });
-            
             if (!anthropicResponse.ok) {
-              // Check if it's JSON or HTML
               const contentType = anthropicResponse.headers.get('content-type');
               if (contentType && contentType.includes('application/json')) {
                 const errorData = await anthropicResponse.json();
                 throw new Error(`Anthropic API error: ${errorData.error?.message || anthropicResponse.statusText}`);
               } else {
-                // Handle HTML error responses
                 const errorText = await anthropicResponse.text();
-                console.error('Non-JSON error response:', errorText.substring(0, 500) + '...');
                 throw new Error(`Anthropic API error: ${anthropicResponse.status} ${anthropicResponse.statusText}`);
               }
             }
-            
             const anthropicData = await anthropicResponse.json();
             return anthropicData.content[0].text;
           }
-          
-          // Default to OpenAI API
+          // OpenAI
           const response = await fetch(`${endpoint}/chat/completions`, {
             method: 'POST',
             headers,
@@ -583,27 +512,20 @@ export default function PromptOptimizer({
                 { role: 'system', content: 'You are a helpful AI assistant.' },
                 { role: 'user', content: prompt }
               ],
-              // Only include temperature if supported by the model
               ...(modelToUse !== 'o3-mini' ? { temperature: 0.7 } : {})
             }),
           });
-          
           if (!response.ok) {
-            // Check if it's JSON or HTML
             const contentType = response.headers.get('content-type');
             if (contentType && contentType.includes('application/json')) {
               const errorData = await response.json();
               throw new Error(`API error: ${errorData.error?.message || response.statusText}`);
             } else {
-              // Handle HTML error responses
               const errorText = await response.text();
-              console.error('Non-JSON error response:', errorText.substring(0, 500) + '...');
               throw new Error(`API error: ${response.status} ${response.statusText}`);
             }
           }
-          
           const data = await response.json();
-          console.log('Response received:', data);
           return data.choices[0].message.content;
         } catch (error) {
           console.error('LLM generation error:', error);
@@ -1347,9 +1269,11 @@ For more accurate optimization, please ensure model responses are available.`;
     return propCurrentQuery || "Query not available";
   };
   
+  // In validatePrompt, always use the validator model
   const validatePrompt = async (prompt) => {
     try {
-      const llm = createLlmInstance();
+      // Always use the validator model for validation
+      const llm = createLlmInstance(validatorModel);
       
       // Use the full evaluation criteria text from localStorage or defaults
       const criteriaText = evaluationCriteriaText;
@@ -1503,9 +1427,11 @@ Return ONLY a JSON object with the following structure:
     }
   };
 
+  // In generateImprovedPrompt, always use the optimization model
   const generateImprovedPrompt = async (currentPrompt, scores) => {
     try {
-      const llm = createLlmInstance();
+      // Always use the selected optimization model
+      const llm = createLlmInstance(selectedModel);
       
       // Get all criteria scores
       const allCriteria = Object.keys(scores)
@@ -2575,58 +2501,88 @@ Return ONLY the improved prompt text without any additional commentary, explanat
 
           {renderSettingsPanel()}
 
-          <Box mb={3} display="flex" gap={2}>
-            <FormControl fullWidth>
-              <InputLabel id="model-select-label">Optimization Model</InputLabel>
-              <Select
-                labelId="model-select-label"
-                value={selectedModel}
-                onChange={(e) => setSelectedModel(e.target.value)}
-                label="Optimization Model"
-                disabled={isOptimizing}
-              >
-                {Object.keys(models)
-                  .filter(modelId => models[modelId].type === 'chat' || models[modelId].capabilities?.chat)
-                  .sort()
-                  .map(modelId => (
-                    <MenuItem key={modelId} value={modelId}>
-                      {models[modelId].name || modelId} 
-                      {models[modelId].vendor && (
+          <Box mb={3}>
+            <Grid container spacing={2} alignItems="flex-end">
+              <Grid item xs={12} sm={6}>
+                <FormControl fullWidth size="small" disabled>
+                  <InputLabel id="validator-model-label">Validation Model</InputLabel>
+                  <Select
+                    labelId="validator-model-label"
+                    value={validatorModel || ''}
+                    label="Validation Model"
+                    disabled
+                  >
+                    <MenuItem value={validatorModel || ''}>
+                      {models[validatorModel]?.name || validatorModel || 'Unknown'}
+                      {models[validatorModel]?.vendor && (
                         <span style={{ marginLeft: '4px', fontSize: '0.7rem', opacity: 0.7 }}>
-                          ({models[modelId].vendor})
+                          ({models[validatorModel]?.vendor})
                         </span>
                       )}
                     </MenuItem>
-                  ))
-                }
-                {/* Only show fallback models if no models are loaded */}
-                {(!models || Object.keys(models).length === 0) && fallbackModels.map(model => (
-                  <MenuItem key={model.id} value={model.id}>
-                    {model.name} {model.badge && 
-                      <span style={{ marginLeft: '4px', fontSize: '0.7rem', opacity: 0.7 }}>{model.badge}</span>
+                  </Select>
+                  <Typography variant="caption" color="text.secondary">
+                    Model used for validation
+                  </Typography>
+                </FormControl>
+              </Grid>
+              <Grid item xs={12} sm={6}>
+                <FormControl fullWidth size="small">
+                  <InputLabel id="model-select-label">Optimization Model</InputLabel>
+                  <Select
+                    labelId="model-select-label"
+                    value={selectedModel}
+                    onChange={(e) => setSelectedModel(e.target.value)}
+                    label="Optimization Model"
+                  >
+                    {Object.keys(models)
+                      .filter(modelId => models[modelId].type === 'chat' || models[modelId].capabilities?.chat)
+                      .sort()
+                      .map(modelId => (
+                        <MenuItem key={modelId} value={modelId}>
+                          {models[modelId].name || modelId}
+                          {models[modelId].vendor && (
+                            <span style={{ marginLeft: '4px', fontSize: '0.7rem', opacity: 0.7 }}>
+                              ({models[modelId].vendor})
+                            </span>
+                          )}
+                        </MenuItem>
+                      ))
                     }
-                  </MenuItem>
-                ))}
-              </Select>
-              <Typography variant="caption" color="text.secondary">
-                Select the model to use for generating optimized prompts (distinct from validation model)
-              </Typography>
-            </FormControl>
-            
-            <Button
-              variant="contained"
-              color="primary"
-              onClick={startOptimization}
-              disabled={isOptimizing || !initialPrompt.trim() || optimizationHistory.length === 0}
-              size="small"
-            >
-              {isOptimizing ? (
-                <Box display="flex" alignItems="center">
-                  <CircularProgress size={16} color="inherit" sx={{ mr: 1 }} />
-                  Optimizing...
+                    {(!models || Object.keys(models).length === 0) && fallbackModels.map(model => (
+                      <MenuItem key={model.id} value={model.id}>
+                        {model.name} {model.badge && (
+                          <span style={{ marginLeft: '4px', fontSize: '0.7rem', opacity: 0.7 }}>{model.badge}</span>
+                        )}
+                      </MenuItem>
+                    ))}
+                  </Select>
+                  <Typography variant="caption" color="text.secondary">
+                    Model used for generating optimized prompts
+                  </Typography>
+                </FormControl>
+              </Grid>
+              <Grid item xs={12}>
+                <Box mt={2}>
+                  <Button
+                    variant="contained"
+                    color="primary"
+                    onClick={startOptimization}
+                    disabled={isOptimizing || !initialPrompt.trim() || optimizationHistory.length === 0}
+                    size="large"
+                    fullWidth
+                    sx={{ fontWeight: 'bold', fontSize: '1.1rem', py: 1.5 }}
+                  >
+                    {isOptimizing ? (
+                      <Box display="flex" alignItems="center" justifyContent="center">
+                        <CircularProgress size={20} color="inherit" sx={{ mr: 1 }} />
+                        Optimizing...
+                      </Box>
+                    ) : 'Start Optimization'}
+                  </Button>
                 </Box>
-              ) : 'Start Optimization'}
-            </Button>
+              </Grid>
+            </Grid>
           </Box>
 
           {optimizationHistory.length === 0 && (

@@ -46,6 +46,30 @@ const defaultModels = {
     description: 'OpenAI\'s newest model with improved reasoning capabilities.',
     type: 'chat'
   },
+  'gpt-4.1': {
+    vendor: 'OpenAI',
+    input: 2.00,
+    output: 8.00,
+    active: true,
+    description: 'OpenAI GPT-4.1: 1M token context, improved reasoning, coding, and long document handling. Cheaper and faster than GPT-4o.',
+    type: 'chat'
+  },
+  'gpt-4.1-mini': {
+    vendor: 'OpenAI',
+    input: 0.40,
+    output: 1.60,
+    active: true,
+    description: 'OpenAI GPT-4.1 Mini: Affordable, fast, and high-performing model for everyday use. 1M token context.',
+    type: 'chat'
+  },
+  'gpt-4.1-nano': {
+    vendor: 'OpenAI',
+    input: 0.10,
+    output: 0.40,
+    active: true,
+    description: 'OpenAI GPT-4.1 Nano: Cheapest and fastest GPT-4.1 model, ideal for high-volume and real-time applications. 1M token context.',
+    type: 'chat'
+  },
   
   // OpenAI embedding models
   'text-embedding-3-small': {

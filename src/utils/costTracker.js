@@ -6,8 +6,7 @@
  */
 
 // Imported models/pricing information
-import { calculateCost } from './apiServices';
-import { defaultModels } from '../config/llmConfig';
+import { calculateCost, defaultModels } from '../config/llmConfig';
 
 class CostTracker {
   constructor() {
@@ -698,7 +697,24 @@ class CostTracker {
     for (const model in this.costs.embeddings) {
       embeddingsArray = embeddingsArray.concat(this.costs.embeddings[model]);
     }
-    
+
+    // Patch: Recalculate cost for any LLM entry with usage and cost === 0
+    llmArray = llmArray.map(entry => {
+      if ((entry.cost === 0 || entry.cost === undefined || entry.cost === null) && entry.usage && (entry.usage.promptTokens || entry.usage.input || entry.usage.totalTokens || entry.usage.total)) {
+        // Use calculateCost from llmConfig
+        const { calculateCost } = require('../config/llmConfig');
+        // Try to get input/output tokens
+        const inputTokens = entry.usage.promptTokens || entry.usage.input || 0;
+        const outputTokens = entry.usage.completionTokens || entry.usage.output || 0;
+        const costResult = calculateCost(entry.model, { input: inputTokens, output: outputTokens });
+        if (costResult.totalCost > 0) {
+          console.log(`[COST PATCH] Estimated missing cost for ${entry.model}: $${costResult.totalCost} (input: ${inputTokens}, output: ${outputTokens})`);
+          return { ...entry, cost: costResult.totalCost, costSource: 'estimated' };
+        }
+      }
+      return entry;
+    });
+
     return {
       totalCost: this.getTotalCost(),
       costsByModel: this.getCostsByModel(),

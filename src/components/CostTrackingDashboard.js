@@ -283,6 +283,12 @@ const CostTrackingDashboard = () => {
     return 'Other';
   };
 
+  // Add a helper to normalize model IDs (removes date suffix)
+  const normalizeModelId = (modelId) => {
+    if (!modelId) return modelId;
+    return modelId.replace(/-\d{4}-\d{2}-\d{2}$/, '');
+  };
+
   // Filter cost data based on selected filters
   const getFilteredData = () => {
     // Make sure costData.llm and costData.embeddings exist before creating copies
@@ -330,7 +336,10 @@ const CostTrackingDashboard = () => {
       }
     }
     
-    return { llm: filteredLlm, embeddings: filteredEmbeddings };
+    const llm = Array.isArray(filteredLlm) ? filteredLlm.map(entry => ({ ...entry, model: normalizeModelId(entry.model) })) : [];
+    const embeddings = Array.isArray(filteredEmbeddings) ? filteredEmbeddings.map(entry => ({ ...entry, model: normalizeModelId(entry.model) })) : [];
+    
+    return { llm, embeddings };
   };
   
   // Calculate total cost for filtered data
@@ -440,37 +449,28 @@ const CostTrackingDashboard = () => {
   // Get chart data for costs by model
   const getCostByModelChartData = () => {
     const filteredData = getFilteredData();
-    // Ensure we're working with arrays
     const llmData = Array.isArray(filteredData.llm) ? filteredData.llm : [];
     const embeddingsData = Array.isArray(filteredData.embeddings) ? filteredData.embeddings : [];
-    
     const combinedData = [...llmData, ...embeddingsData];
-    
-    // Group by model with proper vendor distinction
     const modelVendorMap = {};
-    
     combinedData.forEach(entry => {
-      // Create a unique key that combines the model name with its vendor source
       const isAzure = isAzureModel(entry);
       const vendor = isAzure ? 'AzureOpenAI' : determineVendor(entry.model, entry.originalModel);
-      const modelVendorKey = `${entry.model}__${vendor}`;
-      
+      const normalizedModel = normalizeModelId(entry.model);
+      const modelVendorKey = `${normalizedModel}__${vendor}`;
       if (!modelVendorMap[modelVendorKey]) {
         modelVendorMap[modelVendorKey] = {
-          model: entry.model,
+          model: normalizedModel,
           vendor: vendor,
           cost: 0,
-          displayName: isAzure ? `${entry.model} (Azure)` : entry.model,
+          displayName: isAzure ? `${normalizedModel} (Azure)` : normalizedModel,
           color: vendorColors[vendor] || vendorColors.Other
         };
       }
       modelVendorMap[modelVendorKey].cost += entry.cost;
     });
-    
-    // Sort by cost (descending)
     const sortedModels = Object.values(modelVendorMap)
       .sort((a, b) => b.cost - a.cost);
-    
     return {
       labels: sortedModels.map(item => item.displayName),
       datasets: [
@@ -563,31 +563,23 @@ const CostTrackingDashboard = () => {
   
   // Get unique models from the data, grouped by vendor
   const getUniqueModels = () => {
-    // Make sure costData.llm and costData.embeddings exist before trying to spread them
     const llmData = Array.isArray(costData.llm) ? costData.llm : [];
     const embeddingsData = Array.isArray(costData.embeddings) ? costData.embeddings : [];
-    
-    const allModels = [...llmData, ...embeddingsData].map(entry => entry.model);
+    const allModels = [...llmData, ...embeddingsData].map(entry => normalizeModelId(entry.model));
     const uniqueModels = [...new Set(allModels)];
-    
-    // Group models by vendor
     const modelsByVendor = {};
     uniqueModels.forEach(model => {
-      // Find if any entry with this model is an Azure model
       const azureEntry = [...llmData, ...embeddingsData].find(entry => 
-        entry.model === model && isAzureModel(entry)
+        normalizeModelId(entry.model) === model && isAzureModel(entry)
       );
-      
       const vendor = azureEntry 
         ? 'AzureOpenAI' 
         : determineVendor(model, null);
-      
       if (!modelsByVendor[vendor]) {
         modelsByVendor[vendor] = [];
       }
       modelsByVendor[vendor].push(model);
     });
-    
     return { uniqueModels, modelsByVendor };
   };
   
