@@ -397,15 +397,19 @@ class CustomChatOpenAI {
         queryId: modelSpecificQueryId
       };
       
-      // Handle special cases for o1 and o3 models
-      if (this.modelName.startsWith('o1') || this.modelName.startsWith('o3')) {
-        // o1 and o3 models use max_completion_tokens instead of max_tokens
+      // Handle special cases for o1, o3, and o4 models
+      if (
+        this.modelName.startsWith('o1') ||
+        this.modelName.startsWith('o3') ||
+        this.modelName.startsWith('o4')
+      ) {
+        // o1, o3, and o4 models use max_completion_tokens instead of max_tokens
         requestData.max_completion_tokens = 4096;
-        
-        // Don't set temperature for o1 models, but set it for o3 models if specified
+        // Don't set temperature for o1 models, and for o4 models do NOT send temperature at all
         if (this.modelName.startsWith('o3') && this.temperature !== undefined) {
           requestData.temperature = this.temperature;
         }
+        // For o4 models, do not set temperature (OpenAI only supports default=1)
       } else {
         // For other models, use standard parameters
         requestData.max_tokens = 4096;

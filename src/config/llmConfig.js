@@ -46,6 +46,14 @@ const defaultModels = {
     description: 'OpenAI\'s newest model with improved reasoning capabilities.',
     type: 'chat'
   },
+  'o4-mini': {
+    vendor: 'OpenAI',
+    input: 1.10,
+    output: 4.40,
+    active: true,
+    description: 'OpenAI 04-mini: Reasoning-optimized model, fast and affordable. $1.10 input, $4.40 output per 1M tokens.',
+    type: 'chat'
+  },
   'gpt-4.1': {
     vendor: 'OpenAI',
     input: 2.00,
@@ -208,12 +216,13 @@ const defaultSettings = {
   responseValidatorModel: 'gpt-4o-mini',
   useParallelProcessing: true,
   defaultEvaluationCriteria: 
-    'Accuracy: Does the response correctly answer the query based on the provided context?\n' +
-    'Completeness: Does the response address all aspects of the query?\n' +
-    'Relevance: Is the information in the response relevant to the query?\n' +
-    'Conciseness: Is the response appropriately concise without omitting important information?\n' +
-    'Clarity: Is the response clear, well-structured, and easy to understand?\n' +
-    'Exception handling: Only if the output is code then check exceptions paths'
+    'Accuracy: Does the response correctly answer the query based on the provided context? (Score high if all facts are correct and nothing is misleading.)\n' +
+    'Completeness: Does the response address all aspects of the query? (Score high if nothing important is missing.)\n' +
+    'Relevance: Is the information in the response relevant to the query? (Score high if there is no off-topic or unnecessary information.)\n' +
+    'Conciseness: Is the response appropriately concise without omitting important information? (Score high if the answer is as short as possible, but as long as necessary.)\n' +
+    'Clarity: Is the response clear, well-structured, and easy to understand? (Score high if a beginner could follow the answer.)\n' +
+    'Exception Handling: Only if the output is code, does it handle error/edge cases? (Score high if all likely errors are handled.)\n' +
+    'Unclear or Irrelevant Statements: Does the response contain any statements that are not understood or not relevant? List each with a FIXME comment for critical issues, and a TODO comment for less critical issues. (Score high if there are no such statements.)'
 };
 
 // API key configuration
