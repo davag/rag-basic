@@ -306,6 +306,18 @@ function App() {
     setValidationResults(results);
   };
 
+  const handleSystemPromptUpdate = (newPrompt) => {
+    setSystemPrompts(prev => ({
+      ...prev,
+      global: newPrompt
+    }));
+    
+    // Show success message
+    setSnackbarMessage('System prompt updated successfully');
+    setSnackbarSeverity('success');
+    setSnackbarOpen(true);
+  };
+
   // Check if API keys are properly configured
   const apiStatus = checkApiConfiguration();
   const apiKeysConfigured = apiStatus.openAI && apiStatus.anthropic;
@@ -790,6 +802,7 @@ function App() {
               validationResults={validationResults || {}}
               isProcessing={isProcessing}
               setIsProcessing={setIsProcessing}
+              onSystemPromptUpdate={handleSystemPromptUpdate}
             />
             <Box sx={{ display: 'flex', justifyContent: 'space-between', mt: 2 }}>
               <Button

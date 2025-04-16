@@ -29,10 +29,12 @@ import {
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import EditIcon from '@mui/icons-material/Edit';
 import InfoIcon from '@mui/icons-material/Info';
+import AutoFixHighIcon from '@mui/icons-material/AutoFixHigh';
 import { validateResponsesInParallel } from '../utils/parallelValidationProcessor';
 import 'jspdf-autotable';
 import { defaultSettings, apiConfig, defaultModels } from '../config/llmConfig';
 import { createLlmInstance } from '../utils/apiServices';
+import PromptOptimizer from './PromptOptimizer';
 
 // Log the imported config for debugging
 console.log('Imported API config:', apiConfig);
@@ -307,20 +309,6 @@ const CriteriaTextArea = ({ value, onChange, rows = 8, sx = {} }) => (
   </>
 );
 
-// Function to normalize criterion name to title case
-const normalizeCriterionName = (criterion) => {
-  // Split by colon to handle format like "Accuracy: Description"
-  const parts = criterion.split(':');
-  // Keep the exact name as provided by the user
-  const name = parts[0].trim();
-  
-  // If there was a description after the colon, add it back
-  if (parts.length > 1) {
-    return `${name}: ${parts.slice(1).join(':').trim()}`;
-  }
-  return name;
-};
-
 function ResponseValidation({ 
   onValidationComplete,
   responses: propResponses = {},
@@ -331,9 +319,11 @@ function ResponseValidation({
   isProcessing: initialIsProcessing = false,
   setIsProcessing: parentSetIsProcessing,
   initialValue = '', 
-  isDisabled = false
+  isDisabled = false,
+  onSystemPromptUpdate
 }) {
   const [isProcessing, setIsProcessing] = useState(initialIsProcessing);
+  const [optimizerOpen, setOptimizerOpen] = useState(false);
   const [validationResults, setValidationResults] = useState(initialValidationResults);
   const [metrics, setMetrics] = useState(propMetrics);
   const [responses, setResponses] = useState(propResponses);
@@ -367,16 +357,29 @@ function ResponseValidation({
   
   // Define the onValidationComplete function to pass results back to parent
   const handleValidationComplete = (results) => {
-    setValidationResults(results);
+    // Process results to ensure response data is preserved
+    const processedResults = {};
     
-    // If parent provided a setter function, use it
+    Object.entries(results).forEach(([key, result]) => {
+      processedResults[key] = {
+        ...result,
+        // Ensure response data is available in standard locations
+        modelResponse: result.originalResponse?.rawResponse || 
+                       result.originalResponse?.response ||
+                       result.originalResponse,
+        // Preserve all original data
+        originalData: result.originalResponse
+      };
+    });
+
+    setValidationResults(processedResults);
+    
     if (typeof parentSetIsProcessing === 'function') {
       parentSetIsProcessing(false);
     }
     
-    // Call the parent's onValidationComplete callback
     if (typeof onValidationComplete === 'function') {
-      onValidationComplete(results);
+      onValidationComplete(processedResults);
     }
   };
   
@@ -851,6 +854,7 @@ function ResponseValidation({
 
       // Filter out metadata entries from responses before validation
       const filteredResponses = {};
+      const responseData = {}; // Store original responses
       
       if (responses) {
         console.log("Original responses structure:", Object.keys(responses));
@@ -882,6 +886,8 @@ function ResponseValidation({
                   const combinedKey = `${setKey}-${modelKey}`;
                   console.log(`Including model response for validation: ${combinedKey}`);
                   filteredResponses[combinedKey] = modelResponse;
+                  // Store the full response including rawResponse
+                  responseData[combinedKey] = modelResponse;
                 }
               });
             }
@@ -898,6 +904,7 @@ function ResponseValidation({
               // Direct model response
               console.log(`Including direct model response for validation: ${key}`);
               filteredResponses[key] = value;
+              responseData[key] = value;
             } else if (key.startsWith('Set ')) {
               // Set-based responses
               const setKey = key;
@@ -910,6 +917,7 @@ function ResponseValidation({
                     const combinedKey = `${setKey}-${modelKey}`;
                     console.log(`Including set-based model for validation: ${combinedKey}`);
                     filteredResponses[combinedKey] = modelResponse;
+                    responseData[combinedKey] = modelResponse;
                   }
                 });
               }
@@ -948,9 +956,18 @@ function ResponseValidation({
           normalizedParallelResults[key] = normalizeValidationResult(parallelResults[key]);
         });
         
+        // Modify the results structure to include original responses
+        const enhancedResults = {};
+        Object.entries(normalizedParallelResults).forEach(([key, validationData]) => {
+          enhancedResults[key] = {
+            ...validationData,
+            originalResponse: responseData[key] // Include original response
+          };
+        });
+        
         // Update the validation results through the parent component
-        handleValidationComplete(normalizedParallelResults);
-        console.log("Parallel validation completed successfully with results:", Object.keys(normalizedParallelResults));
+        handleValidationComplete(enhancedResults);
+        console.log("Parallel validation completed successfully with results:", Object.keys(enhancedResults));
       } else {
         console.log("Starting sequential validation processing");
         
@@ -1267,12 +1284,73 @@ YOUR EVALUATION (in JSON format):
     }
   };
 
+  // Calculate if any scores are below threshold
+  const hasLowScores = Object.values(validationResults || {}).some(result => {
+    if (!result || result.error) return false;
+    return Object.values(result.criteria || {}).some(criterion => {
+      const score = typeof criterion === 'object' ? criterion.score : Number(criterion);
+      return score < 8;
+    });
+  });
+
+  const handleOptimizedPrompt = (newPrompt) => {
+    // Update the system prompt
+    if (onSystemPromptUpdate) {
+      onSystemPromptUpdate(newPrompt);
+    }
+  };
+  
+  // Debug function to dump the system prompts structure
+  const dumpSystemPromptsInfo = () => {
+    console.log("SYSTEM PROMPTS INFO:");
+    console.log("systemPrompts object:", systemPrompts);
+    console.log("systemPrompts keys:", Object.keys(systemPrompts));
+    console.log("Global system prompt:", systemPrompts.global);
+    
+    // Check for model-specific prompts
+    if (validationResults) {
+      const setKeys = Object.keys(validationResults || {});
+      setKeys.forEach(setKey => {
+        const modelMatch = setKey.match(/-([^-]+)$/);
+        const modelId = modelMatch ? modelMatch[1] : null;
+        if (modelId) {
+          console.log(`Checking for prompt for model ${modelId} from set ${setKey}:`, 
+            systemPrompts[modelId] ? 'FOUND' : 'NOT FOUND');
+        }
+        
+        const setMatch = setKey.match(/Set (\d+)/);
+        const setNumber = setMatch ? setMatch[1] : null;
+        if (setNumber) {
+          console.log(`Checking for prompt for set${setNumber} from set ${setKey}:`, 
+            systemPrompts[`set${setNumber}`] ? 'FOUND' : 'NOT FOUND');
+        }
+      });
+    }
+  };
+
   return (
     <Box>
       <Paper elevation={3} sx={{ p: 3, mb: 3 }}>
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
           <Typography variant="h6">Response Validation</Typography>
           <Box sx={{ display: 'flex', gap: 1 }}>
+            {/* Add Optimize button next to existing buttons */}
+            {hasLowScores && (
+              <Tooltip title="Optimize system prompt to improve scores">
+                <Button
+                  startIcon={<AutoFixHighIcon />}
+                  variant="outlined"
+                  color="primary"
+                  onClick={() => {
+                    dumpSystemPromptsInfo();
+                    setOptimizerOpen(true);
+                  }}
+                  disabled={isProcessing}
+                >
+                  Optimize
+                </Button>
+              </Tooltip>
+            )}
             <Tooltip title="Edit evaluation criteria">
               <Button 
                 startIcon={<EditIcon />} 
@@ -1855,6 +1933,38 @@ YOUR EVALUATION (in JSON format):
           </Button>
         </DialogActions>
       </Dialog>
+
+      {/* Add PromptOptimizer dialog */}
+      <PromptOptimizer
+        open={optimizerOpen}
+        onClose={() => setOptimizerOpen(false)}
+        currentSystemPrompt={systemPrompts.global || ''}
+        validationResults={validationResults}
+        onPromptOptimized={handleOptimizedPrompt}
+        validatorModel={validatorModel}
+        propCurrentQuery={(() => {
+          console.warn('===== RESPONSE VALIDATION =====');
+          console.warn('Passing currentQuery to PromptOptimizer:', currentQuery);
+          console.warn('Is currentQuery defined?', currentQuery !== undefined);
+          console.warn('currentQuery type:', typeof currentQuery);
+          console.warn('currentQuery length:', currentQuery ? currentQuery.length : 0);
+          console.warn('===============================');
+          return currentQuery;
+        })()}
+        systemPrompts={{
+          global: systemPrompts.global || '',
+          ...systemPrompts,
+          ...(Object.keys(validationResults || {}).reduce((acc, setKey) => {
+            const setMatch = setKey.match(/Set (\d+)/);
+            const setNumber = setMatch ? setMatch[1] : null;
+            if (setNumber && !acc[`set${setNumber}`]) {
+              acc[`set${setNumber}`] = systemPrompts.global || '';
+            }
+            return acc;
+          }, {}))
+        }}
+        responses={responses}
+      />
     </Box>
   );
 }

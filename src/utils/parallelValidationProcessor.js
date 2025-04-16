@@ -406,6 +406,10 @@ YOUR EVALUATION (in JSON format):
   // Convert array of results to an object mapped by model key
   const validationResults = {};
   results.forEach(({ modelKey, result }) => {
+    // Find the corresponding task to get the answer
+    const task = validationTasks.find(task => task.modelKey === modelKey);
+    const modelAnswer = task ? task.answer : null;
+    
     // Normalize and validate result before adding to final results
     if (result && typeof result === 'object' && !result.error) {
       // Ensure criteria object exists
@@ -463,6 +467,40 @@ YOUR EVALUATION (in JSON format):
       if (!Array.isArray(result.strengths)) result.strengths = [];
       if (!Array.isArray(result.weaknesses)) result.weaknesses = [];
       if (!Array.isArray(result.unclear_statements)) result.unclear_statements = [];
+      
+      // Add the original model response to the result
+      result.modelResponse = modelAnswer;
+      result.assistantResponse = modelAnswer;
+      
+      // Add evaluation template with model response for extraction if needed
+      result.evaluatorPrompt = `
+You are an impartial judge evaluating the quality of an AI assistant's response to a user query.
+
+SYSTEM PROMPT:
+${systemPrompts[modelKey] || 'No system prompt provided'}
+
+USER QUERY:
+${query}
+
+AI ASSISTANT'S RESPONSE:
+${modelAnswer}
+
+EVALUATION CRITERIA:
+${criteria}`;
+    } else if (result && result.error) {
+      // For error case, create a minimal result object with error info
+      result = {
+        error: result.error || 'Unknown validation error',
+        criteria: {},
+        strengths: [],
+        weaknesses: [],
+        unclear_statements: [],
+        overall_score: 0,
+        overall_assessment: 'Validation failed',
+        // Add model response even in error case
+        modelResponse: modelAnswer,
+        assistantResponse: modelAnswer
+      };
     }
     
     validationResults[modelKey] = result;
