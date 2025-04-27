@@ -51,6 +51,7 @@ import { v4 as uuidv4 } from 'uuid';
 import models from '../config/llmConfig';
 import { debugLogResponseData } from '../utils/promptOptimizerDebug';
 import { getLineDiff, getWordDiff } from '../utils/diffUtils';
+import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 
 // Default constants - now configurable by user
 const DEFAULT_MAX_ITERATIONS = 5;
@@ -1352,6 +1353,16 @@ This prompt is intended to be used with ${targetModel}. Please evaluate with thi
 EVALUATION CRITERIA:
 ${criteriaText}
 
+SCORING RUBRIC (apply to all criteria):
+- Score 10: The criterion is fully met, with no issues found.
+- Score 5: The criterion is partially met; some issues are present but the response is not a complete failure.
+- Score 1: The criterion is completely missed; the response fails to meet the criterion in a significant way.
+
+Special instructions for "Unclear or Irrelevant Statements":
+- If the response contains any unclear or irrelevant statements, score this criterion as 1.
+- Only score 5 or above if there are no such statements.
+- A score of 5 means the criterion is partially met; a score of 1 means it is completely missed.
+
 For each criterion, provide:
 - A score from 1-10
 - A brief explanation of the score
@@ -2398,6 +2409,63 @@ Return ONLY the improved prompt text without any additional commentary, explanat
   const [ignoreWhitespace, setIgnoreWhitespace] = useState(false);
   const [diffGranularity, setDiffGranularity] = useState('line');
 
+  const [hitlStatus, setHitlStatus] = useState(null);
+  const [hitlPromptId, setHitlPromptId] = useState(null);
+  const [hitlLoading, setHitlLoading] = useState(false);
+  const [hitlError, setHitlError] = useState('');
+  const [hitlSuccess, setHitlSuccess] = useState('');
+  const [hitlReview, setHitlReview] = useState(null);
+
+  // Poll for review status if in review
+  useEffect(() => {
+    let interval;
+    if (hitlPromptId && hitlStatus === 'in_review') {
+      interval = setInterval(async () => {
+        try {
+          const res = await fetch(`/api/prompts/${hitlPromptId}`);
+          const data = await res.json();
+          setHitlStatus(data.status);
+          setHitlReview(data.review || null);
+          if (data.status === 'reviewed') clearInterval(interval);
+        } catch (e) {
+          // ignore
+        }
+      }, 3000);
+    }
+    return () => interval && clearInterval(interval);
+  }, [hitlPromptId, hitlStatus]);
+
+  const handleSubmitForReview = async () => {
+    setHitlLoading(true);
+    setHitlError('');
+    setHitlSuccess('');
+    setHitlReview(null);
+    try {
+      const actualResponse = getActualResponseForSet(selectedSet);
+      const res = await fetch('/api/prompts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          text: initialPrompt,
+          response: actualResponse?.response || '',
+          setKey: selectedSet
+        })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setHitlPromptId(data.prompt.id);
+        setHitlStatus('in_review');
+        setHitlSuccess('Prompt submitted for human review!');
+      } else {
+        setHitlError(data.error || 'Failed to submit for review');
+      }
+    } catch (e) {
+      setHitlError('Failed to submit for review');
+    } finally {
+      setHitlLoading(false);
+    }
+  };
+
   return (
     <Dialog open={open} onClose={onClose} maxWidth="lg" fullWidth>
       {/* Debug log for validation results */}
@@ -2642,6 +2710,39 @@ Return ONLY the improved prompt text without any additional commentary, explanat
           
           {/* Show detailed cards below */}
           {renderDetailedCards()}
+
+          <Box mb={2}>
+            <Button
+              variant="outlined"
+              color="secondary"
+              onClick={handleSubmitForReview}
+              disabled={hitlLoading || isOptimizing || !initialPrompt.trim()}
+              sx={{ mt: 1 }}
+            >
+              {hitlLoading ? 'Submitting for Human Review...' : 'Submit for Human Review'}
+            </Button>
+          </Box>
+          {hitlError && <Alert severity="error">{hitlError}</Alert>}
+          {hitlSuccess && <Alert severity="success">{hitlSuccess}</Alert>}
+          {hitlPromptId && (
+            <Box mb={2}>
+              <Alert severity={hitlStatus === 'reviewed' ? 'success' : 'info'}>
+                Review Status: <b>{hitlStatus}</b>
+                {hitlStatus === 'in_review' && ' (waiting for reviewer...)'}
+                {hitlStatus === 'reviewed' && hitlReview && (
+                  <Box mt={1}>
+                    <b>Reviewer Feedback:</b>
+                    <ul>
+                      {Object.entries(hitlReview.scores || {}).map(([k, v]) => (
+                        <li key={k}>{k}: {v}</li>
+                      ))}
+                    </ul>
+                    {hitlReview.comments && <div><b>Comments:</b> {hitlReview.comments}</div>}
+                  </Box>
+                )}
+              </Alert>
+            </Box>
+          )}
         </Box>
       </DialogContent>
       <DialogActions>

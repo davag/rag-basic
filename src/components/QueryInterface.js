@@ -389,6 +389,14 @@ Format your response in a clear, structured way. Focus on actionable improvement
     // Prevent submission if already processing
     if (isProcessing) return;
     
+    // Reset parallel progress at the start of a new query
+    setParallelProgress({
+      completed: 0,
+      pending: 0,
+      total: 0,
+      models: {}
+    });
+    
     // Validate input
     if (!query.trim()) {
       setError('Please enter a query');
@@ -475,68 +483,27 @@ Format your response in a clear, structured way. Focus on actionable improvement
               
               // Track if this cost should be used for display in the UI (comes from API)
               const useForDisplay = result.useForDisplay === true || result.rawResponse?.useForDisplay === true;
-              if (useForDisplay) {
-                console.log(`[COST INFO] Using API-reported cost for UI display: $${apiProvidedCost} for ${model}`);
+
+              // Patch: If API-provided cost is present and useForDisplay is true, always set these fields
+              const metricsEntry = {
+                model,
+                promptSet: set.id,
+                elapsedTime: result.elapsedTime,
+                responseTime: result.elapsedTime, // Add responseTime alias
+                tokenUsage: tokenUsage,
+                calculatedCost: apiProvidedCost, // Add API-provided cost when available
+                useForDisplay // Flag from server indicating this cost should be used for display
+              };
+              if (useForDisplay && apiProvidedCost !== null) {
+                metricsEntry.calculatedCost = apiProvidedCost;
+                metricsEntry.useForDisplay = true;
               }
-
-              // Helper function to handle elapsed time
-              const getElapsedTime = (time, timeType) => {
-                if (!time) return 0;
-                
-                // If explicit type is provided, trust it
-                if (timeType === 'duration') {
-                  console.log(`[TIME DEBUG] Using explicit duration: ${time}ms`);
-                  return time;
-                }
-                
-                // If it's a timestamp (greater than 24 hours in ms), convert to elapsed time
-                if (time > 24 * 60 * 60 * 1000) {
-                  console.log(`[TIME DEBUG] Converting timestamp ${time} to elapsed time: ${Date.now() - time}ms`);
-                  return Date.now() - time;
-                }
-                
-                console.log(`[TIME DEBUG] Using as-is duration: ${time}ms`);
-                return time;
-              };
-
-              const elapsedTime = getElapsedTime(
-                result.elapsedTime, 
-                result.elapsedTimeType || (result.rawResponse && result.rawResponse.elapsedTimeType)
-              );
-              
               // Format 1: Composite key at top level (for ResponseComparison.js)
-              metrics[`${setKey}-${model}`] = {
-                model,
-                promptSet: set.id,
-                elapsedTime,
-                responseTime: elapsedTime, // Add responseTime alias
-                tokenUsage: tokenUsage,
-                calculatedCost: apiProvidedCost, // Add API-provided cost when available
-                useForDisplay // Flag from server indicating this cost should be used for display
-              };
-              
+              metrics[`${setKey}-${model}`] = { ...metricsEntry };
               // Format 2: Nested under set key (for newer components)
-              metrics[setKey][model] = {
-                model,
-                promptSet: set.id,
-                elapsedTime,
-                responseTime: elapsedTime, // Add responseTime alias
-                tokenUsage: tokenUsage,
-                calculatedCost: apiProvidedCost, // Add API-provided cost when available
-                useForDisplay // Flag from server indicating this cost should be used for display
-              };
-              
+              metrics[setKey][model] = { ...metricsEntry };
               // Format 3: Direct model key (for simpler lookups)
-              metrics[model] = {
-                model,
-                promptSet: set.id,
-                elapsedTime,
-                responseTime: elapsedTime, // Add responseTime alias
-                tokenUsage: tokenUsage,
-                set: setKey,
-                calculatedCost: apiProvidedCost, // Add API-provided cost when available
-                useForDisplay // Flag from server indicating this cost should be used for display
-              };
+              metrics[model] = { ...metricsEntry, set: setKey };
             }
           }
         }
@@ -608,12 +575,6 @@ Format your response in a clear, structured way. Focus on actionable improvement
       setIsProcessing(false);
       setCurrentProcessingModel(null);
       setProcessingStep('');
-      setParallelProgress({
-        completed: 0,
-        pending: 0,
-        total: 0,
-        models: {}
-      });
     }
   };
 
@@ -728,13 +689,19 @@ Format your response in a clear, structured way. Focus on actionable improvement
     setCurrentProcessingModel(progress.model || 'all models');
     setProcessingStep(progress.step || 'Processing query');
     
+    // Extract base model name (before ' / Set')
+    let baseModel = progress.model;
+    if (baseModel && baseModel.includes(' / Set')) {
+      baseModel = baseModel.split(' / Set')[0].trim();
+    }
+    
     // Update parallel progress state
     setParallelProgress(prev => {
       const newModels = { ...prev.models };
       
       // Update model status
-      if (progress.model) {
-        newModels[progress.model] = {
+      if (baseModel) {
+        newModels[baseModel] = {
           status: progress.status || 'pending',
           timestamp: Date.now()
         };
@@ -756,289 +723,6 @@ Format your response in a clear, structured way. Focus on actionable improvement
         models: newModels
       };
     });
-  };
-
-  // Legacy function - currently unused but kept for reference
-  // eslint-disable-next-line no-unused-vars
-  const processParallelQuery = async () => {
-    if (!query || !vectorStore) return;
-    
-    // Generate a unique ID for this query to track costs
-    const queryId = `query-${Date.now()}`;
-    console.log(`Generated query ID for cost tracking: ${queryId}`);
-
-    try {
-      setIsProcessing(true);
-      setProgressData({
-        current: 0,
-        total: selectedModels.length,
-        message: 'Retrieving relevant documents...',
-        detailedStatus: []
-      });
-      
-      // Record processing start times
-      const currentTime = Date.now();
-      setProcessingStartTime(currentTime);
-      
-      // Create a parallel processor with progress callback
-      const processor = new ParallelLLMProcessor({
-        onProgressUpdate: handleProcessorProgress
-      });
-      
-      // Process selected models in parallel with different prompt sets
-      const processorResults = await processor.processQuery({
-        query,
-        vectorStore,
-        selectedModels,
-        selectedNamespaces,
-        promptSets,
-        queryId // Pass the queryId for cost tracking
-      });
-      
-      console.log("Processor results:", processorResults);
-      
-      // Extract metrics for each model and prompt set
-      const metrics = {};
-      
-      // Track whether we've extracted metrics from any model yet
-      let hasExtractedMetrics = false;
-      
-      // UPDATED: Metrics handling for new nested structure
-      if (processorResults.models) {
-        console.log("Processing metrics from new nested structure");
-        
-        // For each prompt set
-        Object.entries(processorResults.models).forEach(([setKey, setModels]) => {
-          // Create a container for this set's metrics
-          metrics[setKey] = {};
-          
-          // Process each model in this set
-          Object.entries(setModels).forEach(([modelKey, modelResponse]) => {
-            console.log(`Extracting metrics for ${modelKey} in ${setKey}`);
-            
-            // Calculate elapsed time
-            const elapsedTime = modelResponse.elapsedTime || 0;
-            
-            // Extract token usage
-            let tokenUsage = modelResponse.tokenUsage || {
-              promptTokens: 0,
-              completionTokens: 0,
-              totalTokens: 0,
-              estimated: true
-            };
-            
-            // If token usage is missing entirely, estimate it from the response text
-            if (!tokenUsage || (tokenUsage.totalTokens === 0 && !tokenUsage.prompt_tokens && !tokenUsage.completion_tokens)) {
-              console.log(`No token usage found for ${modelKey}, estimating from response text`);
-              const responseText = modelResponse.text || '';
-              const estimatedTokens = Math.round(responseText.length / 4);
-              
-              tokenUsage = {
-                promptTokens: Math.floor(estimatedTokens / 2),
-                completionTokens: Math.ceil(estimatedTokens / 2),
-                totalTokens: estimatedTokens,
-                estimated: true
-              };
-            }
-            
-            // Normalize token usage format
-            const normalizedTokenUsage = {
-              input: tokenUsage.promptTokens || tokenUsage.prompt_tokens || 0,
-              output: tokenUsage.completionTokens || tokenUsage.completion_tokens || 0,
-              total: tokenUsage.totalTokens || tokenUsage.total_tokens || 
-                    (tokenUsage.promptTokens + tokenUsage.completionTokens) || 
-                    (tokenUsage.prompt_tokens + tokenUsage.completion_tokens) || 0,
-              estimated: tokenUsage.estimated || false
-            };
-            
-            // Store metrics in multiple formats for compatibility
-            // 1. Under the set name with model as key
-            metrics[setKey][modelKey] = {
-              responseTime: elapsedTime,
-              elapsedTime: elapsedTime,
-              tokenUsage: normalizedTokenUsage
-            };
-            
-            // 2. Using combined key format
-            const combinedKey = `${setKey}-${modelKey}`;
-            metrics[combinedKey] = {
-              responseTime: elapsedTime,
-              elapsedTime: elapsedTime,
-              tokenUsage: normalizedTokenUsage
-            };
-            
-            // 3. For direct model key access
-            metrics[modelKey] = {
-              responseTime: elapsedTime,
-              elapsedTime: elapsedTime,
-              tokenUsage: normalizedTokenUsage
-            };
-            
-            hasExtractedMetrics = true;
-          });
-        });
-        
-        // Also save metadata in metrics
-        if (processorResults.metadata) {
-          metrics.metadata = processorResults.metadata;
-        }
-      } 
-      // Legacy format handling
-      else {
-        console.log("Processing metrics from legacy format");
-        
-        Object.keys(processorResults).forEach(key => {
-          // Skip metadata keys
-          if (key === 'query' || key === 'retrievalTime') {
-            metrics[key] = processorResults[key];
-            return;
-          }
-          
-          // Handle prompt set formats
-          if (key.startsWith('Set ') && typeof processorResults[key] === 'object') {
-            const setKey = key;
-            const setContent = processorResults[key];
-            
-            // Create a container for this set
-            metrics[setKey] = {};
-            
-            // Process models in this set
-            Object.keys(setContent).forEach(modelKey => {
-              // Skip non-model properties
-              if (modelKey === 'query' || modelKey === 'retrievalTime') {
-                metrics[`${setKey}.${modelKey}`] = setContent[modelKey];
-                return;
-              }
-              
-              const modelResponse = setContent[modelKey];
-              if (modelResponse) {
-                // Calculate elapsed time
-                const elapsedTime = modelResponse.elapsedTime || 0;
-                
-                // Extract token usage
-                let tokenUsage = modelResponse.tokenUsage || {
-                  promptTokens: 0,
-                  completionTokens: 0,
-                  totalTokens: 0,
-                  estimated: true
-                };
-                
-                // If token usage is missing, estimate it from the response text
-                if (!tokenUsage || !tokenUsage.totalTokens) {
-                  const responseText = modelResponse.text || '';
-                  const estimatedTokens = Math.round(responseText.length / 4);
-                  
-                  tokenUsage = {
-                    promptTokens: Math.floor(estimatedTokens / 2),
-                    completionTokens: Math.ceil(estimatedTokens / 2),
-                    totalTokens: estimatedTokens,
-                    estimated: true
-                  };
-                }
-                
-                // Store in multiple formats for compatibility
-                metrics[setKey][modelKey] = {
-                  responseTime: elapsedTime,
-                  elapsedTime: elapsedTime,
-                  tokenUsage: tokenUsage
-                };
-                
-                // Combined key for direct access
-                metrics[`${setKey}-${modelKey}`] = {
-                  responseTime: elapsedTime,
-                  elapsedTime: elapsedTime,
-                  tokenUsage: tokenUsage
-                };
-                
-                hasExtractedMetrics = true;
-              }
-            });
-          } 
-          // Direct model responses
-          else {
-            const modelResponse = processorResults[key];
-            if (typeof modelResponse === 'object') {
-              const elapsedTime = modelResponse.elapsedTime || 0;
-              const tokenUsage = modelResponse.tokenUsage || {
-                estimated: true,
-                promptTokens: 0,
-                completionTokens: 0,
-                totalTokens: 0
-              };
-              
-              metrics[key] = {
-                responseTime: elapsedTime,
-                elapsedTime: elapsedTime,
-                tokenUsage: tokenUsage
-              };
-              
-              hasExtractedMetrics = true;
-            }
-          }
-        });
-      }
-      
-      console.log("Final metrics object:", metrics);
-      
-      // If no metrics were extracted, add default ones
-      if (!hasExtractedMetrics) {
-        console.warn("No metrics were extracted, creating defaults");
-        
-        // Create default metrics for each model
-        selectedModels.forEach(model => {
-          metrics[model] = {
-            responseTime: 1000, // Default 1 second
-            elapsedTime: 1000,
-            tokenUsage: {
-              promptTokens: 500,
-              completionTokens: 500,
-              totalTokens: 1000,
-              estimated: true
-            }
-          };
-        });
-      }
-      
-      // Set responses and metrics in state
-      setResponses(processorResults);
-      setResponseMetrics(metrics);
-      
-      // Switch to comparison view
-      setActiveTab('comparison');
-      
-      // Log completion
-      console.log("Query processing completed successfully");
-      
-    } catch (error) {
-      console.error("Error processing parallel query:", error);
-      
-      // Enhanced error handling for common issues
-      let errorMessage = error.message;
-      
-      // Special handling for common errors
-      if (error.message?.includes('Rate limit')) {
-        errorMessage = 'Rate limit exceeded. Please wait a moment before trying again.';
-      }
-      else if (error.message?.includes('timeout') || error.message?.includes('timed out')) {
-        errorMessage = 'Request timed out. Please try again or check your connection.';
-      }
-      else if (error.message?.includes('Authentication') || error.message?.includes('API key')) {
-        errorMessage = 'Authentication error. Please check your API keys and permissions.';
-      }
-      else if (error.message?.includes('vector store')) {
-        errorMessage = 'Error accessing the vector store. Please check if your documents are properly indexed.';
-      }
-      else if (error.message?.includes('llm')) {
-        errorMessage = 'Error communicating with the language model. Please check your model configuration.';
-      }
-      else {
-        errorMessage = `Error: ${error.message || 'An unexpected error occurred. Please try again.'}`;
-      }
-      
-      setError(errorMessage);
-    } finally {
-      setIsProcessing(false);
-    }
   };
 
   // Add a helper method to ensure o3-mini content is properly displayed
@@ -1858,27 +1542,38 @@ Format your response in a clear, structured way. Focus on actionable improvement
                 )}
                 
                 {/* Model status chips */}
-                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, maxHeight: 120, overflowY: 'auto' }}>
-                  {[...new Set(Object.keys(parallelProgress.models))].map(model => {
-                    const data = parallelProgress.models[model];
-                    return (
-                      <Chip 
-                        key={model}
-                        label={model} 
-                        size="small"
-                        color={data.status === 'completed' ? 'success' : 'primary'}
-                        variant={data.status === 'completed' ? 'filled' : 'outlined'}
-                        sx={{ 
-                          animation: data.status === 'completed' ? 'none' : 'pulse 1.5s infinite',
-                          '@keyframes pulse': {
-                            '0%': { opacity: 0.6 },
-                            '50%': { opacity: 1 },
-                            '100%': { opacity: 0.6 }
-                          }
-                        }}
-                      />
-                    );
-                  })}
+                {(() => {
+                  // Debug logging for model name mismatches
+                  console.log('[DEBUG] selectedModels:', selectedModels);
+                  console.log('[DEBUG] parallelProgress.models keys:', Object.keys(parallelProgress.models));
+                  return null;
+                })()}
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, maxHeight: 140, overflowY: 'auto' }}>
+                  <Typography variant="caption" sx={{ mb: 0.5, textAlign: 'left', color: 'text.secondary' }}>
+                    {parallelProgress.completed}/{selectedModels.length} models completed
+                  </Typography>
+                  <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+                    {selectedModels.map(model => {
+                      const data = parallelProgress.models[model] || {};
+                      return (
+                        <Chip 
+                          key={model}
+                          label={model}
+                          size="small"
+                          color={data.status === 'completed' ? 'success' : 'primary'}
+                          variant={data.status === 'completed' ? 'filled' : 'outlined'}
+                          sx={{ 
+                            animation: data.status === 'completed' ? 'none' : 'pulse 1.5s infinite',
+                            '@keyframes pulse': {
+                              '0%': { opacity: 0.6 },
+                              '50%': { opacity: 1 },
+                              '100%': { opacity: 0.6 }
+                            }
+                          }}
+                        />
+                      );
+                    })}
+                  </Box>
                 </Box>
               </Paper>
             ) : (

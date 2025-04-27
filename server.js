@@ -737,6 +737,75 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 // Serve static files from the React app in production
 app.use(express.static(path.join(__dirname, 'build')));
 
+// ================= HITL REVIEW WORKFLOW (IN-MEMORY) =================
+
+// In-memory stores for prompts and reviews
+const prompts = [];
+const reviews = [];
+let promptIdCounter = 1;
+let reviewIdCounter = 1;
+
+// POST /api/prompts - submit a prompt for review
+app.post('/api/prompts', (req, res) => {
+  const { text, userId, response, setKey } = req.body;
+  if (!text) return res.status(400).json({ error: 'Prompt text required' });
+  const prompt = {
+    id: promptIdCounter++,
+    text,
+    userId: userId || null,
+    response: response || '',
+    setKey: setKey || '',
+    status: 'in_review',
+    createdAt: new Date(),
+    reviewId: null
+  };
+  prompts.push(prompt);
+  res.json({ success: true, prompt });
+});
+
+// GET /api/reviews/queue - list prompts awaiting review
+app.get('/api/reviews/queue', (req, res) => {
+  const queue = prompts.filter(p => p.status === 'in_review');
+  res.json(queue);
+});
+
+// POST /api/reviews/:id - submit a review for a prompt
+app.post('/api/reviews/:id', (req, res) => {
+  const promptId = parseInt(req.params.id, 10);
+  const { reviewerId, scores, comments } = req.body;
+  const prompt = prompts.find(p => p.id === promptId);
+  if (!prompt) return res.status(404).json({ error: 'Prompt not found' });
+  if (prompt.status !== 'in_review') return res.status(400).json({ error: 'Prompt not in review' });
+  const review = {
+    id: reviewIdCounter++,
+    promptId,
+    reviewerId: reviewerId || null,
+    scores: scores || {},
+    comments: comments || '',
+    status: 'reviewed',
+    createdAt: new Date(),
+    updatedAt: new Date()
+  };
+  reviews.push(review);
+  prompt.status = 'reviewed';
+  prompt.reviewId = review.id;
+  res.json({ success: true, review });
+});
+
+// GET /api/prompts/:id - get prompt and review status
+app.get('/api/prompts/:id', (req, res) => {
+  const promptId = parseInt(req.params.id, 10);
+  const prompt = prompts.find(p => p.id === promptId);
+  if (!prompt) return res.status(404).json({ error: 'Prompt not found' });
+  let review = null;
+  if (prompt.reviewId) {
+    review = reviews.find(r => r.id === prompt.reviewId);
+  }
+  res.json({ ...prompt, review });
+});
+
+// ================= END HITL REVIEW WORKFLOW =================
+
 // IMPORTANT: There are two proxy setups in this application:
 // 1. The webpack dev server proxy middleware (configured in package.json)
 // 2. Our own direct implementation below
@@ -1353,483 +1422,34 @@ app.post('/api/cost-tracking/track-model-usage', (req, res) => {
     
     console.log(`\n=============== COST TRACKING REQUEST ===============`);
     console.log(`Model: ${model}`);
-    console.log(`QueryId: ${queryId || 'none'}`);
     console.log(`Usage: ${JSON.stringify(usage)}`);
+    console.log(`Operation: ${operation}`);
+    console.log(`QueryId: ${queryId}`);
+    console.log('========================= END REQUEST DUMP =========================');
     
-    // Extract the base queryId if it contains a model name
-    let baseQueryId = queryId;
-    if (queryId && queryId.includes('-')) {
-      const lastDashPos = queryId.lastIndexOf('-');
-      if (lastDashPos > 0) {
-        // Check if the part after the last dash looks like a model name
-        const possibleModel = queryId.substring(lastDashPos + 1);
-        if (possibleModel.includes('gpt') || 
-            possibleModel.includes('claude') || 
-            possibleModel.includes('o3') ||
-            possibleModel.includes('llama')) {
-          baseQueryId = queryId.substring(0, lastDashPos);
-          console.log(`Extracted base queryId: ${baseQueryId} from ${queryId}`);
-        }
-      }
-    }
-    
-    // Check if we already have an API-reported cost for this model + queryId
-    let apiReportedCost = null;
-    let costTrackingSource = 'client';
-    
-    // If queryId exists, check if we already have API-reported cost for this model
-    if (queryId) {
-      const modelSpecificId = baseQueryId + '-' + costTracker.normalizeModelName(model);
-      const existingCosts = costTracker.getModelCosts(modelSpecificId);
-      
-      // If we have API-reported costs for this model, use those instead of client calculation
-      if (existingCosts && existingCosts.length > 0) {
-        const apiCosts = existingCosts.filter(entry => entry.source === 'API');
-        if (apiCosts.length > 0) {
-          // Use the API-reported cost
-          apiReportedCost = apiCosts[0].cost;
-          costTrackingSource = 'API';
-          console.log(`Found existing API-reported cost for ${model}: $${apiReportedCost}`);
-        }
-      }
-    }
-    
-    // If we have API-reported cost already, use it
-    let costInfo;
-    if (apiReportedCost !== null) {
-      // Return the API-reported cost with a flag indicating to use this in the UI
-      costInfo = {
-        cost: apiReportedCost,
-        model: costTracker.normalizeModelName(model),
-        operation: operation || 'chat',
-        source: 'API',
-        useForDisplay: true, // Flag for client to prioritize this cost
-        queryId,
-        trackingId: queryId ? queryId + '-' + costTracker.normalizeModelName(model) : null
-      };
-      
-      console.log(`Using API-reported cost for ${model}: $${apiReportedCost}`);
-    } else {
-      // Use the unified cost computation method to ensure consistency
-      costInfo = costTracker.computeCost(model, usage, operation || 'chat', baseQueryId, costTrackingSource);
-      
-      // Add the display flag if this cost came from API data
-      if (costInfo.source === 'API') {
-        costInfo.useForDisplay = true;
-      }
-    }
-    
-    console.log(`COST TRACKED: $${costInfo.cost.toFixed(10)} for ${model}`);
-    console.log(`Total cost accumulating: $${costTracker.getTotalCost().toFixed(10)}`);
-    console.log(`=============== END COST TRACKING ===============\n`);
-    
-    // Return the cost information
-    res.json(costInfo);
+    const costInfo = costTracker.trackLlmCost(model, usage, operation, queryId, 'API');
+    res.json({
+      success: true,
+      cost: costInfo.cost,
+      useForDisplay: true,
+      costInfo
+    });
   } catch (error) {
-    console.error('Error in cost tracking:', error);
+    console.error('Error tracking cost:', error.message);
     res.status(500).json({ error: error.message });
   }
 });
 
-// Add missing endpoint for tracking embedding usage
-app.post('/api/cost-tracking/track-embedding-usage', (req, res) => {
-  try {
-    const { model, tokenCount, operation, queryId } = req.body;
-    
-    if (!model || !tokenCount) {
-      console.warn('[Embedding Cost Tracking] Missing required parameters:', req.body);
-      return res.status(400).json({ 
-        error: 'Model and token count are required',
-        received: { model, tokenCount, operation, queryId }
-      });
-    }
-    
-    // Parse tokenCount as a number if it's a string
-    const parsedTokenCount = typeof tokenCount === 'string' ? parseInt(tokenCount, 10) : tokenCount;
-    
-    if (isNaN(parsedTokenCount)) {
-      console.warn('[Embedding Cost Tracking] Invalid token count:', tokenCount);
-      return res.status(400).json({ 
-        error: 'Token count must be a valid number',
-        received: { tokenCount }
-      });
-    }
-    
-    console.log(`\n=============== EMBEDDING COST TRACKING REQUEST ===============`);
-    console.log(`Model: ${model}`);
-    console.log(`QueryId: ${queryId || 'none'}`);
-    console.log(`Token count: ${parsedTokenCount}`);
-    console.log(`Operation: ${operation || 'document'}`);
-    
-    // Track the embedding cost
-    const costInfo = costTracker.trackEmbeddingCost(model, parsedTokenCount, operation || 'document', queryId);
-    
-    if (costInfo.error) {
-      console.warn(`[Embedding Cost Tracking] Warning: ${costInfo.error}`);
-    }
-    
-    console.log(`EMBEDDING COST TRACKED: $${costInfo.cost.toFixed(10)} for ${model}`);
-    console.log(`Total cost accumulating: $${costTracker.getTotalCost().toFixed(10)}`);
-    console.log(`=============== END EMBEDDING COST TRACKING ===============\n`);
-    
-    // Return the cost information
-    res.json(costInfo);
-  } catch (error) {
-    console.error('Error tracking embedding usage:', error);
-    // Return a more detailed error message
-    res.status(500).json({ 
-      error: 'Failed to track embedding usage',
-      message: error.message,
-      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
-    });
-  }
-});
-
-// Add endpoints for cost-tracking with dash format
-// Summary endpoint
+// Add cost tracking summary endpoint with dash for legacy/frontend compatibility
 app.get('/api/cost-tracking-summary', (req, res) => {
   try {
     const summary = costTracker.getCostSummary();
     res.json(summary);
   } catch (error) {
-    console.error('Error getting cost summary:', error);
-    res.status(500).json({ error: 'Failed to get cost summary' });
+    res.status(500).json({ error: error.message });
   }
 });
 
-// Make sure we also have the slash format
-app.get('/api/cost-tracking/summary', (req, res) => {
-  try {
-    const summary = costTracker.getCostSummary();
-    res.json(summary);
-  } catch (error) {
-    console.error('Error getting cost summary:', error);
-    res.status(500).json({ error: 'Failed to get cost summary' });
-  }
-});
-
-// Export endpoint
-app.get('/api/cost-tracking-export', (req, res) => {
-  try {
-    const data = costTracker.exportCostData();
-    
-    // Set headers for file download
-    res.setHeader('Content-Type', 'application/json');
-    res.setHeader('Content-Disposition', 'attachment; filename=cost-tracking-export.json');
-    
-    res.json(data);
-  } catch (error) {
-    console.error('Error exporting cost data:', error);
-    res.status(500).json({ error: 'Failed to export cost data' });
-  }
-});
-
-// Make sure we also have the slash format
-app.get('/api/cost-tracking/export', (req, res) => {
-  try {
-    const data = costTracker.exportCostData();
-    
-    // Set headers for file download
-    res.setHeader('Content-Type', 'application/json');
-    res.setHeader('Content-Disposition', 'attachment; filename=cost-tracking-export.json');
-    
-    res.json(data);
-  } catch (error) {
-    console.error('Error exporting cost data:', error);
-    res.status(500).json({ error: 'Failed to export cost data' });
-  }
-});
-
-// Reset endpoint
-app.post('/api/cost-tracking-reset', (req, res) => {
-  try {
-    const result = costTracker.resetCostData();
-    res.json({ success: result });
-  } catch (error) {
-    console.error('Error resetting cost data:', error);
-    res.status(500).json({ error: 'Failed to reset cost data' });
-  }
-});
-
-// Make sure we also have the slash format
-app.post('/api/cost-tracking/reset', (req, res) => {
-  try {
-    const result = costTracker.resetCostData();
-    res.json({ success: result });
-  } catch (error) {
-    console.error('Error resetting cost data:', error);
-    res.status(500).json({ error: 'Failed to reset cost data' });
-  }
-});
-
-// Settings endpoint
-app.post('/api/cost-tracking-settings', (req, res) => {
-  try {
-    const { detailedLogging, embeddingPricing } = req.body;
-    
-    if (detailedLogging !== undefined) {
-      costTracker.setDetailedLogging(detailedLogging);
-    }
-    
-    if (embeddingPricing) {
-      costTracker.setEmbeddingPricing(embeddingPricing);
-    }
-    
-    res.json({ success: true });
-  } catch (error) {
-    console.error('Error updating cost tracking settings:', error);
-    res.status(500).json({ error: 'Failed to update cost tracking settings' });
-  }
-});
-
-// Make sure we also have the slash format
-app.post('/api/cost-tracking/settings', (req, res) => {
-  try {
-    const { detailedLogging, embeddingPricing } = req.body;
-    
-    if (detailedLogging !== undefined) {
-      costTracker.setDetailedLogging(detailedLogging);
-    }
-    
-    if (embeddingPricing) {
-      costTracker.setEmbeddingPricing(embeddingPricing);
-    }
-    
-    res.json({ success: true });
-  } catch (error) {
-    console.error('Error updating cost tracking settings:', error);
-    res.status(500).json({ error: 'Failed to update cost tracking settings' });
-  }
-});
-
-// By period endpoints
-app.get('/api/cost-tracking/by-period', (req, res) => {
-  try {
-    const { period, startDate, endDate } = req.query;
-    
-    // Get cost summary to process
-    const summary = costTracker.getCostSummary();
-    
-    // Filter data by period
-    const filteredData = filterDataByPeriod(summary, period, startDate, endDate);
-    
-    res.json(filteredData);
-  } catch (error) {
-    console.error('Error getting costs by period:', error);
-    res.status(500).json({ error: 'Failed to get costs by period' });
-  }
-});
-
-app.get('/api/cost-tracking-by-period', (req, res) => {
-  try {
-    const { period, startDate, endDate } = req.query;
-    
-    // Get cost summary to process
-    const summary = costTracker.getCostSummary();
-    
-    // Filter data by period
-    const filteredData = filterDataByPeriod(summary, period, startDate, endDate);
-    
-    res.json(filteredData);
-  } catch (error) {
-    console.error('Error getting costs by period:', error);
-    res.status(500).json({ error: 'Failed to get costs by period' });
-  }
-});
-
-// Proxy endpoint for Azure OpenAI API embeddings
-app.post('/api/proxy/azure/embeddings', async (req, res) => {
-  try {
-    console.log('[AZURE PROXY DEBUGGER] Request path: /embeddings');
-    console.log('[AZURE PROXY DEBUGGER] Method: POST');
-    console.log('[AZURE PROXY DEBUGGER] Content-Type:', req.headers['content-type']);
-    console.log('[AZURE PROXY DEBUGGER] Body keys:', JSON.stringify(Object.keys(req.body), null, 2));
-    console.log('[AZURE PROXY DEBUGGER] Has deploymentName:', req.body.deploymentName ? 'true' : 'false');
-    console.log('[AZURE PROXY DEBUGGER] DeploymentName value:', req.body.deploymentName);
-    
-    // Extract the Azure OpenAI API key and endpoint from the request
-    const apiKey = req.body.azureApiKey;
-    const endpoint = req.body.azureEndpoint;
-    const deploymentName = req.body.deploymentName;
-    const apiVersion = req.body.apiVersion || process.env.REACT_APP_AZURE_OPENAI_API_VERSION || '2023-05-15';
-    
-    // Extract query ID if provided for tracking costs
-    const queryId = req.body.queryId;
-    
-    if (!apiKey) {
-      return res.status(401).json({
-        error: {
-          message: 'Azure OpenAI API key is required for embeddings'
-        }
-      });
-    }
-    
-    if (!endpoint) {
-      return res.status(400).json({
-        error: {
-          message: 'Azure OpenAI endpoint is required for embeddings'
-        }
-      });
-    }
-    
-    if (!deploymentName) {
-      return res.status(400).json({
-        error: {
-          message: 'Azure OpenAI deployment name is required for embeddings'
-        }
-      });
-    }
-    
-    // Create a clean request body for the embeddings API
-    const cleanRequestBody = {
-      input: req.body.input
-    };
-    
-    // Make the request to Azure OpenAI API
-    const response = await axios.post(
-      `${endpoint}/openai/deployments/${deploymentName}/embeddings?api-version=${apiVersion}`,
-      cleanRequestBody,
-      {
-        headers: {
-          'Content-Type': 'application/json',
-          'api-key': apiKey
-        }
-      }
-    );
-    
-    // If we have a queryId, track the usage for embeddings
-    if (queryId) {
-      try {
-        // Only track if we have usage data
-        if (response.data.usage) {
-          // Use either operation name from response or default to generic name
-          const modelUsed = `azure-${deploymentName}`;
-          const promptTokens = response.data.usage.prompt_tokens || 0;
-          
-          // Track only input tokens since embeddings only charge for input
-          const trackingData = {
-            queryId,
-            model: modelUsed,
-            promptTokens: promptTokens,
-            completionTokens: 0, // No completion tokens for embeddings
-            totalTokens: promptTokens,
-            cost: 0, // Will be calculated by cost tracker
-            operation: 'embedding',
-            timestamp: new Date().toISOString()
-          };
-          
-          // Add to cost tracker
-          costTracker.trackEmbeddingCost(modelUsed, promptTokens, queryId);
-          console.log(`[COST TRACKING] Embedded ${promptTokens} tokens with model ${modelUsed}`);
-        }
-      } catch (trackingError) {
-        console.error('Error tracking embedding usage:', trackingError);
-        // Don't fail the request if tracking fails
-      }
-    }
-    
-    // Return the response from Azure
-    res.json(response.data);
-  } catch (error) {
-    console.error('Error proxying to Azure OpenAI API for embeddings:', error.message);
-    
-    // Log more detailed error information
-    if (error.response) {
-      console.error('Response status:', error.response.status);
-      console.error('Response data:', JSON.stringify(error.response.data, null, 2));
-    }
-    
-    // Send error response
-    res.status(error.response?.status || 500).json({
-      error: error.response?.data || { message: error.message }
-    });
-  }
-});
-
-// Start the server
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
 });
-
-// Helper function to filter data by period
-function filterDataByPeriod(summary, period, startDate, endDate) {
-  const now = new Date();
-  let periodStartDate;
-  
-  // Set period start date based on requested period
-  switch (period) {
-    case 'today':
-      periodStartDate = new Date(now.setHours(0, 0, 0, 0));
-      break;
-    case 'yesterday':
-      periodStartDate = new Date(now.setDate(now.getDate() - 1));
-      periodStartDate.setHours(0, 0, 0, 0);
-      break;
-    case 'week':
-      periodStartDate = new Date(now.setDate(now.getDate() - 7));
-      break;
-    case 'month':
-      periodStartDate = new Date(now.setMonth(now.getMonth() - 1));
-      break;
-    case 'custom':
-      if (startDate && endDate) {
-        periodStartDate = new Date(startDate);
-        const periodEndDate = new Date(endDate);
-        
-        // Filter LLM data within date range
-        const filteredLlm = summary.llm.filter(entry => {
-          const entryDate = new Date(entry.timestamp);
-          return entryDate >= periodStartDate && entryDate <= periodEndDate;
-        });
-        
-        // Filter embeddings data within date range
-        const filteredEmbeddings = summary.embeddings.filter(entry => {
-          const entryDate = new Date(entry.timestamp);
-          return entryDate >= periodStartDate && entryDate <= periodEndDate;
-        });
-        
-        // Calculate total cost for this period
-        const periodTotalCost = [...filteredLlm, ...filteredEmbeddings]
-          .reduce((sum, entry) => sum + entry.cost, 0);
-        
-        // Build period-specific costs by model
-        const periodCostsByModel = {};
-        [...filteredLlm, ...filteredEmbeddings].forEach(entry => {
-          periodCostsByModel[entry.model] = (periodCostsByModel[entry.model] || 0) + entry.cost;
-        });
-        
-        return {
-          totalCost: periodTotalCost,
-          costsByModel: periodCostsByModel,
-          llm: filteredLlm,
-          embeddings: filteredEmbeddings
-        };
-      }
-      return { totalCost: 0, costsByModel: {}, llm: [], embeddings: [] };
-    default:
-      periodStartDate = new Date(0); // Default to all data
-  }
-  
-  // Filter LLM data after start date
-  const filteredLlm = summary.llm.filter(entry => new Date(entry.timestamp) >= periodStartDate);
-  
-  // Filter embeddings data after start date
-  const filteredEmbeddings = summary.embeddings.filter(entry => new Date(entry.timestamp) >= periodStartDate);
-  
-  // Calculate total cost for this period
-  const periodTotalCost = [...filteredLlm, ...filteredEmbeddings]
-    .reduce((sum, entry) => sum + entry.cost, 0);
-  
-  // Build period-specific costs by model
-  const periodCostsByModel = {};
-  [...filteredLlm, ...filteredEmbeddings].forEach(entry => {
-    periodCostsByModel[entry.model] = (periodCostsByModel[entry.model] || 0) + entry.cost;
-  });
-  
-  return {
-    totalCost: periodTotalCost,
-    costsByModel: periodCostsByModel,
-    llm: filteredLlm,
-    embeddings: filteredEmbeddings
-  };
-}

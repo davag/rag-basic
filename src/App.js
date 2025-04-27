@@ -18,6 +18,7 @@ import BuildIcon from '@mui/icons-material/Build';
 import SpeedIcon from '@mui/icons-material/Speed';
 import StorageIcon from '@mui/icons-material/Storage';
 import AttachMoneyIcon from '@mui/icons-material/AttachMoney';
+import RateReviewIcon from '@mui/icons-material/RateReview';
 import RagIntroduction from './components/RagIntroduction';
 import DocumentUpload from './components/DocumentUpload';
 import VectorStoreConfig from './components/VectorStoreConfig';
@@ -31,6 +32,7 @@ import OptimizationRecommendations from './components/QualityAnalysisHub/Optimiz
 import QualityTestSuite from './components/QualityAnalysisHub/Testing/QualityTestSuite';
 import VectorStoreExplorer from './components/VectorStoreExplorer';
 import CostTrackingDashboard from './components/CostTrackingDashboard';
+import ReviewerDashboard from './components/ReviewerDashboard';
 import { checkApiConfiguration, getAvailableModelsBasedOnKeys } from './config/llmConfig';
 import appConfig from './config/appConfig';
 
@@ -91,6 +93,7 @@ function App() {
   const [menuAnchorEl, setMenuAnchorEl] = useState(null);
   const [helpDialogOpen, setHelpDialogOpen] = useState(false);
   const [costTrackingDialogOpen, setCostTrackingDialogOpen] = useState(false);
+  const [reviewerDialogOpen, setReviewerDialogOpen] = useState(false);
   
   // Store query interface state to preserve it when navigating back
   const [lastQueryState, setLastQueryState] = useState({
@@ -456,6 +459,17 @@ function App() {
                 Reset Session
               </MenuItem>
             </Menu>
+            
+            {/* Reviewer Dashboard button */}
+            <Tooltip title="Prompt Review Dashboard">
+              <IconButton 
+                color="inherit" 
+                onClick={() => setReviewerDialogOpen(true)}
+                sx={{ mr: 1 }}
+              >
+                <RateReviewIcon />
+              </IconButton>
+            </Tooltip>
           </Toolbar>
         </AppBar>
         
@@ -1021,6 +1035,12 @@ function App() {
           </AppBar>
           <DialogContent dividers>
             <CostTrackingDashboard />
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={reviewerDialogOpen} onClose={() => setReviewerDialogOpen(false)} maxWidth="xl" fullWidth>
+          <DialogContent sx={{ minWidth: { xs: '90vw', md: '1200px' } }}>
+            <ReviewerDashboard />
           </DialogContent>
         </Dialog>
       </Container>
