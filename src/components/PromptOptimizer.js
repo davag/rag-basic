@@ -686,6 +686,8 @@ export default function PromptOptimizer({
 
   // Function to open the comparison dialog for a specific iteration
   const openCompareDialog = (iteration) => {
+    // Prevent comparing iteration 0 to itself
+    if (iteration === 0) return;
     setComparedIteration(iteration);
     setCompareDialogOpen(true);
   };
@@ -704,14 +706,40 @@ export default function PromptOptimizer({
 
     // Get the original prompt (iteration 0)
     const originalData = optimizationHistory.find(item => item.iteration === 0);
-    
     // Get the compared iteration
     const iterationData = optimizationHistory.find(item => item.iteration === comparedIteration);
-    
+
     if (!originalData || !iterationData) {
       return null;
     }
-    
+
+    // If prompts are identical, show a message instead of the diff UI
+    if ((originalData.prompt || '') === (iterationData.prompt || '')) {
+      return (
+        <Dialog open={compareDialogOpen} onClose={closeCompareDialog} maxWidth="lg" fullWidth>
+          <DialogTitle>
+            <Box display="flex" justifyContent="space-between" alignItems="center">
+              <Typography variant="h6">
+                Comparing Original Prompt vs. Iteration {comparedIteration}
+              </Typography>
+            </Box>
+          </DialogTitle>
+          <DialogContent>
+            <Box p={4} textAlign="center">
+              <Typography variant="body1" color="text.secondary">
+                No changes between these iterations.
+              </Typography>
+            </Box>
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={closeCompareDialog} color="secondary">
+              Close
+            </Button>
+          </DialogActions>
+        </Dialog>
+      );
+    }
+
     // Function to get score color
     const getScoreColor = (score) => {
       if (score >= 9) return 'success.main';
@@ -743,27 +771,23 @@ export default function PromptOptimizer({
 
     // Function to generate visual diff for prompts
     const generateDiffView = () => {
-      const origLines = originalData.prompt.split('\n');
-      const iterLines = iterationData.prompt.split('\n');
-      
+      let origLines = originalData.prompt.split('\n');
+      let iterLines = iterationData.prompt.split('\n');
+      if (ignoreWhitespace) {
+        origLines = origLines.map(l => l.trim());
+        iterLines = iterLines.map(l => l.trim());
+      }
       // Simple diff highlighting
       const diffResult = [];
       const maxLen = Math.max(origLines.length, iterLines.length);
-      
       for (let i = 0; i < maxLen; i++) {
         const origLine = i < origLines.length ? origLines[i] : '';
         const iterLine = i < iterLines.length ? iterLines[i] : '';
         const isChanged = origLine !== iterLine;
-        
         if (!showOnlyDiffs || isChanged) {
-          diffResult.push({
-            origLine,
-            iterLine,
-            isChanged
-          });
+          diffResult.push({ origLine, iterLine, isChanged });
         }
       }
-      
       return diffResult;
     };
 
@@ -888,6 +912,15 @@ export default function PromptOptimizer({
                   <Typography variant="body2">
                     Word-level diff
                   </Typography>
+                  <Switch
+                    checked={showRawDebug}
+                    onChange={e => setShowRawDebug(e.target.checked)}
+                    color="secondary"
+                    size="small"
+                  />
+                  <Typography variant="body2">
+                    Debug: Show raw/invisible chars
+                  </Typography>
                 </Box>
                 {/* Advanced custom diff view */}
                 <Box sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1, bgcolor: 'background.default', p: 1, maxHeight: 400, overflow: 'auto', fontFamily: 'monospace', fontSize: '0.95rem' }}>
@@ -895,25 +928,31 @@ export default function PromptOptimizer({
                     const contextLines = 2;
                     if (diffGranularity === 'word') {
                       // Word-level diff, line by line
-                      const origLines = originalData.prompt.split('\n');
-                      const iterLines = iterationData.prompt.split('\n');
+                      let origLines = originalData.prompt.split('\n');
+                      let iterLines = iterationData.prompt.split('\n');
+                      if (ignoreWhitespace) {
+                        origLines = origLines.map(l => l.trim());
+                        iterLines = iterLines.map(l => l.trim());
+                      }
                       const maxLen = Math.max(origLines.length, iterLines.length);
-                      return Array.from({ length: maxLen }).map((_, i) => {
+                      let hasAnyChange = false;
+                      const rendered = Array.from({ length: maxLen }).map((_, i) => {
                         const oldLine = origLines[i] || '';
                         const newLine = iterLines[i] || '';
                         const wordDiff = getWordDiff(oldLine, newLine);
                         const hasChange = wordDiff.some(part => part.added || part.removed);
+                        if (hasChange) hasAnyChange = true;
                         if (!showOnlyDiffs || hasChange) {
                           return (
                             <Box key={i} sx={{ display: 'flex', gap: 2, mb: 0.5 }}>
                               <Box sx={{ flex: 1, pr: 1, borderRight: '1px solid #eee' }}>
                                 {wordDiff.map((part, idx) => (
-                                  <span key={idx} style={{ background: part.removed ? 'rgba(244,67,54,0.15)' : undefined, color: part.removed ? '#d32f2f' : undefined }}>{part.removed ? part.value : part.value}</span>
+                                  <span key={idx} style={{ background: part.removed ? 'rgba(244,67,54,0.15)' : undefined, color: part.removed ? '#d32f2f' : undefined }}>{showRawDebug ? visualizeInvisible(part.value) : part.value}</span>
                                 ))}
                               </Box>
                               <Box sx={{ flex: 1, pl: 1 }}>
                                 {wordDiff.map((part, idx) => (
-                                  <span key={idx} style={{ background: part.added ? 'rgba(76,175,80,0.15)' : undefined, color: part.added ? '#388e3c' : undefined }}>{part.added ? part.value : part.value}</span>
+                                  <span key={idx} style={{ background: part.added ? 'rgba(76,175,80,0.15)' : undefined, color: part.added ? '#388e3c' : undefined }}>{showRawDebug ? visualizeInvisible(part.value) : part.value}</span>
                                 ))}
                               </Box>
                             </Box>
@@ -921,23 +960,27 @@ export default function PromptOptimizer({
                         }
                         return null;
                       });
-                    } else {
-                      // Line-level diff with context
-                      const lineDiff = getLineDiff(originalData.prompt, iterationData.prompt, contextLines);
-                      // If showOnlyDiffs, only show changed lines (added/removed), else show all (with context)
-                      return lineDiff
-                        .filter(part => !showOnlyDiffs || part.added || part.removed)
-                        .map((part, idx) => (
-                          <Box key={idx} sx={{ display: 'flex', gap: 2, mb: 0.5 }}>
-                            <Box sx={{ flex: 1, pr: 1, borderRight: '1px solid #eee', bgcolor: part.removed ? 'rgba(244,67,54,0.15)' : part.context ? 'rgba(33,150,243,0.05)' : undefined, color: part.removed ? '#d32f2f' : undefined }}>
-                              {part.removed ? part.value : part.value}
-                            </Box>
-                            <Box sx={{ flex: 1, pl: 1, bgcolor: part.added ? 'rgba(76,175,80,0.15)' : part.context ? 'rgba(33,150,243,0.05)' : undefined, color: part.added ? '#388e3c' : undefined }}>
-                              {part.added ? part.value : part.value}
-                            </Box>
-                          </Box>
-                        ));
+                      if (!hasAnyChange) {
+                        return <Typography variant="body2" color="text.secondary">No differences found.</Typography>;
+                      }
+                      return rendered;
                     }
+                    // Line-level diff with context
+                    const lineDiff = getLineDiff(originalData.prompt, iterationData.prompt, contextLines);
+                    const filtered = lineDiff.filter(part => !showOnlyDiffs || part.added || part.removed);
+                    if (filtered.length === 0) {
+                      return <Typography variant="body2" color="text.secondary">No differences found.</Typography>;
+                    }
+                    return filtered.map((part, idx) => (
+                      <Box key={idx} sx={{ display: 'flex', gap: 2, mb: 0.5 }}>
+                        <Box sx={{ flex: 1, pr: 1, borderRight: '1px solid #eee', bgcolor: part.removed ? 'rgba(244,67,54,0.15)' : part.context ? 'rgba(33,150,243,0.05)' : undefined, color: part.removed ? '#d32f2f' : undefined }}>
+                          {showRawDebug ? visualizeInvisible(part.value) : part.value}
+                        </Box>
+                        <Box sx={{ flex: 1, pl: 1, bgcolor: part.added ? 'rgba(76,175,80,0.15)' : part.context ? 'rgba(33,150,243,0.05)' : undefined, color: part.added ? '#388e3c' : undefined }}>
+                          {showRawDebug ? visualizeInvisible(part.value) : part.value}
+                        </Box>
+                      </Box>
+                    ));
                   })()}
                 </Box>
               </Box>
@@ -2465,6 +2508,24 @@ Return ONLY the improved prompt text without any additional commentary, explanat
       setHitlLoading(false);
     }
   };
+
+  // Add state for debug raw view
+  const [showRawDebug, setShowRawDebug] = useState(false);
+
+  // Helper to normalize whitespace for robust comparison
+  function normalizeLine(line) {
+    return line.replace(/\s+/g, ' ').trim();
+  }
+  function normalizePrompt(prompt) {
+    return prompt.replace(/\r\n|\r|\n/g, '\n').split('\n').map(normalizeLine).join('\n');
+  }
+  // Helper to visualize invisible characters
+  function visualizeInvisible(str) {
+    return str
+      .replace(/ /g, '·')
+      .replace(/\t/g, '→')
+      .replace(/\n/g, '⏎\n');
+  }
 
   return (
     <Dialog open={open} onClose={onClose} maxWidth="lg" fullWidth>

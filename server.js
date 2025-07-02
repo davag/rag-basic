@@ -1450,6 +1450,427 @@ app.get('/api/cost-tracking-summary', (req, res) => {
   }
 });
 
+// Web scraping endpoints
+const cheerio = require('cheerio');
+const puppeteer = require('puppeteer');
+const TurndownService = require('turndown');
+
+// Initialize Turndown service for HTML to Markdown conversion
+const turndownService = new TurndownService({
+  headingStyle: 'atx',
+  codeBlockStyle: 'fenced',
+  bulletListMarker: '-'
+});
+
+// Configure Turndown to handle more elements
+turndownService.addRule('strikethrough', {
+  filter: ['del', 's', 'strike'],
+  replacement: function (content) {
+    return '~~' + content + '~~';
+  }
+});
+
+// Helper function for recursive web scraping
+async function scrapeRecursively(options) {
+  const {
+    startUrl,
+    useJavaScript,
+    waitForSelector,
+    removeElements,
+    maxDepth,
+    maxPages,
+    linkPattern,
+    excludePattern,
+    stayOnDomain
+  } = options;
+
+  const visitedUrls = new Set();
+  const pages = [];
+  const urlQueue = [{ url: startUrl, depth: 0, parentUrl: null }];
+  const skippedUrls = [];
+  let rootTitle = '';
+
+  // Parse patterns
+  const includePatterns = linkPattern ? linkPattern.split(',').map(p => p.trim()).filter(p => p) : [];
+  const excludePatterns = excludePattern ? excludePattern.split(',').map(p => p.trim()).filter(p => p) : [];
+  
+  // Get base domain for domain checking
+  const baseDomain = stayOnDomain ? new URL(startUrl).hostname : null;
+
+  while (urlQueue.length > 0 && pages.length < maxPages) {
+    const { url: currentUrl, depth, parentUrl } = urlQueue.shift();
+    
+    // Skip if already visited
+    if (visitedUrls.has(currentUrl)) {
+      continue;
+    }
+    
+    // Skip if depth exceeds limit
+    if (depth >= maxDepth) {
+      continue;
+    }
+
+    console.log(`Scraping (depth ${depth}): ${currentUrl}`);
+    
+    try {
+      // Mark as visited
+      visitedUrls.add(currentUrl);
+      
+      // Scrape the current page
+      const pageResult = await scrapeSinglePage({
+        url: currentUrl,
+        useJavaScript,
+        waitForSelector,
+        removeElements
+      });
+      
+      if (pageResult.success) {
+        // Store the root title
+        if (depth === 0) {
+          rootTitle = pageResult.title;
+        }
+        
+        pages.push({
+          url: currentUrl,
+          title: pageResult.title,
+          content: pageResult.content,
+          metadata: {
+            ...pageResult.metadata,
+            depth,
+            parentUrl
+          },
+          depth,
+          parentUrl
+        });
+        
+        // Extract links for next level (if not at max depth)
+        if (depth < maxDepth - 1 && pageResult.html) {
+          const $ = cheerio.load(pageResult.html);
+          const links = new Set();
+          
+          // Find all links
+          $('a[href]').each((i, elem) => {
+            const href = $(elem).attr('href');
+            if (!href) return;
+            
+            try {
+              const linkUrl = new URL(href, currentUrl).href;
+              
+              // Apply domain restriction
+              if (baseDomain && new URL(linkUrl).hostname !== baseDomain) {
+                return;
+              }
+              
+              // Apply include patterns
+              if (includePatterns.length > 0) {
+                const matchesInclude = includePatterns.some(pattern => linkUrl.includes(pattern));
+                if (!matchesInclude) return;
+              }
+              
+              // Apply exclude patterns
+              if (excludePatterns.length > 0) {
+                const matchesExclude = excludePatterns.some(pattern => linkUrl.includes(pattern));
+                if (matchesExclude) return;
+              }
+              
+              // Skip common non-content files
+              if (linkUrl.match(/\.(pdf|jpg|jpeg|png|gif|zip|doc|docx|xls|xlsx)$/i)) {
+                return;
+              }
+              
+              // Skip fragments and mailto/tel links
+              if (linkUrl.includes('#') || linkUrl.startsWith('mailto:') || linkUrl.startsWith('tel:')) {
+                return;
+              }
+              
+              links.add(linkUrl);
+            } catch (urlError) {
+              // Invalid URL, skip
+            }
+          });
+          
+          // Add new links to queue
+          for (const link of links) {
+            if (!visitedUrls.has(link) && pages.length + urlQueue.length < maxPages) {
+              urlQueue.push({
+                url: link,
+                depth: depth + 1,
+                parentUrl: currentUrl
+              });
+            }
+          }
+        }
+      }
+    } catch (error) {
+      console.error(`Error scraping ${currentUrl}:`, error.message);
+      skippedUrls.push({ url: currentUrl, error: error.message });
+    }
+  }
+
+  return {
+    pages,
+    rootTitle,
+    skippedUrls
+  };
+}
+
+// Helper function to scrape a single page
+async function scrapeSinglePage({ url, useJavaScript, waitForSelector, removeElements }) {
+  let html;
+  let title = '';
+  
+  if (useJavaScript) {
+    // Use Puppeteer for JavaScript-heavy sites
+    const browser = await puppeteer.launch({ 
+      headless: true,
+      args: ['--no-sandbox', '--disable-setuid-sandbox']
+    });
+    
+    try {
+      const page = await browser.newPage();
+      
+      // Set user agent to avoid blocking
+      await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
+      
+      // Navigate to the page
+      await page.goto(url, { 
+        waitUntil: 'networkidle2',
+        timeout: 30000 
+      });
+      
+      // Wait for specific selector if provided
+      if (waitForSelector) {
+        await page.waitForSelector(waitForSelector, { timeout: 10000 });
+      }
+      
+      // Get the page content
+      html = await page.content();
+      title = await page.title();
+      
+    } finally {
+      await browser.close();
+    }
+  } else {
+    // Use simple HTTP request for static content
+    const response = await axios.get(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+      },
+      timeout: 30000
+    });
+    html = response.data;
+  }
+  
+  // Parse HTML with Cheerio
+  const $ = cheerio.load(html);
+  
+  // Get title if not already set
+  if (!title) {
+    title = $('title').text() || $('h1').first().text() || 'Scraped Content';
+  }
+  
+  // Remove unwanted elements
+  const defaultRemoveElements = [
+    'script', 'style', 'nav', 'header', 'footer', 
+    '.advertisement', '.ads', '.sidebar', '.menu',
+    '#comments', '.comments', '.social-share'
+  ];
+  
+  const elementsToRemove = [...defaultRemoveElements, ...removeElements];
+  elementsToRemove.forEach(selector => {
+    $(selector).remove();
+  });
+  
+  // Extract main content - try common content selectors
+  const contentSelectors = [
+    'main',
+    'article', 
+    '.content',
+    '.main-content',
+    '.post-content',
+    '.entry-content',
+    '#content',
+    '.container'
+  ];
+  
+  let mainContent = null;
+  for (const selector of contentSelectors) {
+    const element = $(selector);
+    if (element.length > 0 && element.text().trim().length > 100) {
+      mainContent = element;
+      break;
+    }
+  }
+  
+  // If no main content found, use body but clean it up
+  if (!mainContent) {
+    mainContent = $('body');
+  }
+  
+  // Convert to markdown
+  const cleanHtml = mainContent.html();
+  const markdown = turndownService.turndown(cleanHtml);
+  
+  // Clean up the markdown
+  const cleanMarkdown = markdown
+    .replace(/\n\s*\n\s*\n/g, '\n\n') // Remove excessive line breaks
+    .replace(/^\s+|\s+$/g, '') // Trim whitespace
+    .replace(/\[(\s*)\]/g, '') // Remove empty links
+    .trim();
+  
+  // Create metadata
+  const metadata = {
+    source: url,
+    title: title.trim(),
+    scrapedAt: new Date().toISOString(),
+    method: useJavaScript ? 'puppeteer' : 'axios',
+    contentLength: cleanMarkdown.length
+  };
+  
+  return {
+    success: true,
+    content: cleanMarkdown,
+    metadata,
+    title: title.trim(),
+    html // Return HTML for link extraction
+  };
+}
+
+// Endpoint to scrape a webpage and convert to markdown
+app.post('/api/scrape-webpage', async (req, res) => {
+  try {
+    const { 
+      url, 
+      useJavaScript = false, 
+      waitForSelector = null, 
+      removeElements = [],
+      // Recursive options
+      followLinks = false,
+      maxDepth = 1,
+      maxPages = 10,
+      linkPattern = null,
+      excludePattern = null,
+      stayOnDomain = true
+    } = req.body;
+    
+    if (!url) {
+      return res.status(400).json({ error: 'URL is required' });
+    }
+
+    console.log(`Scraping webpage: ${url} (JavaScript: ${useJavaScript}, Follow links: ${followLinks})`);
+    
+    // If recursive scraping is enabled, use the recursive function
+    if (followLinks && maxDepth > 1) {
+      const recursiveResult = await scrapeRecursively({
+        startUrl: url,
+        useJavaScript,
+        waitForSelector,
+        removeElements,
+        maxDepth,
+        maxPages,
+        linkPattern,
+        excludePattern,
+        stayOnDomain
+      });
+      
+      return res.json({
+        success: true,
+        pages: recursiveResult.pages,
+        rootTitle: recursiveResult.rootTitle,
+        totalPages: recursiveResult.pages.length,
+        skippedUrls: recursiveResult.skippedUrls
+      });
+    }
+    
+    // Single page scraping (original logic)
+    const result = await scrapeSinglePage({
+      url,
+      useJavaScript,
+      waitForSelector,
+      removeElements
+    });
+    
+    if (result.success) {
+      console.log(`Successfully scraped ${url}: ${result.metadata.contentLength} characters`);
+      
+      res.json({
+        success: true,
+        content: result.content,
+        metadata: result.metadata,
+        title: result.title
+      });
+    } else {
+      throw new Error('Failed to scrape page');
+    }
+    
+  } catch (error) {
+    console.error('Error scraping webpage:', error.message);
+    res.status(500).json({ 
+      error: 'Failed to scrape webpage',
+      details: error.message 
+    });
+  }
+});
+
+// Endpoint to validate URL before scraping
+app.post('/api/validate-url', async (req, res) => {
+  try {
+    const { url } = req.body;
+    
+    if (!url || typeof url !== 'string') {
+      return res.status(400).json({ error: 'URL is required' });
+    }
+    
+    const trimmedUrl = url.trim();
+    
+    if (!trimmedUrl) {
+      return res.status(400).json({ error: 'URL cannot be empty' });
+    }
+    
+    // Add protocol if missing
+    let validUrl = trimmedUrl;
+    if (!trimmedUrl.startsWith('http://') && !trimmedUrl.startsWith('https://')) {
+      validUrl = 'https://' + trimmedUrl;
+    }
+    
+    // Basic URL validation
+    try {
+      new URL(validUrl);
+    } catch (error) {
+      return res.status(400).json({ error: 'Invalid URL format: ' + error.message });
+    }
+    
+    // Check if URL is accessible
+    const response = await axios.head(validUrl, {
+      timeout: 10000,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+      }
+    });
+    
+    const contentType = response.headers['content-type'] || '';
+    const isHtml = contentType.includes('text/html');
+    
+    res.json({
+      valid: true,
+      accessible: true,
+      contentType,
+      isHtml,
+      statusCode: response.status,
+      correctedUrl: validUrl !== trimmedUrl ? validUrl : undefined,
+      recommendJavaScript: false // Could be enhanced with heuristics
+    });
+    
+  } catch (error) {
+    console.error('Error validating URL:', error.message);
+    res.json({
+      valid: false,
+      accessible: false,
+      error: error.message
+    });
+  }
+});
+
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
 });

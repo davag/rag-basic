@@ -351,12 +351,14 @@ function ResponseValidation({
     // Only update validationResults if the parent provided a value
     if (initialValidationResults && Object.keys(initialValidationResults).length > 0) {
       setValidationResults(initialValidationResults);
+      // If we're receiving validation results, update the currently used criteria
+      setCurrentlyUsedCriteria(customCriteria);
     }
     
   }, [propResponses, propMetrics, propCurrentQuery, initialIsProcessing, initialValidationResults]);
   
   // Define the onValidationComplete function to pass results back to parent
-  const handleValidationComplete = (results) => {
+  const handleValidationComplete = (results, isFullyComplete = false) => {
     // Process results to ensure response data is preserved
     const processedResults = {};
     
@@ -374,12 +376,15 @@ function ResponseValidation({
 
     setValidationResults(processedResults);
     
-    if (typeof parentSetIsProcessing === 'function') {
-      parentSetIsProcessing(false);
-    }
-    
-    if (typeof onValidationComplete === 'function') {
-      onValidationComplete(processedResults);
+    // Only set processing to false if this is the final completion
+    if (isFullyComplete) {
+      if (typeof parentSetIsProcessing === 'function') {
+        parentSetIsProcessing(false);
+      }
+      
+      if (typeof onValidationComplete === 'function') {
+        onValidationComplete(processedResults);
+      }
     }
   };
   
@@ -400,11 +405,16 @@ function ResponseValidation({
   
   const [validatorModel, setValidatorModel] = useState(getInitialModel());
   const [customCriteria, setCustomCriteria] = useState(
-    localStorage.getItem('defaultEvaluationCriteria') || ''
+    localStorage.getItem('defaultEvaluationCriteria') || defaultSettings.defaultEvaluationCriteria
   );
   const [currentValidatingModel, setCurrentValidatingModel] = useState(null);
   const [sortConfig] = useState({ key: 'overallScore', direction: 'descending' });
   const [editCriteriaOpen, setEditCriteriaOpen] = useState(false);
+  
+  // Add state to track the currently used criteria for validation
+  const [currentlyUsedCriteria, setCurrentlyUsedCriteria] = useState(
+    localStorage.getItem('defaultEvaluationCriteria') || defaultSettings.defaultEvaluationCriteria
+  );
   
   // Additional state for parallel processing UI
   const [parallelProgress, setParallelProgress] = useState({
@@ -726,10 +736,15 @@ function ResponseValidation({
       localStorage.setItem('responseValidatorModel', reliableModel);
     }
     
-    // Load default evaluation criteria from localStorage
+    // Load default evaluation criteria from localStorage or use defaults
     const savedCriteria = localStorage.getItem('defaultEvaluationCriteria');
     if (savedCriteria) {
       setCustomCriteria(savedCriteria);
+      setCurrentlyUsedCriteria(savedCriteria);
+    } else {
+      // If no saved criteria, use the default criteria from config
+      setCustomCriteria(defaultSettings.defaultEvaluationCriteria);
+      setCurrentlyUsedCriteria(defaultSettings.defaultEvaluationCriteria);
     }
   }, []);
 
@@ -845,6 +860,9 @@ function ResponseValidation({
       const validatorModelToUse = getReliableValidatorModel();
       console.log(`Using validator model: ${validatorModelToUse}`);
       
+      // Update the currently used criteria to reflect what we're actually using
+      setCurrentlyUsedCriteria(customCriteria);
+      
       // Get the validation preference from localStorage
       const useParallelValidation = localStorage.getItem('useParallelProcessing') === 'true';
       console.log(`Parallel validation preference: ${useParallelValidation ? 'ENABLED' : 'DISABLED'}`);
@@ -936,38 +954,189 @@ function ResponseValidation({
       }
       
       if (useParallelValidation) {
-        console.log("Starting parallel validation processing");
+        console.log("Starting chunked parallel validation processing (chunks of 5)");
         
-        // Process all validations in parallel with filtered responses
-        const parallelResults = await validateResponsesInParallel(
-          filteredResponses,
-          currentQuery,
-          customCriteria,
-          validatorModelToUse,
-          handleParallelProgress,
-          systemPrompts // Pass system prompts to parallel validation
-        );
+        // Process validations in chunks of 5 for better resource management
+        const allResults = {};
+        const modelEntries = Object.entries(filteredResponses);
+        const totalModels = modelEntries.length;
+        const chunkSize = 5;
+        let completedModels = 0;
         
-        console.log("Parallel validation finished, results:", Object.keys(parallelResults).length);
+        // Get Ollama endpoint from localStorage or default settings
+        const ollamaEndpoint = localStorage.getItem('ollamaEndpoint') || defaultSettings.ollamaEndpoint;
         
-        // Normalize the parallel validation results
-        const normalizedParallelResults = {};
-        Object.keys(parallelResults).forEach(key => {
-          normalizedParallelResults[key] = normalizeValidationResult(parallelResults[key]);
-        });
+        // Process models in chunks
+        for (let i = 0; i < modelEntries.length; i += chunkSize) {
+          const chunk = modelEntries.slice(i, i + chunkSize);
+          const chunkResponses = Object.fromEntries(chunk);
+          
+          console.log(`Processing chunk ${Math.floor(i / chunkSize) + 1}/${Math.ceil(totalModels / chunkSize)} with ${chunk.length} models`);
+          
+          // Process chunk in parallel
+          const chunkPromises = chunk.map(async ([modelKey, response]) => {
+            try {
+              setCurrentValidatingModel(modelKey);
+              console.log(`Validating model ${modelKey} in chunk`);
+              
+              // Extract the answer content
+              let answer = '';
+              if (typeof response === 'object') {
+                if (response.answer && typeof response.answer === 'object' && response.answer.text) {
+                  answer = response.answer.text;
+                } else if (response.answer) {
+                  answer = typeof response.answer === 'string' ? response.answer : JSON.stringify(response.answer);
+                } else if (response.response) {
+                  answer = typeof response.response === 'string' ? response.response : JSON.stringify(response.response);
+                } else if (response.text) {
+                  answer = response.text;
+                } else {
+                  answer = JSON.stringify(response);
+                }
+              } else if (typeof response === 'string') {
+                answer = response;
+              }
+              
+              // Create the evaluation prompt
+              const prompt = `
+You are an impartial judge evaluating the quality of an AI assistant's response to a user query.
+
+SYSTEM PROMPT:
+${systemPrompts[modelKey] || 'No system prompt provided'}
+
+USER QUERY:
+${currentQuery}
+
+AI ASSISTANT'S RESPONSE:
+${answer}
+
+EVALUATION CRITERIA:
+${customCriteria}
+
+IMPORTANT INSTRUCTIONS:
+1. You MUST evaluate EACH criterion listed above individually
+2. For EACH criterion, provide:
+   - A score from 1-10 (where 1 is poor and 10 is excellent)
+   - A brief explanation justifying the score
+3. Do not skip any criteria or add new ones
+4. You MUST use the EXACT criterion names as provided above - do not modify, reformat, or change the case of the criterion names
+
+Your evaluation should be structured as a JSON object with these properties:
+{
+  "criteria": {
+    // Use the EXACT criterion names from above, preserving case and format
+    "criterion_name": {
+      "score": number, // 1-10
+      "explanation": "string"
+    },
+    // ... repeat for all criteria, using exact names
+  },
+  "strengths": ["string"], // List of specific strengths
+  "weaknesses": ["string"], // List of specific areas for improvement
+  "unclear_statements": ["string"], // List of unclear or ambiguous statements with explanations
+  "overall_score": number, // Average of all criteria scores (1-10)
+  "overall_assessment": "string" // Brief summary of the evaluation
+}
+
+IMPORTANT: 
+- Your response must be valid JSON
+- You MUST include ALL criteria provided above
+- You MUST use the EXACT criterion names as shown above
+
+YOUR EVALUATION (in JSON format):
+`;
+              
+              // Create LLM instance for validation
+              const llm = createLlmInstance(validatorModelToUse, '', {
+                ollamaEndpoint: ollamaEndpoint,
+                // Skip temperature for o3-mini which doesn't support it
+                ...(validatorModelToUse.includes('o3-mini') ? {} : { temperature: 0 }),
+                isForValidation: true
+              });
+              
+              // Call the LLM with the evaluation prompt
+              const evaluationResult = await llm.invoke(prompt);
+              
+              // Parse the JSON response
+              let parsedResult;
+              try {
+                // First attempt: direct JSON parse
+                parsedResult = JSON.parse(evaluationResult);
+              } catch (directParseError) {
+                try {
+                  // Second attempt: Extract JSON from the response using regex
+                  const jsonMatch = evaluationResult.match(/\{[\s\S]*\}/);
+                  parsedResult = jsonMatch ? JSON.parse(jsonMatch[0]) : null;
+                  
+                  if (!parsedResult) {
+                    throw new Error('No JSON found in response');
+                  }
+                } catch (jsonError) {
+                  console.error(`Failed to parse validation result for ${modelKey}:`, jsonError);
+                  parsedResult = {
+                    error: 'Failed to parse evaluation result JSON',
+                    rawResponse: evaluationResult.substring(0, 500)
+                  };
+                }
+              }
+              
+              // Normalize the result
+              const normalizedResult = normalizeValidationResult(parsedResult);
+              
+              return { modelKey, result: normalizedResult };
+              
+            } catch (error) {
+              console.error(`Error validating ${modelKey}:`, error);
+              return {
+                modelKey,
+                result: {
+                  error: `Validation error: ${error.message}`,
+                  criteria: {},
+                  strengths: [],
+                  weaknesses: [],
+                  overall: { score: 0, explanation: 'Validation failed' }
+                }
+              };
+            }
+          });
+          
+          // Wait for all models in this chunk to complete
+          const chunkResults = await Promise.all(chunkPromises);
+          
+          // Add chunk results to overall results
+          chunkResults.forEach(({ modelKey, result }) => {
+            allResults[modelKey] = {
+              ...result,
+              originalResponse: responseData[modelKey] // Include original response
+            };
+            
+            completedModels++;
+            
+            // Update progress
+            if (handleParallelProgress) {
+              handleParallelProgress({
+                model: modelKey,
+                status: 'completed',
+                current: completedModels,
+                total: totalModels,
+                progress: {
+                  completed: completedModels,
+                  pending: totalModels - completedModels,
+                  total: totalModels
+                }
+              });
+            }
+          });
+          
+          // Update validation results with partial results after each chunk
+          handleValidationComplete({ ...allResults }, false);
+          
+          console.log(`Chunk ${Math.floor(i / chunkSize) + 1} completed. Total progress: ${completedModels}/${totalModels}`);
+        }
         
-        // Modify the results structure to include original responses
-        const enhancedResults = {};
-        Object.entries(normalizedParallelResults).forEach(([key, validationData]) => {
-          enhancedResults[key] = {
-            ...validationData,
-            originalResponse: responseData[key] // Include original response
-          };
-        });
-        
-        // Update the validation results through the parent component
-        handleValidationComplete(enhancedResults);
-        console.log("Parallel validation completed successfully with results:", Object.keys(enhancedResults));
+        // Mark chunked parallel validation as fully complete
+        handleValidationComplete(allResults, true);
+        console.log("Chunked parallel validation completed successfully with results:", Object.keys(allResults));
       } else {
         console.log("Starting sequential validation processing");
         
@@ -1105,8 +1274,8 @@ YOUR EVALUATION (in JSON format):
               });
             }
             
-            // Update validation results as we go
-            handleValidationComplete({ ...sequentialResults });
+            // Update validation results as we go (partial results)
+            handleValidationComplete({ ...sequentialResults }, false);
             
           } catch (error) {
             console.error(`Error validating ${modelKey}:`, error);
@@ -1120,11 +1289,13 @@ YOUR EVALUATION (in JSON format):
           }
         }
         
+        // Mark sequential validation as fully complete
+        handleValidationComplete(sequentialResults, true);
         console.log("Sequential validation completed with results:", Object.keys(sequentialResults));
       }
     } catch (error) {
       console.error('Error during validation:', error);
-      handleValidationComplete({});
+      handleValidationComplete({}, true); // Mark as complete even on error
     } finally {
       setIsProcessing(false);
       setCurrentValidatingModel(null);
@@ -1330,6 +1501,17 @@ YOUR EVALUATION (in JSON format):
 
   return (
     <Box>
+      {/* Add CSS animation for pulsing effect */}
+      <style>
+        {`
+          @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.5; }
+            100% { opacity: 1; }
+          }
+        `}
+      </style>
+      
       <Paper elevation={3} sx={{ p: 3, mb: 3 }}>
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
           <Typography variant="h6">Response Validation</Typography>
@@ -1356,7 +1538,13 @@ YOUR EVALUATION (in JSON format):
                 startIcon={<EditIcon />} 
                 size="small" 
                 variant="outlined"
-                onClick={() => setEditCriteriaOpen(true)}
+                onClick={() => {
+                  // When opening the dialog, make sure we show the currently used criteria if validation has been run
+                  if (Object.keys(validationResults).length > 0 && !currentlyUsedCriteria) {
+                    setCurrentlyUsedCriteria(customCriteria);
+                  }
+                  setEditCriteriaOpen(true);
+                }}
               >
                 Criteria
               </Button>
@@ -1408,26 +1596,188 @@ YOUR EVALUATION (in JSON format):
           </Grid>
         </Grid>
         
-        {/* Validation progress indicator */}
+        {/* Enhanced Validation progress indicator */}
         {isProcessing && (
-          <Box sx={{ mb: 2 }}>
-            <LinearProgress variant="determinate" value={(parallelProgress.completed / Math.max(1, parallelProgress.total)) * 100} />
-            <Typography variant="caption" sx={{ mt: 1, display: 'block' }}>
-              {currentValidatingModel ? (
-                `Validating ${currentValidatingModel} (${parallelProgress.completed}/${parallelProgress.total})`
-              ) : (
-                `Validating responses (${parallelProgress.completed}/${parallelProgress.total})`
+          <Paper sx={{ 
+            mb: 3, 
+            p: 3, 
+            bgcolor: 'grey.50', 
+            border: '1px solid',
+            borderColor: 'grey.200',
+            borderRadius: 2
+          }}>
+            <Box sx={{ mb: 2 }}>
+              <Typography variant="h6" gutterBottom sx={{ 
+                display: 'flex', 
+                alignItems: 'center', 
+                gap: 1,
+                color: 'text.primary'
+              }}>
+                🔍 Validating Responses
+                <Chip 
+                  label={`${parallelProgress.completed}/${parallelProgress.total}`} 
+                  size="small" 
+                  variant="outlined"
+                  color="primary"
+                  sx={{ 
+                    fontWeight: 'bold',
+                    bgcolor: 'background.paper'
+                  }}
+                />
+              </Typography>
+              
+              {/* Progress bar with percentage */}
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2 }}>
+                <LinearProgress 
+                  variant="determinate" 
+                  value={(parallelProgress.completed / Math.max(1, parallelProgress.total)) * 100}
+                  sx={{ 
+                    flexGrow: 1, 
+                    height: 10, 
+                    borderRadius: 5,
+                    bgcolor: 'grey.200',
+                    '& .MuiLinearProgress-bar': {
+                      bgcolor: 'success.main',
+                      borderRadius: 5
+                    }
+                  }}
+                />
+                <Typography variant="body2" sx={{ 
+                  fontWeight: 'bold', 
+                  minWidth: '40px',
+                  color: 'text.primary'
+                }}>
+                  {Math.round((parallelProgress.completed / Math.max(1, parallelProgress.total)) * 100)}%
+                </Typography>
+              </Box>
+
+              {/* Current status */}
+              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+                  {currentValidatingModel ? (
+                    `Currently validating: ${currentValidatingModel.replace(/^Set \d+-/, '')}`
+                  ) : (
+                    'Preparing validation...'
+                  )}
+                </Typography>
+                
+                {/* Estimated time remaining */}
+                {parallelProgress.completed > 0 && parallelProgress.total > parallelProgress.completed && (
+                  <Typography variant="caption" sx={{ 
+                    fontStyle: 'italic',
+                    color: 'text.secondary',
+                    bgcolor: 'grey.100',
+                    px: 1,
+                    py: 0.5,
+                    borderRadius: 1
+                  }}>
+                    {(() => {
+                      const avgTimePerModel = 15; // Rough estimate: 15 seconds per model
+                      const remaining = parallelProgress.total - parallelProgress.completed;
+                      const estimatedSeconds = remaining * avgTimePerModel;
+                      
+                      if (estimatedSeconds < 60) {
+                        return `~${estimatedSeconds}s remaining`;
+                      } else {
+                        const minutes = Math.ceil(estimatedSeconds / 60);
+                        return `~${minutes}m remaining`;
+                      }
+                    })()}
+                  </Typography>
+                )}
+              </Box>
+
+              {/* Individual model status grid */}
+              {Object.keys(parallelProgress.models).length > 0 && (
+                <Box>
+                  <Typography variant="subtitle2" gutterBottom sx={{ 
+                    mb: 1,
+                    color: 'text.primary',
+                    fontWeight: 600
+                  }}>
+                    Model Progress:
+                  </Typography>
+                  <Grid container spacing={1}>
+                    {Object.entries(parallelProgress.models).map(([modelName, modelStatus]) => {
+                      const cleanModelName = modelName.replace(/^Set \d+-/, '').replace(/ \/ Set \d+$/, '');
+                      const isCompleted = modelStatus.status === 'completed';
+                      const isProcessing = modelStatus.status === 'processing' || modelName === currentValidatingModel;
+                      
+                      return (
+                        <Grid item xs={6} sm={4} md={3} key={modelName}>
+                          <Box sx={{ 
+                            display: 'flex', 
+                            alignItems: 'center', 
+                            gap: 1,
+                            p: 1,
+                            borderRadius: 1,
+                            bgcolor: isCompleted ? 'success.light' : isProcessing ? 'warning.light' : 'grey.100',
+                            color: isCompleted ? 'success.dark' : isProcessing ? 'warning.dark' : 'text.secondary',
+                            border: '1px solid',
+                            borderColor: isCompleted ? 'success.main' : isProcessing ? 'warning.main' : 'grey.300'
+                          }}>
+                            <Box sx={{ fontSize: '12px' }}>
+                              {isCompleted ? '✅' : isProcessing ? '⏳' : '⏸️'}
+                            </Box>
+                            <Typography variant="caption" sx={{ 
+                              fontSize: '0.75rem',
+                              fontWeight: isProcessing ? 'bold' : 'normal',
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              whiteSpace: 'nowrap'
+                            }}>
+                              {cleanModelName}
+                            </Typography>
+                          </Box>
+                        </Grid>
+                      );
+                    })}
+                  </Grid>
+                </Box>
               )}
-            </Typography>
-          </Box>
+
+              {/* Processing mode indicator */}
+              <Box sx={{ mt: 2, pt: 2, borderTop: '1px solid', borderColor: 'grey.300' }}>
+                <Typography variant="caption" sx={{ 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  gap: 1,
+                  color: 'text.secondary'
+                }}>
+                  <Box component="span" sx={{ 
+                    width: 8, 
+                    height: 8, 
+                    borderRadius: '50%', 
+                    bgcolor: 'success.main',
+                    animation: 'pulse 2s infinite'
+                  }} />
+                  Using chunked parallel processing (5 models at a time)
+                </Typography>
+              </Box>
+            </Box>
+          </Paper>
         )}
         
-        {/* Display validation results */}
-        {!isProcessing && validationResults && Object.keys(validationResults).length > 0 && (
+        {/* Display validation results - show partial results even during processing */}
+        {validationResults && Object.keys(validationResults).length > 0 && (
           <Box sx={{ mt: 3 }}>
             {/* Summary Table */}
             <Paper sx={{ mb: 3, overflow: 'auto' }}>
-              <Typography variant="subtitle1" sx={{ p: 2, pb: 1 }}>Response Validation Summary</Typography>
+              <Box sx={{ p: 2, pb: 1, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <Typography variant="subtitle1">Response Validation Summary</Typography>
+                {isProcessing && (
+                  <Chip 
+                    label={`${parallelProgress.completed}/${parallelProgress.total} completed`}
+                    size="small"
+                    color="primary"
+                    variant="outlined"
+                    sx={{ 
+                      animation: 'pulse 2s infinite',
+                      fontWeight: 'bold'
+                    }}
+                  />
+                )}
+              </Box>
               <Box sx={{ maxWidth: '100%', overflowX: 'auto' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                   <thead>
@@ -1522,6 +1872,39 @@ YOUR EVALUATION (in JSON format):
                           </tr>
                         );
                       })}
+                    
+                    {/* Show pending models during processing */}
+                    {isProcessing && (() => {
+                      // Get all models that should be validated
+                      const allModels = Object.keys(responses);
+                      const completedModels = Object.keys(validationResults);
+                      const pendingModels = allModels.filter(model => !completedModels.includes(model));
+                      
+                      return pendingModels.map(model => (
+                        <tr key={`pending-${model}`} style={{ backgroundColor: 'rgba(25, 118, 210, 0.08)' }}>
+                          <td style={{ padding: '8px 16px', borderBottom: '1px solid #e0e0e0' }}>
+                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                              {model}
+                              <Box sx={{ 
+                                width: 16, 
+                                height: 16, 
+                                borderRadius: '50%', 
+                                bgcolor: currentValidatingModel === model ? 'warning.main' : 'grey.400',
+                                animation: currentValidatingModel === model ? 'pulse 1s infinite' : 'none'
+                              }} />
+                            </Box>
+                          </td>
+                          <td style={{ padding: '8px 16px', textAlign: 'center', borderBottom: '1px solid #e0e0e0', color: '#666' }}>
+                            {currentValidatingModel === model ? 'Validating...' : 'Pending'}
+                          </td>
+                          <td style={{ padding: '8px 16px', textAlign: 'center', borderBottom: '1px solid #e0e0e0', color: '#666' }}>-</td>
+                          <td style={{ padding: '8px 16px', textAlign: 'center', borderBottom: '1px solid #e0e0e0', color: '#666' }}>-</td>
+                          <td style={{ padding: '8px 16px', textAlign: 'center', borderBottom: '1px solid #e0e0e0', color: '#666' }}>-</td>
+                          <td style={{ padding: '8px 16px', textAlign: 'center', borderBottom: '1px solid #e0e0e0', color: '#666' }}>-</td>
+                          <td style={{ padding: '8px 16px', textAlign: 'center', borderBottom: '1px solid #e0e0e0', color: '#666' }}>-</td>
+                        </tr>
+                      ));
+                    })()}
                   </tbody>
                 </table>
               </Box>
@@ -1893,9 +2276,40 @@ YOUR EVALUATION (in JSON format):
       >
         <DialogTitle>Edit Evaluation Criteria</DialogTitle>
         <DialogContent>
+          {/* Show info about what criteria are being displayed */}
+          {Object.keys(validationResults).length > 0 ? (
+            <Box sx={{ mb: 2, p: 2, bgcolor: 'success.light', borderRadius: 1 }}>
+              <Typography variant="subtitle2" gutterBottom>
+                📋 Currently Used Criteria
+              </Typography>
+              <Typography variant="body2">
+                These are the criteria that were used for the most recent validation. 
+                Edit them below and click "Save & Revalidate" to apply changes.
+              </Typography>
+            </Box>
+          ) : (
+            <Box sx={{ mb: 2, p: 2, bgcolor: 'grey.100', borderRadius: 1 }}>
+              <Typography variant="subtitle2" gutterBottom>
+                📝 Default Criteria
+              </Typography>
+              <Typography variant="body2">
+                Set up your evaluation criteria. These will be used when you run validation.
+              </Typography>
+            </Box>
+          )}
           <CriteriaTextArea 
-            value={customCriteria}
-            onChange={(e) => setCustomCriteria(e.target.value)}
+            value={Object.keys(validationResults).length > 0 ? currentlyUsedCriteria : customCriteria}
+            onChange={(e) => {
+              const newValue = e.target.value;
+              if (Object.keys(validationResults).length > 0) {
+                // If we have validation results, update the currently used criteria
+                setCurrentlyUsedCriteria(newValue);
+                setCustomCriteria(newValue);
+              } else {
+                // If no validation yet, just update the custom criteria
+                setCustomCriteria(newValue);
+              }
+            }}
             rows={10}
             sx={{ mt: 1 }}
           />
@@ -1909,8 +2323,16 @@ YOUR EVALUATION (in JSON format):
             color="primary"
             onClick={async () => {
               setEditCriteriaOpen(false);
-              localStorage.setItem('defaultEvaluationCriteria', customCriteria);
+              
+              // Use the appropriate criteria value based on whether validation has been run
+              const criteriaToSave = Object.keys(validationResults).length > 0 ? currentlyUsedCriteria : customCriteria;
+              
+              localStorage.setItem('defaultEvaluationCriteria', criteriaToSave);
               localStorage.setItem('responseValidatorModel', validatorModel);
+              
+              // Update both criteria states to be in sync
+              setCustomCriteria(criteriaToSave);
+              setCurrentlyUsedCriteria(criteriaToSave);
               
               if (!responses || Object.keys(responses).length === 0) {
                 console.error("No responses available to validate");
@@ -1921,7 +2343,7 @@ YOUR EVALUATION (in JSON format):
               setIsProcessing(true);
               handleValidationComplete({});
               try {
-                console.log("Re-validating with new criteria:", customCriteria);
+                console.log("Re-validating with new criteria:", criteriaToSave);
                 await validateResponses();
               } catch (error) {
                 console.error("Error during revalidation:", error);

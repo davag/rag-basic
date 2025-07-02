@@ -18,7 +18,9 @@ import {
   IconButton,
   Accordion,
   AccordionSummary,
-  AccordionDetails
+  AccordionDetails,
+  Tabs,
+  Tab
 } from '@mui/material';
 import { 
   Description as DescriptionIcon,
@@ -33,9 +35,12 @@ import {
   TableChart as SpreadsheetIcon,
   Description as RtfIcon,
   Code as XmlIcon,
-  DataObject as YamlIcon
+  DataObject as YamlIcon,
+  CloudUpload as UploadIcon,
+  Language as WebIcon
 } from '@mui/icons-material';
 import { processFile } from '../utils/documentProcessing';
+import WebScraper from './WebScraper';
 
 const DocumentUpload = ({ onDocumentsUploaded, isProcessing, setIsProcessing }) => {
   const [files, setFiles] = useState([]);
@@ -44,6 +49,7 @@ const DocumentUpload = ({ onDocumentsUploaded, isProcessing, setIsProcessing }) 
   const [namespace, setNamespace] = useState('default');
   const [namespaces, setNamespaces] = useState(['default']);
   const [helpExpanded, setHelpExpanded] = useState(false);
+  const [tabValue, setTabValue] = useState(0);
 
   const onDrop = useCallback(acceptedFiles => {
     setFiles(prevFiles => [...prevFiles, ...acceptedFiles]);
@@ -138,6 +144,10 @@ const DocumentUpload = ({ onDocumentsUploaded, isProcessing, setIsProcessing }) 
     setFiles(prevFiles => prevFiles.filter((_, i) => i !== index));
   };
 
+  const handleTabChange = (event, newValue) => {
+    setTabValue(newValue);
+  };
+
   return (
     <Box>
       <Box display="flex" alignItems="center" mb={1}>
@@ -196,6 +206,7 @@ const DocumentUpload = ({ onDocumentsUploaded, isProcessing, setIsProcessing }) 
         </AccordionDetails>
       </Accordion>
 
+      {/* Namespace Configuration */}
       <Box mb={3}>
         <Typography variant="h6" gutterBottom>
           Document Namespace
@@ -235,74 +246,105 @@ const DocumentUpload = ({ onDocumentsUploaded, isProcessing, setIsProcessing }) 
           ))}
         </Box>
       </Box>
-      
-      <Paper 
-        {...getRootProps()} 
-        className="dropzone"
-        elevation={0}
-      >
-        <input {...getInputProps()} />
-        {isDragActive ? (
-          <Typography>Drop the files here...</Typography>
-        ) : (
-          <Typography>
-            Drag and drop files here, or click to select files (PDF, TXT, DOCX, PY, JSON, MD, HTML, CSV, XLSX, RTF, XML, YAML)
-          </Typography>
-        )}
-      </Paper>
 
-      {files.length > 0 && (
-        <Box className="file-list">
-          <Typography variant="h6" gutterBottom>
-            Selected Files:
-          </Typography>
-          <List>
-            {files.map((file, index) => (
-              <ListItem key={index}>
-                <ListItemIcon>
-                  {getFileIcon(file)}
-                </ListItemIcon>
-                <ListItemText 
-                  primary={file.name} 
-                  secondary={`${(file.size / 1024).toFixed(2)} KB • Namespace: ${namespace}`} 
-                />
+      {/* Document Source Tabs */}
+      <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 3 }}>
+        <Tabs value={tabValue} onChange={handleTabChange} aria-label="document source tabs">
+          <Tab 
+            icon={<UploadIcon />} 
+            label="Upload Files" 
+            iconPosition="start"
+          />
+          <Tab 
+            icon={<WebIcon />} 
+            label="Scrape Websites" 
+            iconPosition="start"
+          />
+        </Tabs>
+      </Box>
+
+      {/* Tab Content */}
+      {tabValue === 0 && (
+        <Box>
+          <Paper 
+            {...getRootProps()} 
+            className="dropzone"
+            elevation={0}
+          >
+            <input {...getInputProps()} />
+            {isDragActive ? (
+              <Typography>Drop the files here...</Typography>
+            ) : (
+              <Typography>
+                Drag and drop files here, or click to select files (PDF, TXT, DOCX, PY, JSON, MD, HTML, CSV, XLSX, RTF, XML, YAML)
+              </Typography>
+            )}
+          </Paper>
+
+          {files.length > 0 && (
+            <Box className="file-list">
+              <Typography variant="h6" gutterBottom>
+                Selected Files:
+              </Typography>
+              <List>
+                {files.map((file, index) => (
+                  <ListItem key={index}>
+                    <ListItemIcon>
+                      {getFileIcon(file)}
+                    </ListItemIcon>
+                    <ListItemText 
+                      primary={file.name} 
+                      secondary={`${(file.size / 1024).toFixed(2)} KB • Namespace: ${namespace}`} 
+                    />
+                    <Button 
+                      color="secondary" 
+                      onClick={() => removeFile(index)}
+                      disabled={isProcessing}
+                    >
+                      Remove
+                    </Button>
+                  </ListItem>
+                ))}
+              </List>
+              
+              <Box mt={2} display="flex" justifyContent="space-between">
                 <Button 
-                  color="secondary" 
-                  onClick={() => removeFile(index)}
-                  disabled={isProcessing}
+                  variant="contained" 
+                  color="primary" 
+                  onClick={processFiles}
+                  disabled={isProcessing || files.length === 0}
                 >
-                  Remove
+                  {isProcessing ? (
+                    <>
+                      <CircularProgress size={24} color="inherit" style={{ marginRight: 10 }} />
+                      Processing...
+                    </>
+                  ) : (
+                    'Process Documents'
+                  )}
                 </Button>
-              </ListItem>
-            ))}
-          </List>
-          
-          <Box mt={2} display="flex" justifyContent="space-between">
-            <Button 
-              variant="contained" 
-              color="primary" 
-              onClick={processFiles}
-              disabled={isProcessing || files.length === 0}
-            >
-              {isProcessing ? (
-                <>
-                  <CircularProgress size={24} color="inherit" style={{ marginRight: 10 }} />
-                  Processing...
-                </>
-              ) : (
-                'Process Documents'
-              )}
-            </Button>
-            
-            <Button 
-              variant="outlined" 
-              onClick={() => setFiles([])}
-              disabled={isProcessing || files.length === 0}
-            >
-              Clear All
-            </Button>
-          </Box>
+                
+                <Button 
+                  variant="outlined" 
+                  onClick={() => setFiles([])}
+                  disabled={isProcessing || files.length === 0}
+                >
+                  Clear All
+                </Button>
+              </Box>
+            </Box>
+          )}
         </Box>
+      )}
+
+      {tabValue === 1 && (
+        <WebScraper
+          onDocumentsUploaded={onDocumentsUploaded}
+          namespace={namespace}
+          namespaces={namespaces}
+          isProcessing={isProcessing}
+          setIsProcessing={setIsProcessing}
+        />
       )}
 
       {error && (
