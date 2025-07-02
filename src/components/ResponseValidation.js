@@ -856,6 +856,14 @@ function ResponseValidation({
       
       setIsProcessing(true);
       
+      // Reset progress counter at the start of validation
+      setParallelProgress({
+        completed: 0,
+        pending: 0,
+        total: 0,
+        models: {}
+      });
+      
       // Get the selected validator model or use a default reliable one
       const validatorModelToUse = getReliableValidatorModel();
       console.log(`Using validator model: ${validatorModelToUse}`);
@@ -863,10 +871,10 @@ function ResponseValidation({
       // Update the currently used criteria to reflect what we're actually using
       setCurrentlyUsedCriteria(customCriteria);
       
-      // Get the validation preference from localStorage
-      const useParallelValidation = localStorage.getItem('useParallelProcessing') === 'true';
-      console.log(`Parallel validation preference: ${useParallelValidation ? 'ENABLED' : 'DISABLED'}`);
-
+            // Always use chunked parallel validation for better performance and resource management
+      const useParallelValidation = true; // Force chunked parallel processing
+      console.log(`Using chunked parallel validation processing`);
+      
       // Debug log the full responses object
       console.log("Full responses object:", responses);
 
@@ -953,6 +961,14 @@ function ResponseValidation({
         return;
       }
       
+      // Set the total count now that we know how many models to validate
+      const totalModelsToValidate = Object.keys(filteredResponses).length;
+      setParallelProgress(prev => ({
+        ...prev,
+        total: totalModelsToValidate,
+        pending: totalModelsToValidate
+      }));
+      
       if (useParallelValidation) {
         console.log("Starting chunked parallel validation processing (chunks of 5)");
         
@@ -975,6 +991,7 @@ function ResponseValidation({
           
           // Process chunk in parallel
           const chunkPromises = chunk.map(async ([modelKey, response]) => {
+            const validationStartTime = Date.now(); // Track validation timing
             try {
               setCurrentValidatingModel(modelKey);
               console.log(`Validating model ${modelKey} in chunk`);
@@ -1054,8 +1071,11 @@ YOUR EVALUATION (in JSON format):
                 isForValidation: true
               });
               
-              // Call the LLM with the evaluation prompt
+              // Measure actual network request time
+              const networkStartTime = performance.now();
               const evaluationResult = await llm.invoke(prompt);
+              const networkEndTime = performance.now();
+              const actualNetworkTime = Math.round(networkEndTime - networkStartTime);
               
               // Parse the JSON response
               let parsedResult;
@@ -1083,10 +1103,24 @@ YOUR EVALUATION (in JSON format):
               // Normalize the result
               const normalizedResult = normalizeValidationResult(parsedResult);
               
-              return { modelKey, result: normalizedResult };
+              // Add validation timing (both total and network-specific)
+              const validationEndTime = Date.now();
+              const totalValidationTime = validationEndTime - validationStartTime;
+              console.log(`Validation for ${modelKey} completed in ${totalValidationTime}ms (Network: ${actualNetworkTime}ms)`);
+              
+              return { 
+                modelKey, 
+                result: {
+                  ...normalizedResult,
+                  validationTime: totalValidationTime, // Total validation time
+                  networkTime: actualNetworkTime // Actual network request time
+                }
+              };
               
             } catch (error) {
-              console.error(`Error validating ${modelKey}:`, error);
+              const validationEndTime = Date.now();
+              const totalValidationTime = validationEndTime - validationStartTime;
+              console.error(`Error validating ${modelKey} after ${totalValidationTime}ms:`, error);
               return {
                 modelKey,
                 result: {
@@ -1094,7 +1128,9 @@ YOUR EVALUATION (in JSON format):
                   criteria: {},
                   strengths: [],
                   weaknesses: [],
-                  overall: { score: 0, explanation: 'Validation failed' }
+                  overall: { score: 0, explanation: 'Validation failed' },
+                  validationTime: totalValidationTime,
+                  networkTime: 0 // No network time available on error
                 }
               };
             }
@@ -1806,8 +1842,11 @@ YOUR EVALUATION (in JSON format):
                       .map(([model, result]) => {
                         if (result.error) return null;
                         
+                        // Get validation timing (prefer validation network time over original response time)
+                        const validationNetworkTime = result.networkTime;
                         const modelMetrics = findMetrics(metrics, model);
-                        const responseTime = modelMetrics?.responseTime || modelMetrics?.elapsedTime || 0;
+                        const originalResponseTime = modelMetrics?.responseTime || modelMetrics?.elapsedTime || 0;
+                        const displayTime = validationNetworkTime || originalResponseTime;
                         const modelEffectiveness = effectivenessData.modelData[model] || {};
                         const cost = modelMetrics?.calculatedCost;
                         
@@ -1850,7 +1889,12 @@ YOUR EVALUATION (in JSON format):
                               {result.overall?.score <= 1 ? 'Failed' : Math.round(result.overall?.score || 0)}
                             </td>
                             <td style={{ padding: '8px 16px', textAlign: 'center', borderBottom: '1px solid #e0e0e0' }}>
-                              {formatResponseTime(responseTime)}
+                              {formatResponseTime(displayTime)}
+                              {validationNetworkTime && (
+                                <Typography variant="caption" sx={{ display: 'block', color: 'text.secondary', fontSize: '0.7rem' }}>
+                                  (Validation)
+                                </Typography>
+                              )}
                             </td>
                             <td style={{ padding: '8px 16px', textAlign: 'center', borderBottom: '1px solid #e0e0e0' }}>
                               {formatTimeEfficiencyScore(modelEffectiveness.timeEfficiencyScore)}
@@ -1939,9 +1983,13 @@ YOUR EVALUATION (in JSON format):
                     );
                   }
                   
-                  // Get metrics for the model if available
-                  const modelMetrics = findMetrics(metrics, model);
-                  const responseTime = modelMetrics?.responseTime || modelMetrics?.elapsedTime || 0;
+                                          // Get validation timing (prefer validation network time over original response time)
+                        const validationNetworkTime = result.networkTime;
+                        const modelMetrics = findMetrics(metrics, model);
+                        const originalResponseTime = modelMetrics?.responseTime || modelMetrics?.elapsedTime || 0;
+                        
+                        // Use validation network time if available, otherwise fall back to original response time
+                        const displayTime = validationNetworkTime || originalResponseTime;
                   
                   // Get effectiveness data for this model
                   const modelEffectiveness = effectivenessData.modelData[model] || {};
@@ -2032,8 +2080,10 @@ YOUR EVALUATION (in JSON format):
                           <Grid container spacing={1}>
                             <Grid item xs={6}>
                               <Box sx={{ mb: 1 }}>
-                                <Typography variant="caption" color="textSecondary">Processing Time</Typography>
-                                <Typography variant="body2">{formatResponseTime(responseTime)}</Typography>
+                                <Typography variant="caption" color="textSecondary">
+                                  {validationNetworkTime ? 'Validation Time' : 'Processing Time'}
+                                </Typography>
+                                <Typography variant="body2">{formatResponseTime(displayTime)}</Typography>
                               </Box>
                             </Grid>
                             <Grid item xs={6}>
