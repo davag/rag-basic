@@ -545,15 +545,15 @@ const WebScraper = ({ onDocumentsUploaded, namespace, namespaces, isProcessing, 
                     </Box>
                   }
                   secondary={
-                    <Box>
-                      <Typography variant="body2" color="textSecondary">
+                    <>
+                      <Typography variant="body2" color="textSecondary" component="span" display="block">
                         {item.url}
                       </Typography>
-                      <Typography variant="caption" color="textSecondary">
+                      <Typography variant="caption" color="textSecondary" component="span" display="block">
                         {item.metadata.contentLength} characters • Namespace: {item.namespace}
                         {item.metadata.parentUrl && ` • Parent: ${new URL(item.metadata.parentUrl).pathname}`}
                       </Typography>
-                    </Box>
+                    </>
                   }
                 />
                 <Tooltip title="Preview content">

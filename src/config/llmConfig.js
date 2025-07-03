@@ -97,7 +97,7 @@ const defaultModels = {
     type: 'embedding'
   },
   
-  // Azure OpenAI models
+  // Azure OpenAI models - Each model can have its own API version
   'azure-gpt-4o': {
     vendor: 'AzureOpenAI',
     input: 0.03,
@@ -105,7 +105,7 @@ const defaultModels = {
     active: true,
     description: 'Azure-hosted GPT-4o - optimized version of GPT-4.',
     deploymentName: 'gpt-4o',
-    apiVersion: '2023-05-15',
+    apiVersion: '2024-02-15-preview', // Common stable version for GPT-4o
     type: 'chat'
   },
   'azure-gpt-4o-mini': {
@@ -115,17 +115,47 @@ const defaultModels = {
     active: true,
     description: 'Azure-hosted GPT-4o-mini - affordable, faster version of GPT-4o.',
     deploymentName: 'gpt-4o-mini',
-    apiVersion: '2023-05-15',
+    apiVersion: '2024-02-15-preview', // Common stable version for GPT-4o-mini
     type: 'chat'
   },
-  'azure-o3-mini': {
+  'azure-o4-mini': {
     vendor: 'AzureOpenAI',
     input: 1.10,
     output: 4.40,
     active: true,
-    description: 'Azure-hosted o3-mini model',
-    deploymentName: 'o3-mini',
-    apiVersion: '2023-05-15',
+    description: 'Azure-hosted o4-mini model',
+    deploymentName: 'o4-mini',
+    apiVersion: '2024-12-01-preview', // Newer models often need latest API versions
+    type: 'chat'
+  },
+  'azure-gpt-4.1': {
+    vendor: 'AzureOpenAI',
+    input: 2.00,
+    output: 8.00,
+    active: true, // Re-enabled: model exists in Azure API list
+    description: 'Azure-hosted GPT-4.1 - 1M token context, improved reasoning.',
+    deploymentName: 'gpt-4.1', // Correct: matches actual Azure deployment name with dots
+    apiVersion: '2024-12-01-preview', // Latest API version for GPT-4.1
+    type: 'chat'
+  },
+  'azure-gpt-4.1-mini': {
+    vendor: 'AzureOpenAI',
+    input: 0.40,
+    output: 1.60,
+    active: true, // Re-enabled: model exists in Azure API list
+    description: 'Azure-hosted GPT-4.1 Mini - affordable, fast, high-performing.',
+    deploymentName: 'gpt-4.1-mini', // Correct: matches actual Azure deployment name with dots
+    apiVersion: '2024-12-01-preview', // GPT-4.1 series likely needs newer API version
+    type: 'chat'
+  },
+  'azure-gpt-4.1-nano': {
+    vendor: 'AzureOpenAI',
+    input: 0.10,
+    output: 0.40,
+    active: true, // Re-enabled: model exists in Azure API list
+    description: 'Azure-hosted GPT-4.1 Nano - cheapest and fastest GPT-4.1.',
+    deploymentName: 'gpt-4.1-nano', // Correct: matches actual Azure deployment name with dots
+    apiVersion: '2024-12-01-preview', // GPT-4.1 series likely needs newer API version
     type: 'chat'
   },
   
@@ -137,7 +167,7 @@ const defaultModels = {
     active: true,
     description: 'Azure-hosted text-embedding-3-small - optimized for general text with good performance and cost efficiency.',
     deploymentName: 'text-embedding-3-small',
-    apiVersion: '2023-05-15',
+    apiVersion: '2023-05-15', // Stable API version for embedding models
     type: 'embedding'
   },
   'azure-text-embedding-3-large': {
@@ -147,7 +177,7 @@ const defaultModels = {
     active: true,
     description: 'Azure-hosted text-embedding-3-large - better for complex technical content and longer context.',
     deploymentName: 'text-embedding-3-large',
-    apiVersion: '2023-05-15',
+    apiVersion: '2023-05-15', // Stable API version for embedding models
     type: 'embedding'
   },
   

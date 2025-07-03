@@ -1173,67 +1173,6 @@ app.post('/api/proxy/azure/chat/completions', async (req, res) => {
       });
     }
     
-    // Special handling for o3-mini model - temperature parameter is not supported
-    if (deploymentName.includes('o3-mini')) {
-      console.warn(`[AZURE WARNING] Removing temperature parameter for ${deploymentName} as it's not supported`);
-      delete req.body.temperature;
-      
-      // Apply specific settings proven to work with o3-mini
-      if (!cleanRequestBody.max_tokens || cleanRequestBody.max_tokens > 3000) {
-        console.warn(`[AZURE WARNING] Setting max_tokens=2048 for ${deploymentName} to allow deeper reasoning`);
-        cleanRequestBody.max_tokens = 2048;
-      }
-      
-      // Add top_p parameter for better diversity
-      if (!cleanRequestBody.top_p) {
-        cleanRequestBody.top_p = 0.95;
-      }
-      
-      console.log(`[O3-MINI INFO] Using API version ${apiVersion} for o3-mini model`);
-      console.log(`[O3-MINI INFO] Parameters: max_tokens=${cleanRequestBody.max_tokens}, top_p=${cleanRequestBody.top_p}`);
-      console.log(`[O3-MINI INFO] Increased token limit to allow more detailed reasoning`);
-      
-      // Add special handler for o3-mini responses to log token usage details
-      let o3MiniResponseHandler = (response) => {
-        if (response && response.data) {
-          console.log('[O3-MINI RESPONSE] Analyzing response details:');
-          
-          // Log token usage details which are particularly important for o3-mini
-          if (response.data.usage) {
-            const usage = response.data.usage;
-            console.log('[O3-MINI RESPONSE] Token usage:', JSON.stringify(usage, null, 2));
-            
-            // Check for the special case of reasoning tokens without accepted prediction tokens
-            if (usage.completion_tokens_details) {
-              const details = usage.completion_tokens_details;
-              if (details.reasoning_tokens > 0 && details.accepted_prediction_tokens === 0) {
-                console.log(`[O3-MINI WARNING] Model used ${details.reasoning_tokens} reasoning tokens but has 0 accepted prediction tokens`);
-                console.log('[O3-MINI WARNING] This indicates the model generated reasoning but did not produce a final answer');
-              }
-            }
-          }
-          
-          // Check for content in the response
-          if (response.data.choices && response.data.choices.length > 0) {
-            const choice = response.data.choices[0];
-            const content = choice.message?.content;
-            
-            if (content) {
-              console.log(`[O3-MINI RESPONSE] Content found (${content.length} chars)`);
-              console.log(`[O3-MINI RESPONSE] Content preview: ${content.substring(0, 100)}...`);
-            } else {
-              console.log('[O3-MINI WARNING] No content found in message.content field');
-              console.log('[O3-MINI WARNING] Finish reason:', choice.finish_reason);
-            }
-          } else {
-            console.log('[O3-MINI WARNING] No choices array found in response');
-          }
-        }
-        
-        return response;
-      };
-    }
-    
     // Create a clean request body by removing Azure-specific fields AND the queryId
     // Spreading each property individually to ensure queryId is properly removed
     const cleanRequestBody = {};
@@ -1249,6 +1188,45 @@ app.post('/api/proxy/azure/chat/completions', async (req, res) => {
         cleanRequestBody[key] = req.body[key];
       }
     });
+
+    // Special handling for o3-mini model - temperature parameter is not supported
+    if (deploymentName.includes('o3-mini')) {
+      console.warn(`[AZURE WARNING] Removing temperature parameter for ${deploymentName} as it's not supported`);
+      delete cleanRequestBody.temperature;
+      
+      // Apply specific settings proven to work with o3-mini
+      if (!cleanRequestBody.max_tokens || cleanRequestBody.max_tokens > 3000) {
+        console.warn(`[AZURE WARNING] Setting max_tokens=2048 for ${deploymentName} to allow deeper reasoning`);
+        cleanRequestBody.max_tokens = 2048;
+      }
+      
+      // Add top_p parameter for better diversity
+      if (!cleanRequestBody.top_p) {
+        cleanRequestBody.top_p = 0.95;
+      }
+      
+      console.log(`[O3-MINI INFO] Using API version ${apiVersion} for o3-mini model`);
+      console.log(`[O3-MINI INFO] Parameters: max_tokens=${cleanRequestBody.max_tokens}, top_p=${cleanRequestBody.top_p}`);
+      console.log(`[O3-MINI INFO] Increased token limit to allow more detailed reasoning`);
+    }
+    
+    // Special handling for o4-mini model - uses max_completion_tokens instead of max_tokens
+    if (deploymentName.includes('o4-mini')) {
+      console.warn(`[AZURE WARNING] Converting max_tokens to max_completion_tokens for ${deploymentName}`);
+      
+      if (cleanRequestBody.max_tokens) {
+        cleanRequestBody.max_completion_tokens = cleanRequestBody.max_tokens;
+        delete cleanRequestBody.max_tokens;
+        console.log(`[O4-MINI INFO] Set max_completion_tokens=${cleanRequestBody.max_completion_tokens} for o4-mini model`);
+      }
+    }
+    
+    // Special handling for o4-mini model - temperature must be 1 (default), not 0
+    if (deploymentName.includes('o4-mini')) {
+      console.warn(`[AZURE WARNING] ${deploymentName} only supports temperature=1 (default), removing temperature parameter`);
+      delete cleanRequestBody.temperature;
+      console.log(`[O4-MINI INFO] Removed temperature parameter for ${deploymentName} - using default value (1)`);
+    }
     
     // Log detailed request info
     console.log(`Proxying Azure OpenAI request to: ${endpoint}/openai/deployments/${deploymentName}/chat/completions?api-version=${apiVersion}`);
@@ -1398,6 +1376,122 @@ app.post('/api/proxy/openai/chat/completions', async (req, res) => {
     res.json(response.data);
   } catch (error) {
     console.error('Error proxying to OpenAI API:', error.message);
+    
+    // Log more detailed error information
+    if (error.response) {
+      console.error('Response status:', error.response.status);
+      console.error('Response data:', JSON.stringify(error.response.data, null, 2));
+    }
+    
+    res.status(error.response?.status || 500).json({
+      error: error.response?.data || { message: error.message }
+    });
+  }
+});
+
+// Proxy endpoint for Azure OpenAI Embeddings API
+app.post('/api/proxy/azure/embeddings', async (req, res) => {
+  try {
+    console.log('========================= AZURE EMBEDDINGS REQUEST =========================');
+    console.log('Request body keys:', Object.keys(req.body).join(', '));
+    console.log('DeploymentName:', req.body.deploymentName);
+    console.log('Model:', req.body.model);
+    console.log('Input type:', typeof req.body.input);
+    console.log('Input is array:', Array.isArray(req.body.input));
+    if (Array.isArray(req.body.input)) {
+      console.log('Input length:', req.body.input.length);
+    }
+    console.log('==========================================================================');
+    
+    // Extract parameters from request
+    const apiKey = req.body.azureApiKey;
+    const endpoint = req.body.azureEndpoint;
+    const deploymentName = req.body.deploymentName;
+    const apiVersion = req.body.apiVersion || process.env.REACT_APP_AZURE_OPENAI_API_VERSION || '2024-02-15-preview';
+    const queryId = req.body.queryId;
+    
+    // Validate required parameters
+    if (!apiKey) {
+      console.error('[AZURE EMBEDDINGS ERROR] Missing API key in request');
+      return res.status(401).json({
+        error: {
+          message: 'Azure OpenAI API key is required'
+        }
+      });
+    }
+    
+    if (!endpoint) {
+      console.error('[AZURE EMBEDDINGS ERROR] Missing endpoint in request');
+      return res.status(400).json({
+        error: {
+          message: 'Azure OpenAI endpoint is required'
+        }
+      });
+    }
+    
+    if (!deploymentName) {
+      console.error('[AZURE EMBEDDINGS ERROR] Missing deployment name in request');
+      return res.status(400).json({
+        error: {
+          message: 'Azure OpenAI deployment name is required'
+        }
+      });
+    }
+    
+    // Create clean request body
+    const cleanRequestBody = {
+      input: req.body.input
+    };
+    
+    // Ensure the endpoint URL is properly formatted
+    let formattedEndpoint = endpoint;
+    if (formattedEndpoint.endsWith('/')) {
+      formattedEndpoint = formattedEndpoint.slice(0, -1);
+    }
+    
+    // Construct the full target URL
+    const targetUrl = `${formattedEndpoint}/openai/deployments/${deploymentName}/embeddings?api-version=${apiVersion}`;
+    console.log(`[AZURE EMBEDDINGS] Target URL: ${targetUrl}`);
+    console.log(`[AZURE EMBEDDINGS] Request body:`, JSON.stringify(cleanRequestBody, null, 2));
+    
+    // Make the request to Azure OpenAI API
+    const azureResponse = await axios.post(
+      targetUrl,
+      cleanRequestBody,
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          'api-key': apiKey
+        },
+        timeout: 30000 // 30 second timeout
+      }
+    );
+    
+    console.log(`[AZURE EMBEDDINGS] Response status: ${azureResponse.status}`);
+    console.log(`[AZURE EMBEDDINGS] Response has data: ${!!azureResponse.data}`);
+    if (azureResponse.data && azureResponse.data.data) {
+      console.log(`[AZURE EMBEDDINGS] Number of embeddings returned: ${azureResponse.data.data.length}`);
+    }
+    
+    // Track costs if usage information is available
+    if (azureResponse.data && azureResponse.data.usage) {
+      const usage = azureResponse.data.usage;
+      const model = req.body.model || `azure-${deploymentName}`;
+      
+      // For embeddings, we track using token count
+      const tokenCount = usage.total_tokens || usage.prompt_tokens || 0;
+      if (tokenCount > 0) {
+        const costInfo = costTracker.trackEmbeddingCost(model, tokenCount, 'embeddings', queryId);
+        console.log(`Cost tracked for Azure Embeddings API call: $${costInfo.cost.toFixed(10)}`);
+        
+        // Add calculated cost info to response
+        azureResponse.data.cost = costInfo.cost;
+      }
+    }
+    
+    res.json(azureResponse.data);
+  } catch (error) {
+    console.error('Error proxying to Azure OpenAI Embeddings API:', error.message);
     
     // Log more detailed error information
     if (error.response) {
